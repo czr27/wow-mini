@@ -1,5 +1,5 @@
 import React from 'react';
-import type { Unit } from '@cata-raid-sim/engine';
+import type { NetworkVoteState, Unit } from '@cata-raid-sim/engine';
 
 interface Props {
   targetBossName: string;
@@ -13,6 +13,10 @@ interface Props {
   onFastForward: () => void;
   isCorpseRunning?: boolean;
   corpseRunRemainingMs?: number;
+  /** Multiplayer skip-travel vote (majority YES; 10s timeout = NO) */
+  skipTravelVote?: NetworkVoteState | null;
+  mySkipVote?: 'YES' | 'NO' | null;
+  onSkipTravelVote?: (choice: 'YES' | 'NO') => void;
 }
 
 export const TravelRecovery: React.FC<Props> = ({
@@ -26,6 +30,9 @@ export const TravelRecovery: React.FC<Props> = ({
   onFastForward,
   isCorpseRunning = false,
   corpseRunRemainingMs = 0,
+  skipTravelVote = null,
+  mySkipVote = null,
+  onSkipTravelVote,
 }) => {
   const seconds = Math.max(0, Math.ceil(remainingMs / 1000));
   const hasDeadMembers = deadUnits.length > 0;
@@ -125,12 +132,53 @@ export const TravelRecovery: React.FC<Props> = ({
     );
   }
 
+  if (skipTravelVote && !skipTravelVote.resolved) {
+    const yes = Object.values(skipTravelVote.votes).filter((v) => v === 'YES').length;
+    const no = Object.values(skipTravelVote.votes).filter((v) => v === 'NO').length;
+    const need = Math.floor(skipTravelVote.eligiblePlayerIds.length / 2) + 1;
+    const voteLeftSec = Math.max(
+      0,
+      Math.ceil((skipTravelVote.timeoutMs - (Date.now() - skipTravelVote.startedAtMs)) / 1000)
+    );
+    return (
+      <div className="w-full max-w-xl mx-auto py-1 px-3">
+        <div className="bg-amber-950/90 border-2 border-amber-500 rounded-xl p-2.5 shadow-xl backdrop-blur flex flex-col space-y-2">
+          <div className="flex items-center justify-between text-xs">
+            <span className="font-black text-amber-200">跳过行军投票（需多数同意，超时视为不同意）</span>
+            <span className="font-mono text-amber-300">{voteLeftSec}s</span>
+          </div>
+          <div className="text-[10px] text-amber-100/80">
+            同意 {yes}/{skipTravelVote.eligiblePlayerIds.length}（需 ≥{need}）· 反对 {no}
+          </div>
+          <div className="flex items-center justify-center space-x-2">
+            <button
+              type="button"
+              disabled={!!mySkipVote}
+              onClick={() => onSkipTravelVote?.('YES')}
+              className={`px-4 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-xs rounded-lg border border-emerald-400 ${mySkipVote === 'YES' ? 'ring-2 ring-amber-300' : ''} ${mySkipVote && mySkipVote !== 'YES' ? 'opacity-50' : ''}`}
+            >
+              同意跳过
+            </button>
+            <button
+              type="button"
+              disabled={!!mySkipVote}
+              onClick={() => onSkipTravelVote?.('NO')}
+              className={`px-4 py-1.5 bg-slate-700 hover:bg-slate-600 text-gray-100 font-bold text-xs rounded-lg border border-slate-500 ${mySkipVote === 'NO' ? 'ring-2 ring-amber-300' : ''} ${mySkipVote && mySkipVote !== 'NO' ? 'opacity-50' : ''}`}
+            >
+              不同意
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex items-center justify-center py-1">
       <button
         onClick={onFastForward}
         className="px-6 py-2 bg-gradient-to-r from-amber-600 via-amber-500 to-yellow-500 hover:from-amber-500 hover:to-yellow-400 text-white font-extrabold rounded-xl shadow-lg border border-amber-400/60 flex items-center space-x-2 text-xs transition transform hover:scale-105 active:scale-95 cursor-pointer backdrop-blur"
-        title={`点击立即跳过行军，直接开启与【${targetBossName}】的战斗`}
+        title={`发起跳过行军（联机需多数同意）；单机立即开启与【${targetBossName}】的战斗`}
       >
         <span className="text-sm">⏩</span>
         <span className="tracking-wide">跳过行军</span>

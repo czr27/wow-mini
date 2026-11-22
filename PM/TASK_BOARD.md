@@ -268,8 +268,9 @@
 |----|------|------|
 | MP-01 | 联机大厅与房间系统 | 🟨 服务端房间权威 + WS 创建/加入/开始；客户端 NetClient/Facade |
 | MP-02 | 职责硬限制（1T/1H/3DPS，2T/4H/14DPS） | 🟨 沿用 RoomManager 配额，服务器开局校验 |
-| MP-03 | 热顶替（Drop-In继承状态） | ⬜ 队列入座仍待完善跨端继承 |
+| MP-03 | 热顶替（Drop-In继承状态） | ✅ 继承 HP/Buff/资源/威胁；MEMBER_HOT_SWAP 跨端 |
 | MP-04 | 断线5秒回退AI | 🟨 服务器 presence 计时 + MEMBER_REPLACE_AI；房主侧标记 AI |
-| MP-05 | 多人团灭投票同步 | ⬜ |
+| MP-05 | 多人团灭投票同步 + 跳过赶路多数同意（10s超时=不同意） | ✅ VOTE_* + WipeVoteModal/TravelRecovery |
 | MP-ACC | 账号/键位/证书跨端 LWW(updatedAtMs) 合并写回服务器 | ✅ |
 | MP-07 | 房主权威战斗同步（服务器只转发 COMBAT_STATE / PLAYER_INPUT） | 🟨 通路已接，客人收快照/房主广播 |
+| MP-08 | 客人 HUD 读条/CD 时间轴（startedAt+total，中断同步） | ✅ casts/cooldowns/gcds + CAST_INTERRUPT |

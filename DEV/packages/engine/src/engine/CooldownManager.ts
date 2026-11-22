@@ -1,4 +1,5 @@
-import type { Unit, Spell, ResourceKind } from '../types.js';
+import type { Unit, Spell } from '../types.js';
+import { getEffectiveGcdMs } from './TierProfile.js';
 
 interface CooldownEntry {
   spellId: string;
@@ -7,11 +8,12 @@ interface CooldownEntry {
 }
 
 /**
- * [E-07] CooldownManager — 技能冷却管理器
+ * [E-07] CooldownManager — 技能冷却管理器（80级满级满急速 GCD 分组规范）
  *
- * - GCD: 1.5s 通用（盗贼 1.0s）
- * - 独立CD：每个技能独立倒计时
- * - canCast / startCooldown / tick
+ * GCD 严格分三组：
+ * 1. NORMAL:  基础 1.5s，受急速缩减至最低 1.0s 下限 (50% 满急速时恰好 1.0s)
+ * 2. ROGUE:   固定 1.0s，不受急速继续压低 (潜行者/猫德/猎人/邪DK 能量与集中值职业)
+ * 3. OFF_GCD: 0ms，不受公共冷却阻塞也不触发公共冷却 (打断/嘲讽/减伤/瞬发爆发)
  */
 export class CooldownManager {
   /** unitId → gcdRemainingMs */
@@ -20,27 +22,25 @@ export class CooldownManager {
   /** unitId → spellId → CooldownEntry */
   private cdMap: Map<string, Map<string, CooldownEntry>> = new Map();
 
-  static readonly GCD_NORMAL_MS  = 1_500;
-  static readonly GCD_ROGUE_MS   = 1_000;
+  static readonly GCD_NORMAL_MS = 1_500;
+  static readonly GCD_ROGUE_MS  = 1_000;
+  static readonly GCD_FLOOR_MS  = 1_000;
 
   // ── Tick ─────────────────────────────────────────────────────
   tick(deltaMs: number): void {
-    // Tick GCDs
     for (const [unitId, gcd] of this.gcdMap) {
       this.gcdMap.set(unitId, Math.max(0, gcd - deltaMs));
     }
 
-    // Tick spell CDs
     for (const spellCds of this.cdMap.values()) {
-      for (const [spellId, entry] of spellCds) {
+      for (const [, entry] of spellCds) {
         entry.remainingMs = Math.max(0, entry.remainingMs - deltaMs);
       }
     }
   }
 
   // ── canCast ───────────────────────────────────────────────────
-  canCast(unitId: string, spellId: string, unit?: Unit): boolean {
-    // Check GCD (without spell reference, assume NORMAL GCD category)
+  canCast(unitId: string, spellId: string, _unit?: Unit): boolean {
     if (!this.isGcdFree(unitId)) return false;
 
     const cd = this.cdMap.get(unitId)?.get(spellId);
@@ -49,7 +49,7 @@ export class CooldownManager {
     return true;
   }
 
-  canCastSpell(unitId: string, spell: Spell, unit?: Unit): boolean {
+  canCastSpell(unitId: string, spell: Spell, _unit?: Unit): boolean {
     const isOffGcd = spell?.gcdCategory === 'OFF_GCD' || (spell as any)?.gcdType === 'off';
     if (!isOffGcd && !this.isGcdFree(unitId)) return false;
 
@@ -60,21 +60,22 @@ export class CooldownManager {
   }
 
   // ── startCooldown ─────────────────────────────────────────────
-  startCooldown(unitId: string, spellId: string, spell: Spell, unit: Unit): void {
-    const isOffGcd = spell?.gcdCategory === 'OFF_GCD' || (spell as any)?.gcdType === 'off';
-    const isRogueGcd = spell?.gcdCategory === 'ROGUE' || (spell as any)?.gcdType === 'rogue';
+  startGcdForSpell(unitId: string, spell: Spell, unit?: Unit): void {
+    const rawCat = spell?.gcdCategory
+      ?? ((spell as any)?.gcdType === 'off'
+        ? 'OFF_GCD'
+        : (spell as any)?.gcdType === 'rogue'
+        ? 'ROGUE'
+        : 'NORMAL');
 
-    // Start GCD
-    if (!isOffGcd) {
-      const gcdMs = isRogueGcd
-        ? CooldownManager.GCD_ROGUE_MS
-        : CooldownManager.GCD_NORMAL_MS;
-      // Haste reduces GCD (min 750ms)
-      const hasted = Math.max(750, gcdMs / (1 + (unit?.stats?.haste ?? 0)));
-      this.gcdMap.set(unitId, hasted);
+    if (rawCat !== 'OFF_GCD') {
+      const haste = unit?.stats?.haste ?? 0;
+      const effectiveGcd = getEffectiveGcdMs(rawCat, haste);
+      this.gcdMap.set(unitId, effectiveGcd);
     }
+  }
 
-    // Start spell-specific CD
+  startSpellCooldownOnly(unitId: string, spellId: string, spell: Spell): void {
     if (spell?.cooldownMs > 0) {
       if (!this.cdMap.has(unitId)) this.cdMap.set(unitId, new Map());
       this.cdMap.get(unitId)!.set(spellId, {
@@ -85,8 +86,13 @@ export class CooldownManager {
     }
   }
 
+  startCooldown(unitId: string, spellId: string, spell: Spell, unit?: Unit): void {
+    this.startGcdForSpell(unitId, spell, unit);
+    this.startSpellCooldownOnly(unitId, spellId, spell);
+  }
+
   startGcd(unitId: string, durationMs?: number): void {
-    this.gcdMap.set(unitId, durationMs ?? CooldownManager.GCD_NORMAL_MS);
+    this.gcdMap.set(unitId, durationMs ?? CooldownManager.GCD_FLOOR_MS);
   }
 
   // ── Queries ───────────────────────────────────────────────────
@@ -96,6 +102,27 @@ export class CooldownManager {
 
   getCdRemaining(unitId: string, spellId: string): number {
     return this.cdMap.get(unitId)?.get(spellId)?.remainingMs ?? 0;
+  }
+
+  getCdEntry(unitId: string, spellId: string): CooldownEntry | undefined {
+    return this.cdMap.get(unitId)?.get(spellId);
+  }
+
+  /** Active spell CDs with remaining > 0 (for network timeline sync). */
+  getActiveCooldowns(unitId: string): CooldownEntry[] {
+    const map = this.cdMap.get(unitId);
+    if (!map) return [];
+    return Array.from(map.values()).filter((e) => e.remainingMs > 0);
+  }
+
+  getAllActiveCooldowns(): Array<CooldownEntry & { unitId: string }> {
+    const out: Array<CooldownEntry & { unitId: string }> = [];
+    for (const [unitId, map] of this.cdMap) {
+      for (const entry of map.values()) {
+        if (entry.remainingMs > 0) out.push({ ...entry, unitId });
+      }
+    }
+    return out;
   }
 
   isGcdFree(unitId: string): boolean {

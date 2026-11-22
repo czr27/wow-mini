@@ -177,6 +177,38 @@ export class NetClient {
       payload: { ...snapshot, seq },
     });
   }
+
+  sendCastInterrupt(roomId: string, unitId: string, spellId?: string) {
+    this.send({
+      type: 'CAST_INTERRUPT',
+      roomId,
+      timeMs: Date.now(),
+      payload: { unitId, spellId, atMs: Date.now() },
+    });
+  }
+
+  sendHotSwap(roomId: string, payload: unknown) {
+    this.send({ type: 'MEMBER_HOT_SWAP', roomId, timeMs: Date.now(), payload });
+  }
+
+  startVote(roomId: string, kind: 'WIPE' | 'SKIP_TRAVEL') {
+    this.send({ type: 'VOTE_START', roomId, payload: { kind } });
+  }
+
+  castVote(roomId: string, kind: 'WIPE' | 'SKIP_TRAVEL', choice: string) {
+    this.send({
+      type: 'VOTE_CAST',
+      roomId,
+      payload: { kind, playerId: '', choice },
+    });
+  }
+
+  requestSkipTravel(roomId: string, playerId: string) {
+    this.sendPlayerInput(roomId, {
+      kind: 'REQUEST_SKIP_TRAVEL',
+      playerId,
+    });
+  }
 }
 
 export const netClient = new NetClient();

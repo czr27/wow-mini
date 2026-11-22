@@ -66,7 +66,21 @@ import {
 import { RoomListView, RoomDetailView, WaitingQueueOverlay } from './components/room/index.js';
 import { netClient } from './net/NetClient.js';
 import { NetworkRoomFacade } from './net/NetworkRoomFacade.js';
-import type { LobbyRoom as NetLobbyRoom, NetworkCombatSnapshot, PlayerInputPayload } from '@cata-raid-sim/engine';
+import {
+  buildCastFromTimeline,
+  cooldownRemainingFromTimelines,
+  gcdRemainingFromTimelines,
+} from './net/netTimeline.js';
+import type {
+  LobbyRoom as NetLobbyRoom,
+  NetworkCastTimeline,
+  NetworkCombatSnapshot,
+  NetworkCooldownTimeline,
+  NetworkGcdTimeline,
+  NetworkVoteState,
+  PlayerInputPayload,
+  VoteResultPayload,
+} from '@cata-raid-sim/engine';
 
 import { AuthAndCharacterModal, CLASS_COLORS } from './components/AuthAndCharacterModal.js';
 import { ClearCertificateModal } from './components/ClearCertificateModal.js';
@@ -466,12 +480,22 @@ export function App() {
   const [waitingQueueRoomId, setWaitingQueueRoomId] = useState<string | null>(null);
   const [, setRoomsTick] = useState<number>(0);
   const [netConnected, setNetConnected] = useState(false);
+  const [wipeNetworkVote, setWipeNetworkVote] = useState<NetworkVoteState | null>(null);
+  const [skipTravelVote, setSkipTravelVote] = useState<NetworkVoteState | null>(null);
+  const [myWipeVote, setMyWipeVote] = useState<'RETRY' | 'FINISH' | null>(null);
+  const [mySkipVote, setMySkipVote] = useState<'YES' | 'NO' | null>(null);
+  const guestCastTimelinesRef = useRef<NetworkCastTimeline[]>([]);
+  const guestCdTimelinesRef = useRef<NetworkCooldownTimeline[]>([]);
+  const guestGcdTimelinesRef = useRef<NetworkGcdTimeline[]>([]);
+  const applyWipeVoteResultRef = useRef<(choice: 'RETRY' | 'FINISH') => void>(() => {});
+  const lastWipePhaseBroadcastRef = useRef<string | null>(null);
   const roomFacadeRef = useRef(new NetworkRoomFacade(roomManager));
   const isNetworkGuestRef = useRef(false);
   const isNetworkHostRef = useRef(false);
   const activeRoomIdRef = useRef<string | null>(null);
   const pendingGuestInputsRef = useRef<PlayerInputPayload[]>([]);
   const lastCombatBroadcastMsRef = useRef(0);
+  const lastInterruptSpellRef = useRef<string | null>(null);
   const startAdventureRef = useRef<(overrides?: {
     tier?: '5man' | '20man';
     difficulty?: DungeonDifficulty;
@@ -550,12 +574,94 @@ export function App() {
         setFriendlyUnits([...engine.friendlyUnits]);
         setBossUnit(engine.bossUnit ? { ...engine.bossUnit } : undefined);
         if (snap.bossTargetId !== undefined) setBossTargetId(snap.bossTargetId ?? null);
-        if (snap.runPhase && snap.runPhase !== runPhase) {
-          setRunPhase(snap.runPhase as RunPhase);
+        if (snap.runPhase) setRunPhase(snap.runPhase as RunPhase);
+
+        guestCastTimelinesRef.current = snap.casts || [];
+        guestCdTimelinesRef.current = snap.cooldowns || [];
+        guestGcdTimelinesRef.current = snap.gcds || [];
+
+        // Apply cast timelines to local player cast bar / companion casts
+        const now = Date.now();
+        const myId = currentChar?.id;
+        const myCast = (snap.casts || []).find((c) => c.unitId === myId && !c.interrupted);
+        if (myCast) {
+          const built = buildCastFromTimeline(myCast, now);
+          if (built) {
+            playerCastRef.current = built as any;
+            setPlayerCast(built as any);
+          } else {
+            playerCastRef.current = null;
+            setPlayerCast(null);
+          }
+        } else if ((snap.interrupts || []).some((i) => i.unitId === myId) || (snap.casts || []).some((c) => c.unitId === myId && c.interrupted)) {
+          playerCastRef.current = null;
+          setPlayerCast(null);
         }
+
+        const companion: Record<string, { spellName: string; progress: number }> = {};
+        for (const c of snap.casts || []) {
+          if (c.interrupted || c.unitId === myId) continue;
+          const built = buildCastFromTimeline(c, now);
+          if (built) companion[c.unitId] = { spellName: built.spellName, progress: built.progress };
+        }
+        setCompanionCasts(companion);
+
+        if (myId) {
+          const gcd = gcdRemainingFromTimelines(snap.gcds, myId, now);
+          setPlayerGcdRemainingMs(gcd.remaining);
+          setPlayerGcdTotalMs(gcd.total);
+        }
+      }
+      if (msg.type === 'CAST_INTERRUPT' && msg.payload) {
+        const body = msg.payload as { unitId: string; spellId?: string };
+        if (currentChar && body.unitId === currentChar.id) {
+          playerCastRef.current = null;
+          setPlayerCast(null);
+        }
+        setCompanionCasts((prev) => {
+          const next = { ...prev };
+          delete next[body.unitId];
+          return next;
+        });
+        guestCastTimelinesRef.current = guestCastTimelinesRef.current.filter((c) => c.unitId !== body.unitId);
       }
       if (msg.type === 'PLAYER_INPUT' && msg.payload && isNetworkHostRef.current) {
         pendingGuestInputsRef.current.push(msg.payload as PlayerInputPayload);
+      }
+      if (msg.type === 'MEMBER_HOT_SWAP' && msg.payload) {
+        const body = msg.payload as {
+          room: NetLobbyRoom;
+          playerId: string;
+          replacedAiId: string;
+          unitSnapshot?: NetworkCombatSnapshot['units'][number];
+        };
+        roomFacadeRef.current.upsertRoom(body.room);
+        if (isNetworkHostRef.current || isNetworkGuestRef.current) {
+          const engine = engineRef.current;
+          if (body.unitSnapshot) {
+            engine.applyNetworkUnitSnapshots([
+              ...engine.buildNetworkUnitSnapshots().filter((u) => u.id !== body.replacedAiId && u.id !== body.playerId),
+              body.unitSnapshot,
+            ]);
+            setFriendlyUnits([...engine.friendlyUnits]);
+          } else if (isNetworkHostRef.current) {
+            roomManager.inheritCombatUnitFromAi(engine, body.replacedAiId, {
+              id: body.playerId,
+              name: body.room.members.find((m) => m.id === body.playerId)?.name || body.playerId,
+              classId: (body.room.members.find((m) => m.id === body.playerId)?.classId || 'MAGE') as any,
+              spec: body.room.members.find((m) => m.id === body.playerId)?.spec || 'FIRE',
+              role: (body.room.members.find((m) => m.id === body.playerId)?.role || 'DPS') as any,
+            });
+            setFriendlyUnits([...engine.friendlyUnits]);
+          }
+        }
+        if (currentChar && body.playerId === currentChar.id) {
+          setWaitingQueueRoomId(null);
+          setActiveRoomId(body.room.id);
+          isNetworkHostRef.current = body.room.hostId === currentChar.id;
+          isNetworkGuestRef.current = body.room.hostId !== currentChar.id;
+        }
+        setRoomsTick((t) => t + 1);
       }
       if (msg.type === 'MEMBER_REPLACE_AI' && msg.payload) {
         const body = msg.payload as { room: NetLobbyRoom; playerId: string; aiMemberId: string };
@@ -564,7 +670,6 @@ export function App() {
           const engine = engineRef.current;
           const unit = engine.getUnit(body.playerId);
           if (unit) {
-            // Keep unit id stable for combat; mark as AI-controlled
             unit.isPlayer = false;
           }
         }
@@ -582,6 +687,39 @@ export function App() {
           isNetworkGuestRef.current = body.newHostId !== currentChar.id && body.room.members.some((m) => m.id === currentChar.id && !m.isAi);
         }
         setRoomsTick((t) => t + 1);
+      }
+      if (msg.type === 'VOTE_START' || msg.type === 'VOTE_STATE') {
+        const vote = (msg.payload as any)?.vote || (msg.payload as NetworkVoteState);
+        if (!vote?.kind) return;
+        if (vote.kind === 'WIPE') {
+          setWipeNetworkVote({ ...vote });
+          if (currentChar && vote.votes?.[currentChar.id]) {
+            setMyWipeVote(vote.votes[currentChar.id] as 'RETRY' | 'FINISH');
+          }
+        } else if (vote.kind === 'SKIP_TRAVEL') {
+          setSkipTravelVote({ ...vote });
+          if (currentChar && vote.votes?.[currentChar.id]) {
+            setMySkipVote(vote.votes[currentChar.id] as 'YES' | 'NO');
+          }
+        }
+      }
+      if (msg.type === 'VOTE_RESULT' && msg.payload) {
+        const body = msg.payload as VoteResultPayload;
+        if (body.kind === 'WIPE') {
+          setWipeNetworkVote(null);
+          setMyWipeVote(null);
+          // Only host applies phase transition; guests follow COMBAT_STATE
+          if (isNetworkHostRef.current && (body.result === 'RETRY' || body.result === 'FINISH')) {
+            applyWipeVoteResultRef.current(body.result as 'RETRY' | 'FINISH');
+          }
+        } else if (body.kind === 'SKIP_TRAVEL') {
+          setSkipTravelVote(null);
+          setMySkipVote(null);
+          if (body.result === 'YES' && isNetworkHostRef.current) {
+            rsmRef.current?.fastForwardTravel();
+            setRunPhase(rsmRef.current?.phase || 'BOSS_COMBAT');
+          }
+        }
       }
     });
 
@@ -1305,8 +1443,53 @@ export function App() {
       const engine = engineRef.current;
       if (!rsm || runPhase === 'LOBBY' || runPhase === 'SUMMARY') return;
 
-      // Network guests: host computes combat; local tick only keeps HUD clocks if needed
+      // Network guests: no combat sim — advance local HUD from host timelines
       if (isNetworkGuestRef.current) {
+        const now = Date.now();
+        const myId = currentChar?.id;
+        if (myId) {
+          const myCastTl = guestCastTimelinesRef.current.find((c) => c.unitId === myId && !c.interrupted);
+          if (myCastTl) {
+            const built = buildCastFromTimeline(myCastTl, now);
+            if (built) {
+              playerCastRef.current = built as any;
+              setPlayerCast(built as any);
+            } else {
+              playerCastRef.current = null;
+              setPlayerCast(null);
+            }
+          }
+          const gcd = gcdRemainingFromTimelines(guestGcdTimelinesRef.current, myId, now);
+          setPlayerGcdRemainingMs(gcd.remaining);
+          setPlayerGcdTotalMs(gcd.total);
+          setPlayerCooldowns((prev) => {
+            const next = { ...prev };
+            for (const slot of Object.keys(next)) {
+              const rem = cooldownRemainingFromTimelines(guestCdTimelinesRef.current, myId, slot, now);
+              if (rem > 0) {
+                next[slot] = { ...(next[slot] || { totalCdMs: rem }), cdRemainingMs: rem, totalCdMs: next[slot]?.totalCdMs || rem };
+              } else if (next[slot]) {
+                next[slot] = { ...next[slot], cdRemainingMs: 0 };
+              }
+            }
+            for (const cd of guestCdTimelinesRef.current) {
+              if (cd.unitId !== myId) continue;
+              const rem = cooldownRemainingFromTimelines(guestCdTimelinesRef.current, myId, cd.spellId, now);
+              next[cd.spellId] = { cdRemainingMs: rem, totalCdMs: cd.totalMs };
+            }
+            return next;
+          });
+        }
+        const companion: Record<string, { spellName: string; progress: number }> = {};
+        for (const c of guestCastTimelinesRef.current) {
+          if (c.interrupted || c.unitId === myId) continue;
+          const built = buildCastFromTimeline(c, now);
+          if (built) companion[c.unitId] = { spellName: built.spellName, progress: built.progress };
+        }
+        setCompanionCasts(companion);
+        if (wipeNetworkVote && !wipeNetworkVote.resolved) {
+          setWipeVoteTimerMs(Math.max(0, wipeNetworkVote.timeoutMs - (now - wipeNetworkVote.startedAtMs)));
+        }
         return;
       }
 
@@ -1318,7 +1501,13 @@ export function App() {
         const inputs = pendingGuestInputsRef.current.splice(0, pendingGuestInputsRef.current.length);
         for (const input of inputs) {
           if (input.kind === 'TARGET' && input.targetId) {
-            // Guests' focus/target is host-side only for now; ignore visual target
+            continue;
+          }
+          if (input.kind === 'INTERRUPT' && input.playerId) {
+            engine.interruptCast(input.playerId);
+            if (activeRoomIdRef.current) {
+              netClient.sendCastInterrupt(activeRoomIdRef.current, input.playerId, input.spellId);
+            }
             continue;
           }
           if (input.kind === 'CAST' && input.spellId && input.playerId) {
@@ -1337,11 +1526,68 @@ export function App() {
       rsm.tick(deltaMs);
       engine.tick(deltaMs);
 
-      // Host broadcasts compact combat state to room guests (~10Hz)
+      // Host: start wipe vote once when entering WIPE_VOTE
+      if (
+        isNetworkHostRef.current &&
+        netClient.connected &&
+        activeRoomIdRef.current &&
+        rsm.phase === 'WIPE_VOTE' &&
+        lastWipePhaseBroadcastRef.current !== 'WIPE_VOTE'
+      ) {
+        lastWipePhaseBroadcastRef.current = 'WIPE_VOTE';
+        netClient.startVote(activeRoomIdRef.current, 'WIPE');
+      }
+      if (rsm.phase !== 'WIPE_VOTE') {
+        lastWipePhaseBroadcastRef.current = rsm.phase;
+      }
+
+      // Host broadcasts compact combat state + cast/CD timelines (~10Hz)
       if (isNetworkHostRef.current && activeRoomIdRef.current && netClient.connected) {
         const now = Date.now();
         if (now - lastCombatBroadcastMsRef.current >= 100) {
           lastCombatBroadcastMsRef.current = now;
+          const casts: NetworkCastTimeline[] = engine.getPendingCasts().map((c) => ({
+            unitId: c.casterId,
+            spellId: c.spellId,
+            spellName: c.spellName,
+            startedAtMs: now - (c.totalMs - c.remainingMs),
+            totalMs: c.totalMs,
+            isChannel: c.mode === 'CHANNELED',
+            targetId: c.targetId,
+          }));
+          // Also include local player cast bar if driven outside engine pendingCasts
+          if (playerCastRef.current && currentChar) {
+            const pc = playerCastRef.current;
+            if (!casts.some((c) => c.unitId === currentChar.id)) {
+              casts.push({
+                unitId: currentChar.id,
+                spellId: pc.spellId,
+                spellName: pc.spellName,
+                startedAtMs: now - (pc.elapsedMs || 0),
+                totalMs: pc.totalMs || 1500,
+                isChannel: !!pc.isChannel,
+                targetId: pc.targetId,
+              });
+            }
+          }
+          const cooldowns: NetworkCooldownTimeline[] = engine.cooldownManager.getAllActiveCooldowns().map((e) => ({
+            unitId: e.unitId,
+            spellId: e.spellId,
+            startedAtMs: now - (e.totalMs - e.remainingMs),
+            totalMs: e.totalMs,
+          }));
+          const gcds: NetworkGcdTimeline[] = [];
+          for (const u of engine.getAllUnits()) {
+            const rem = engine.cooldownManager.getGcdRemaining(u.id);
+            if (rem > 0) {
+              const total = 1000;
+              gcds.push({
+                unitId: u.id,
+                startedAtMs: now - (total - rem),
+                totalMs: total,
+              });
+            }
+          }
           netClient.sendCombatState({
             roomId: activeRoomIdRef.current,
             timeMs: now,
@@ -1350,6 +1596,9 @@ export function App() {
               ? engine.threatManager.getCurrentTarget?.(engine.bossUnit.id) ?? null
               : null,
             units: engine.buildNetworkUnitSnapshots(),
+            casts,
+            cooldowns,
+            gcds,
           });
         }
       }
@@ -1406,20 +1655,40 @@ export function App() {
         );
       }
 
-      // Out-of-combat substitution check (boss killed or wipe vote retry -> TRAVEL_RECOVERY)
-      if (
-        (prevRunPhaseRef.current === 'BOSS_COMBAT' || prevRunPhaseRef.current === 'WIPE_VOTE') &&
-        rsm.phase === 'TRAVEL_RECOVERY'
-      ) {
+      // Hot-swap waiting players onto AI slots (inherit HP/Buff); also mid-combat
+      {
         const targetRoomId = activeRoomId || waitingQueueRoomId;
-        if (targetRoomId) {
-          const subResult = roomManager.substituteOutOfCombat(targetRoomId, engine, rsm);
-          if (subResult.substituted.length > 0) {
-            setFriendlyUnits([...engine.friendlyUnits]);
-            if (waitingQueueRoomId && currentChar && subResult.substituted.some(s => s.player.id === currentChar.id)) {
-              setWaitingQueueRoomId(null);
-              setActiveRoomId(targetRoomId);
-              setRunPhase('TRAVEL_RECOVERY');
+        if (targetRoomId && (!isNetworkHostRef.current || isNetworkHostRef.current)) {
+          const shouldTrySwap =
+            !netClient.connected ||
+            isNetworkHostRef.current ||
+            (!netClient.connected && (rsm.phase === 'TRAVEL_RECOVERY' || rsm.phase === 'BOSS_COMBAT'));
+          if (shouldTrySwap && (rsm.phase === 'TRAVEL_RECOVERY' || rsm.phase === 'BOSS_COMBAT')) {
+            // Only host (or offline) mutates engine; networked guests receive MEMBER_HOT_SWAP
+            if (!netClient.connected || isNetworkHostRef.current) {
+              const subResult = roomManager.substituteOutOfCombat(targetRoomId, engine, rsm);
+              if (subResult.substituted.length > 0) {
+                setFriendlyUnits([...engine.friendlyUnits]);
+                roomFacadeRef.current.upsertRoom(roomManager.getRoom(targetRoomId)!);
+                if (netClient.connected && isNetworkHostRef.current && activeRoomIdRef.current) {
+                  for (const s of subResult.substituted) {
+                    const unitSnap = s.unit
+                      ? engine.buildNetworkUnitSnapshots().find((u) => u.id === s.player.id)
+                      : undefined;
+                    netClient.sendHotSwap(activeRoomIdRef.current, {
+                      roomId: activeRoomIdRef.current,
+                      room: roomManager.getRoom(targetRoomId),
+                      playerId: s.player.id,
+                      replacedAiId: s.replacedAi.id,
+                      unitSnapshot: unitSnap,
+                    });
+                  }
+                }
+                if (waitingQueueRoomId && currentChar && subResult.substituted.some(s => s.player.id === currentChar.id)) {
+                  setWaitingQueueRoomId(null);
+                  setActiveRoomId(targetRoomId);
+                }
+              }
             }
           }
         }
@@ -2514,10 +2783,25 @@ export function App() {
   const handleCancelPlayerCast = () => {
     pendingCastSlotRef.current = null;
     if (playerCastRef.current) {
+      const spellId = playerCastRef.current.spellId;
       playerCastRef.current = null;
       setPlayerCast(null);
+      if (currentChar) {
+        engineRef.current.interruptCast(currentChar.id);
+        if (netClient.connected && activeRoomIdRef.current) {
+          if (isNetworkGuestRef.current) {
+            netClient.sendPlayerInput(activeRoomIdRef.current, {
+              kind: 'INTERRUPT',
+              playerId: currentChar.id,
+              spellId,
+            });
+          } else {
+            netClient.sendCastInterrupt(activeRoomIdRef.current, currentChar.id, spellId);
+          }
+        }
+      }
       engineRef.current.effectsManager?.addFloatingText({
-        targetId: 'p1_player',
+        targetId: currentChar?.id || 'p1_player',
         text: '施法已取消',
         category: 'STATUS',
         isCrit: false,
@@ -3104,10 +3388,20 @@ export function App() {
     return baseSlots.map(s => {
       const defaultCd = DEFAULT_SPELL_COOLDOWNS[s.spellId] || 0;
       const totalCdMs = (s.totalCdMs && s.totalCdMs > 0) ? s.totalCdMs : defaultCd;
+      let cdRemainingMs = isCurrentActive ? (playerCooldowns[s.spellId]?.cdRemainingMs || 0) : 0;
+      // Guest: prefer host timeline CD for the active character
+      if (isCurrentActive && isNetworkGuestRef.current && currentChar) {
+        const fromNet = cooldownRemainingFromTimelines(
+          guestCdTimelinesRef.current,
+          currentChar.id,
+          s.spellId
+        );
+        if (fromNet > 0) cdRemainingMs = fromNet;
+      }
       return {
         ...s,
-        totalCdMs,
-        cdRemainingMs: isCurrentActive ? (playerCooldowns[s.spellId]?.cdRemainingMs || 0) : 0,
+        totalCdMs: playerCooldowns[s.spellId]?.totalCdMs || totalCdMs,
+        cdRemainingMs,
       };
     });
   };
@@ -5561,17 +5855,19 @@ export function App() {
     }
   };
 
-  const handleWipeVote = (choice: 'RETRY' | 'FINISH') => {
+  const applyWipeVoteResult = (choice: 'RETRY' | 'FINISH') => {
     const rsm = rsmRef.current;
     const engine = engineRef.current;
     if (!rsm || !engine) return;
 
     rsm.handleWipeVoteChoice(choice);
+    setWipeNetworkVote(null);
+    setMyWipeVote(null);
 
     if (choice === 'FINISH') {
       // Combat failed and ended: immediately clean up the room so it doesn't linger
       if (activeRoomId && currentChar) {
-        roomManager.leaveRoom(activeRoomId, currentChar.id);
+        roomFacadeRef.current.leaveRoom(activeRoomId, currentChar.id);
       } else if (activeRoomId) {
         roomManager.deleteRoom(activeRoomId);
       }
@@ -5628,6 +5924,32 @@ export function App() {
     }
 
     setRunPhase(rsm.phase);
+  };
+  applyWipeVoteResultRef.current = applyWipeVoteResult;
+
+  const handleWipeVote = (choice: 'RETRY' | 'FINISH') => {
+    if (netClient.connected && activeRoomIdRef.current) {
+      setMyWipeVote(choice);
+      netClient.castVote(activeRoomIdRef.current, 'WIPE', choice);
+      return;
+    }
+    applyWipeVoteResult(choice);
+  };
+
+  const handleSkipTravelRequest = () => {
+    if (netClient.connected && activeRoomIdRef.current && currentChar) {
+      netClient.requestSkipTravel(activeRoomIdRef.current, currentChar.id);
+      setMySkipVote('YES');
+      return;
+    }
+    rsmRef.current?.fastForwardTravel();
+    if (rsmRef.current) setRunPhase(rsmRef.current.phase);
+  };
+
+  const handleSkipTravelVote = (choice: 'YES' | 'NO') => {
+    if (!activeRoomIdRef.current) return;
+    setMySkipVote(choice);
+    netClient.castVote(activeRoomIdRef.current, 'SKIP_TRAVEL', choice);
   };
 
   const handleStartAdventure = (overrides?: {
@@ -6046,7 +6368,7 @@ export function App() {
                 onPlayerMove={handlePlayerMove}
                 onCancelCast={handleCancelPlayerCast}
                 onApproachComplete={() => setIsApproaching(false)}
-                onFastForwardTravel={() => rsmRef.current?.fastForwardTravel()}
+                onFastForwardTravel={handleSkipTravelRequest}
                 revivingUnitId={revivingUnitId}
                 reviveProgress={reviveProgress}
                 autoApproachTarget={autoApproachTarget}
@@ -6183,9 +6505,12 @@ export function App() {
                         if (revSlot) handleCastSlot(revSlot.slotIdx);
                       }
                     }}
-                    onFastForward={() => rsmRef.current?.fastForwardTravel()}
+                    onFastForward={handleSkipTravelRequest}
                     isCorpseRunning={isCorpseRunning}
                     corpseRunRemainingMs={corpseRunTimerMs}
+                    skipTravelVote={skipTravelVote}
+                    mySkipVote={mySkipVote}
+                    onSkipTravelVote={handleSkipTravelVote}
                   />
                 </div>
               ) : null}
@@ -6305,10 +6630,16 @@ export function App() {
       {/* Wipe Vote Modal */}
       <WipeVoteModal
         isOpen={runPhase === 'WIPE_VOTE'}
-        timerMs={wipeVoteTimerMs}
+        timerMs={
+          wipeNetworkVote
+            ? Math.max(0, wipeNetworkVote.timeoutMs - (Date.now() - wipeNetworkVote.startedAtMs))
+            : wipeVoteTimerMs
+        }
         bossName={targetBossName}
         wipeReport={rsmRef.current?.latestWipeReport}
         onVote={handleWipeVote}
+        networkVote={wipeNetworkVote}
+        myVote={myWipeVote}
       />
 
       {/* Clear Certificate Inspection Modal */}

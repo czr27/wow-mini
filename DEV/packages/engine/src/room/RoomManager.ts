@@ -1031,34 +1031,26 @@ export class RoomManager {
   }
 
   /**
-   * Substitute waiting players when out of combat.
-   * Mid-combat (rsm.phase === 'BOSS_COMBAT'), substitution is prohibited.
-   * On out-of-combat event (boss killed or wipe retry -> TRAVEL_RECOVERY),
-   * randomly replaces a friendly AI of the same role.
+   * Hot-swap waiting players onto same-role AI slots.
+   * Inherits HP / resources / Buff / position / threat from the replaced AI unit.
+   * Allowed in TRAVEL_RECOVERY and BOSS_COMBAT (mid-combat drop-in).
    */
   public substituteOutOfCombat(
     roomId: string,
     combatEngine?: CombatEngine,
-    rsm?: RunStateMachine
-  ): { substituted: { player: RoomMember; replacedAi: RoomMember }[] } {
+    _rsm?: RunStateMachine
+  ): { substituted: { player: RoomMember; replacedAi: RoomMember; unit?: Unit }[] } {
     const room = this.getRoom(roomId);
     if (!room) return { substituted: [] };
 
-    // Strict mid-combat check
-    if (rsm && rsm.phase === 'BOSS_COMBAT') {
-      return { substituted: [] };
-    }
-
-    const substituted: { player: RoomMember; replacedAi: RoomMember }[] = [];
+    const substituted: { player: RoomMember; replacedAi: RoomMember; unit?: Unit }[] = [];
     if (room.waitingQueue.length === 0) return { substituted };
 
     const queueCopy = [...room.waitingQueue];
     for (const queued of queueCopy) {
-      // Find matching AI in room
       const matchingAis = room.members.filter(m => m.isAi && m.role === queued.role);
       if (matchingAis.length === 0) continue;
 
-      // Randomly pick one AI of the same role
       const randIdx = Math.floor(Math.random() * matchingAis.length);
       const replacedAi = matchingAis[randIdx];
 
@@ -1075,104 +1067,70 @@ export class RoomManager {
         slotIndex: replacedAi.slotIndex,
       };
 
-      // Replace in members
       const memIdx = room.members.findIndex(m => m.id === replacedAi.id);
       if (memIdx !== -1) {
         room.members[memIdx] = newMember;
       }
 
-      // Replace in slots
       const slot = room.slots.find(s => s.index === replacedAi.slotIndex);
       if (slot) {
         slot.member = newMember;
         slot.role = newMember.role;
       }
 
-      // If combatEngine is provided, update engine units and reset stats
+      let inheritedUnit: Unit | undefined;
       if (combatEngine) {
-        combatEngine.removeUnit(replacedAi.id);
-
-        const isTank = queued.role === 'TANK';
-        const isHealer = queued.role === 'HEALER';
-        const hasMana =
-          isHealer ||
-          queued.classId === 'MAGE' ||
-          queued.classId === 'SHAMAN' ||
-          queued.classId === 'PALADIN' ||
-          queued.classId === 'PRIEST' ||
-          queued.classId === 'WARLOCK' ||
-          (queued.classId === 'DRUID' && queued.spec?.toUpperCase() !== 'FERAL');
-
-        const maxHp = isTank ? 65000 : 36000;
-        const maxMp = hasMana ? (isHealer ? 45000 : 42000) : 0;
-
-        const resources: Unit['resources'] = [];
-        if (hasMana) resources.push({ kind: 'MANA', current: maxMp, max: maxMp });
-        if (queued.classId === 'ROGUE' || (queued.classId === 'DRUID' && queued.spec?.toUpperCase() === 'FERAL')) {
-          resources.push({ kind: 'ENERGY', current: 100, max: 100 });
-          resources.push({ kind: 'COMBO_POINTS', current: 0, max: 5 });
-        }
-        if (queued.classId === 'DK') {
-          resources.push({ kind: 'RUNIC_POWER', current: 20, max: 100 });
-        }
-        if (queued.classId === 'WARRIOR') {
-          resources.push({ kind: 'RAGE', current: 40, max: 100 });
-        }
-        if (queued.classId === 'HUNTER') {
-          resources.push({ kind: 'FOCUS', current: 100, max: 100 });
-        }
-        if (queued.classId === 'PALADIN') {
-          resources.push({ kind: 'HOLY_POWER', current: 0, max: 3 });
-        }
-
-        const newUnit: Unit = {
-          id: queued.playerId,
-          name: queued.playerName,
-          classId: queued.classId,
-          spec: queued.spec,
-          role: queued.role,
-          isPlayer: true,
-          isAlive: true,
-          alive: true,
-          hp: maxHp,
-          maxHp,
-          mp: maxMp,
-          maxMp,
-          energy: queued.classId === 'ROGUE' ? 100 : 0,
-          rage: queued.classId === 'WARRIOR' ? 40 : 0,
-          focus: queued.classId === 'HUNTER' ? 100 : 0,
-          runicPower: queued.classId === 'DK' ? 20 : 0,
-          holyPower: 0,
-          absorb: 0,
-          resources,
-          buffs: [],
-          threatTable: [],
-          position: { x: isTank ? 440 : 180, y: 160 },
-          stats: {
-            attackPower: 5200,
-            spellPower: 4200,
-            critChance: 0.30,
-            haste: 0.50,
-            armor: isTank ? 22000 : 10000,
-            spellResist: 0,
-            block: isTank ? 0.25 : 0.05,
-            parry: isTank ? 0.16 : 0.05,
-            dodge: isTank ? 0.14 : 0.08,
-            mastery: 0.20,
-            versatility: 0.05,
-            speed: 1,
-          },
-        };
-
-        combatEngine.addUnit(newUnit);
+        inheritedUnit = this.inheritCombatUnitFromAi(
+          combatEngine,
+          replacedAi.id,
+          {
+            id: queued.playerId,
+            name: queued.playerName,
+            classId: queued.classId,
+            spec: queued.spec,
+            role: queued.role,
+          }
+        );
       }
 
-      // Remove player from queue
       this.leaveWaitingQueue(roomId, queued.playerId);
-      substituted.push({ player: newMember, replacedAi });
+      substituted.push({ player: newMember, replacedAi, unit: inheritedUnit });
     }
 
     return { substituted };
+  }
+
+  /**
+   * Remap an AI combat unit to a human player while keeping HP/Buff/resources/threat.
+   */
+  public inheritCombatUnitFromAi(
+    combatEngine: CombatEngine,
+    aiUnitId: string,
+    player: { id: string; name: string; classId: ClassId; spec: string; role: RoleId }
+  ): Unit | undefined {
+    const old = combatEngine.getUnit(aiUnitId);
+    if (!old) return undefined;
+
+    const inherited: Unit = {
+      ...old,
+      id: player.id,
+      name: player.name,
+      classId: player.classId,
+      spec: player.spec,
+      role: player.role,
+      isPlayer: true,
+      buffs: (old.buffs || []).map((b) => ({ ...b })),
+      threatTable: (old.threatTable || []).map((t) => ({ ...t })),
+      resources: (old.resources || []).map((r) => ({ ...r })),
+      position: old.position ? { ...old.position } : { x: 200, y: 160 },
+      stats: old.stats ? { ...old.stats } : old.stats,
+      combatStats: old.combatStats ? { ...old.combatStats } : undefined,
+      runes: old.runes ? old.runes.map((r) => ({ ...r })) : undefined,
+    };
+
+    combatEngine.removeUnit(aiUnitId);
+    combatEngine.addUnit(inherited);
+    return inherited;
   }
 
   /**

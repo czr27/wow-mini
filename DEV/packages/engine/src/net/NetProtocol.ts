@@ -31,13 +31,65 @@ export interface NetworkUnitSnapshot {
   };
 }
 
+/** Cast / channel timeline: guest computes progress from startedAtMs + totalMs. */
+export interface NetworkCastTimeline {
+  unitId: string;
+  spellId: string;
+  spellName: string;
+  /** Host wall-clock when cast/channel started */
+  startedAtMs: number;
+  totalMs: number;
+  isChannel?: boolean;
+  targetId?: string;
+  /** When true, guest must clear this cast immediately */
+  interrupted?: boolean;
+}
+
+/** Spell CD timeline for guest ActionBar overlay. */
+export interface NetworkCooldownTimeline {
+  unitId: string;
+  spellId: string;
+  startedAtMs: number;
+  totalMs: number;
+}
+
+export interface NetworkGcdTimeline {
+  unitId: string;
+  startedAtMs: number;
+  totalMs: number;
+}
+
 export interface NetworkCombatSnapshot {
   roomId: string;
   seq: number;
+  /** Host wall-clock at snapshot send */
   timeMs: number;
   runPhase: string;
   bossTargetId?: string | null;
   units: NetworkUnitSnapshot[];
+  casts?: NetworkCastTimeline[];
+  cooldowns?: NetworkCooldownTimeline[];
+  gcds?: NetworkGcdTimeline[];
+  /** Explicit interrupt events since last snapshot (also mirrored on casts[].interrupted) */
+  interrupts?: Array<{ unitId: string; spellId?: string; atMs: number }>;
+  wipeVote?: NetworkVoteState;
+  skipTravelVote?: NetworkVoteState;
+}
+
+export type NetworkVoteKind = 'WIPE' | 'SKIP_TRAVEL';
+export type WipeVoteChoice = 'RETRY' | 'FINISH';
+export type SkipTravelVoteChoice = 'YES' | 'NO';
+
+export interface NetworkVoteState {
+  kind: NetworkVoteKind;
+  roomId: string;
+  startedAtMs: number;
+  timeoutMs: number;
+  /** playerId → choice string */
+  votes: Record<string, string>;
+  eligiblePlayerIds: string[];
+  resolved?: boolean;
+  result?: string | null;
 }
 
 export interface PlayerInputPayload {
@@ -45,10 +97,11 @@ export interface PlayerInputPayload {
   spellId?: string;
   targetId?: string | null;
   slotIndex?: number;
-  kind: 'CAST' | 'TARGET' | 'INTERRUPT' | 'MOVE' | 'READY' | 'WIPE_VOTE';
+  kind: 'CAST' | 'TARGET' | 'INTERRUPT' | 'MOVE' | 'READY' | 'WIPE_VOTE' | 'SKIP_TRAVEL_VOTE' | 'REQUEST_SKIP_TRAVEL';
   x?: number;
   y?: number;
-  wipeVote?: boolean;
+  wipeVote?: WipeVoteChoice;
+  skipTravelVote?: SkipTravelVoteChoice;
 }
 
 export type NetMessageType =
@@ -71,7 +124,13 @@ export type NetMessageType =
   | 'COMBAT_STATE'
   | 'MEMBER_LEFT'
   | 'MEMBER_REPLACE_AI'
+  | 'MEMBER_HOT_SWAP'
   | 'HOST_TRANSFER'
+  | 'VOTE_START'
+  | 'VOTE_CAST'
+  | 'VOTE_STATE'
+  | 'VOTE_RESULT'
+  | 'CAST_INTERRUPT'
   | 'ERROR';
 
 export interface NetEnvelope<T = unknown> {
@@ -108,7 +167,8 @@ export interface RoomActionPayload {
     | 'SET_READY'
     | 'SET_DIFFICULTY'
     | 'CHANGE_SPEC'
-    | 'SWITCH_MAP';
+    | 'SWITCH_MAP'
+    | 'HOT_SWAP_QUEUE';
   memberId?: string;
   role?: RoleId;
   ready?: boolean;
@@ -131,6 +191,32 @@ export interface MemberReplaceAiPayload {
   room: LobbyRoom;
 }
 
+/** Hot-swap: player takes AI slot, inheriting combat unit state. */
+export interface MemberHotSwapPayload {
+  roomId: string;
+  room: LobbyRoom;
+  playerId: string;
+  replacedAiId: string;
+  /** Inherited combat unit after id remap (host-authoritative). */
+  unitSnapshot?: NetworkUnitSnapshot;
+}
+
+export interface VoteStartPayload {
+  vote: NetworkVoteState;
+}
+
+export interface VoteCastPayload {
+  kind: NetworkVoteKind;
+  playerId: string;
+  choice: string;
+}
+
+export interface VoteResultPayload {
+  kind: NetworkVoteKind;
+  result: string;
+  vote: NetworkVoteState;
+}
+
 export function encodeNetMessage(msg: NetEnvelope): string {
   return JSON.stringify(msg);
 }
@@ -143,4 +229,33 @@ export function decodeNetMessage(raw: string): NetEnvelope | null {
   } catch {
     return null;
   }
+}
+
+/** Majority of eligible humans; ties fail. Empty eligible → false. */
+export function hasMajorityYes(
+  eligiblePlayerIds: string[],
+  votes: Record<string, string>,
+  yesValue = 'YES'
+): boolean {
+  const n = eligiblePlayerIds.length;
+  if (n <= 0) return false;
+  const yes = eligiblePlayerIds.filter((id) => votes[id] === yesValue).length;
+  return yes > n / 2;
+}
+
+/** Wipe: majority of RETRY vs FINISH among votes cast; if none cast, null. */
+export function resolveWipeMajority(
+  eligiblePlayerIds: string[],
+  votes: Record<string, string>
+): WipeVoteChoice | null {
+  let retry = 0;
+  let finish = 0;
+  for (const id of eligiblePlayerIds) {
+    const v = votes[id];
+    if (v === 'RETRY') retry++;
+    else if (v === 'FINISH') finish++;
+  }
+  if (retry === 0 && finish === 0) return null;
+  if (retry === finish) return null;
+  return retry > finish ? 'RETRY' : 'FINISH';
 }

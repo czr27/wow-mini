@@ -6,10 +6,15 @@ import {
   type AuthPayload,
   type LobbyRoom,
   type NetEnvelope,
+  type NetworkVoteKind,
   type PlayerInfo,
+  type PlayerInputPayload,
   type RoomActionPayload,
   type RoomCreatePayload,
+  type VoteCastPayload,
+  type VoteStartPayload,
 } from '@cata-raid-sim/engine';
+import { RoomVoteTracker } from './roomVotes.js';
 
 const DISCONNECT_AI_MS = 5000;
 
@@ -28,8 +33,63 @@ interface ClientSession {
 
 export class RoomWsHub {
   readonly roomManager = new RoomManager();
+  readonly votes = new RoomVoteTracker();
   private sessionsByPlayer = new Map<string, ClientSession>();
   private sessionsByWs = new Map<WebSocket, ClientSession>();
+
+  private humanIdsInRoom(roomId: string): string[] {
+    const room = this.roomManager.getRoom(roomId);
+    if (!room) return [];
+    return room.members.filter((m) => m.isPlayer && !m.isAi).map((m) => m.id);
+  }
+
+  private startVote(roomId: string, kind: NetworkVoteKind) {
+    const eligible = this.humanIdsInRoom(roomId);
+    if (eligible.length === 0) return null;
+    const existing = this.votes.get(roomId, kind);
+    if (existing && !existing.resolved) return existing;
+
+    const state = this.votes.start(roomId, kind, eligible, (result, finalState) => {
+      this.broadcastRoom(roomId, {
+        type: 'VOTE_RESULT',
+        roomId,
+        timeMs: Date.now(),
+        payload: { kind, result, vote: finalState },
+      });
+    });
+    this.broadcastRoom(roomId, {
+      type: 'VOTE_START',
+      roomId,
+      timeMs: Date.now(),
+      payload: { vote: state } satisfies VoteStartPayload,
+    });
+    this.broadcastRoom(roomId, {
+      type: 'VOTE_STATE',
+      roomId,
+      timeMs: Date.now(),
+      payload: state,
+    });
+    return state;
+  }
+
+  private applyVoteCast(roomId: string, kind: NetworkVoteKind, playerId: string, choice: string) {
+    const outcome = this.votes.cast(roomId, kind, playerId, choice);
+    if (!outcome) return;
+    this.broadcastRoom(roomId, {
+      type: 'VOTE_STATE',
+      roomId,
+      timeMs: Date.now(),
+      payload: outcome.state,
+    });
+    if (outcome.earlyResult) {
+      this.broadcastRoom(roomId, {
+        type: 'VOTE_RESULT',
+        roomId,
+        timeMs: Date.now(),
+        payload: { kind, result: outcome.earlyResult, vote: outcome.state },
+      });
+    }
+  }
 
   handleConnection(ws: WebSocket) {
     ws.send(
@@ -340,11 +400,64 @@ export class RoomWsHub {
         break;
       }
 
-      case 'PLAYER_INPUT':
-      case 'COMBAT_STATE': {
+      case 'VOTE_START': {
+        const roomId = msg.roomId || session.roomId;
+        if (!roomId) break;
+        const body = msg.payload as VoteStartPayload | { kind?: NetworkVoteKind };
+        const kind = (body as VoteStartPayload)?.vote?.kind || (body as any)?.kind;
+        if (kind === 'WIPE' || kind === 'SKIP_TRAVEL') {
+          this.startVote(roomId, kind);
+        }
+        break;
+      }
+
+      case 'VOTE_CAST': {
+        const roomId = msg.roomId || session.roomId;
+        if (!roomId) break;
+        const body = msg.payload as VoteCastPayload;
+        if (!body?.kind || !body.choice) break;
+        this.applyVoteCast(roomId, body.kind, session.playerId, body.choice);
+        break;
+      }
+
+      case 'PLAYER_INPUT': {
+        if (!msg.roomId && session.roomId) msg.roomId = session.roomId;
+        if (!msg.roomId) break;
+        const input = msg.payload as PlayerInputPayload;
+        if (input?.kind === 'REQUEST_SKIP_TRAVEL') {
+          this.startVote(msg.roomId, 'SKIP_TRAVEL');
+          // auto-count requester as YES
+          this.applyVoteCast(msg.roomId, 'SKIP_TRAVEL', session.playerId, 'YES');
+          break;
+        }
+        if (input?.kind === 'SKIP_TRAVEL_VOTE' && input.skipTravelVote) {
+          this.applyVoteCast(msg.roomId, 'SKIP_TRAVEL', session.playerId, input.skipTravelVote);
+          break;
+        }
+        if (input?.kind === 'WIPE_VOTE' && input.wipeVote) {
+          if (!this.votes.get(msg.roomId, 'WIPE')) {
+            this.startVote(msg.roomId, 'WIPE');
+          }
+          this.applyVoteCast(msg.roomId, 'WIPE', session.playerId, input.wipeVote);
+          break;
+        }
+        // Relay cast/move/etc to host and peers
+        this.broadcastRoom(msg.roomId, msg, session.playerId);
+        break;
+      }
+
+      case 'COMBAT_STATE':
+      case 'MEMBER_HOT_SWAP':
+      case 'CAST_INTERRUPT': {
         // Relay only within room; combat tick stays on host client
         if (!msg.roomId && session.roomId) msg.roomId = session.roomId;
         if (!msg.roomId) break;
+        // Auto-start wipe vote when host first reports WIPE_VOTE phase
+        if (msg.type === 'COMBAT_STATE' && (msg.payload as any)?.runPhase === 'WIPE_VOTE') {
+          if (!this.votes.get(msg.roomId, 'WIPE')) {
+            this.startVote(msg.roomId, 'WIPE');
+          }
+        }
         this.broadcastRoom(msg.roomId, msg, session.playerId);
         break;
       }
@@ -368,6 +481,7 @@ export class RoomWsHub {
       this.broadcastAll({ type: 'PRESENCE', timeMs: Date.now(), payload: this.presencePayload() });
 
       if (current.roomId) {
+        this.votes.clearRoom(current.roomId);
         const room = this.roomManager.getRoom(current.roomId);
         if (!room) return;
 

@@ -320,6 +320,7 @@ export class CombatEngine {
     spell: Spell;
     targetId: string;
     remainingMs: number;
+    totalMs: number;
     mode: SpellCastMode;
     costsToDeduct?: Array<{ kind: ResourceKind; cost: number }>;
     runesReq?: Array<'BLOOD' | 'FROST' | 'UNHOLY'>;
@@ -654,6 +655,7 @@ export class CombatEngine {
         spell,
         targetId,
         remainingMs: hastedCastMs,
+        totalMs: hastedCastMs,
         mode: 'CASTED',
         costsToDeduct,
         runesReq,
@@ -668,6 +670,7 @@ export class CombatEngine {
         spell,
         targetId,
         remainingMs: hastedChannelMs,
+        totalMs: hastedChannelMs,
         mode: 'CHANNELED',
       });
       this.resolveSpell(casterId, spell, targetId);
@@ -675,6 +678,26 @@ export class CombatEngine {
       this.resolveSpell(casterId, spell, targetId);
     }
     return true;
+  }
+
+  getPendingCasts(): ReadonlyArray<{
+    casterId: string;
+    spellId: string;
+    spellName: string;
+    remainingMs: number;
+    totalMs: number;
+    mode: SpellCastMode;
+    targetId: string;
+  }> {
+    return this.pendingCasts.map((c) => ({
+      casterId: c.casterId,
+      spellId: c.spell.id,
+      spellName: c.spell.name || c.spell.id,
+      remainingMs: c.remainingMs,
+      totalMs: c.totalMs || c.remainingMs,
+      mode: c.mode,
+      targetId: c.targetId,
+    }));
   }
 
   /** Interrupt a caster's current cast */
