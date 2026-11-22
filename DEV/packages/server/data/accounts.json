@@ -1,0 +1,4587 @@
+[
+  {
+    "id": "acc_1795307172004_3zhb2",
+    "username": "Champion",
+    "passwordHash": "wow123",
+    "characters": [
+      {
+        "id": "char_1795307172004_122qa",
+        "name": "莫格莱尼",
+        "classId": "DK",
+        "lastSpec": "BLOOD",
+        "specKeybindings": {
+          "BLOOD": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T00:26:12.004Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {}
+      },
+      {
+        "id": "char_1795307172004_95pg7",
+        "name": "玛法里奥",
+        "classId": "DRUID",
+        "lastSpec": "RESTORATION",
+        "specKeybindings": {
+          "RESTORATION": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T00:26:12.004Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {}
+      },
+      {
+        "id": "char_1795307172004_ep7r0",
+        "name": "萨尔",
+        "classId": "SHAMAN",
+        "lastSpec": "RESTORATION",
+        "specKeybindings": {
+          "RESTORATION": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T00:26:12.004Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {}
+      },
+      {
+        "id": "char_1795307172004_vsgmn",
+        "name": "吉安娜",
+        "classId": "MAGE",
+        "lastSpec": "FIRE",
+        "specKeybindings": {
+          "FIRE": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T00:26:12.004Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {}
+      },
+      {
+        "id": "char_1795307172004_j6c9w",
+        "name": "瓦莉拉",
+        "classId": "ROGUE",
+        "lastSpec": "COMBAT",
+        "specKeybindings": {
+          "COMBAT": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T00:26:12.004Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {}
+      }
+    ],
+    "createdAtIso": "2026-11-22T00:26:12.004Z"
+  },
+  {
+    "id": "acc_1795307172004_ze24f",
+    "username": "LayoutTester",
+    "passwordHash": "pwd123",
+    "characters": [
+      {
+        "id": "char_1795307172004_7t8f5",
+        "name": "雷克萨",
+        "classId": "DRUID",
+        "lastSpec": "BALANCE",
+        "specKeybindings": {
+          "BALANCE": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T00:26:12.004Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {
+          "raidFrames": {
+            "x": 50,
+            "y": 120,
+            "width": 320,
+            "height": 260
+          },
+          "actionBar": {
+            "x": 500,
+            "y": 820
+          },
+          "statsPanel": {
+            "x": 1100,
+            "y": 550
+          }
+        }
+      }
+    ],
+    "createdAtIso": "2026-11-22T00:26:12.004Z"
+  },
+  {
+    "id": "acc_1795304285915_2a4d1",
+    "username": "Hero_1795304285915",
+    "passwordHash": "pass123",
+    "characters": [
+      {
+        "id": "char_1795304285915_vydso",
+        "name": "阿尔萨斯",
+        "classId": "DK",
+        "lastSpec": "FROST",
+        "specKeybindings": {
+          "BLOOD": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "F",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          },
+          "FROST": {
+            "0": "Q",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "E",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [
+          {
+            "id": "cert_1795304285916_giy4v",
+            "dungeonId": "shadowfang_keep",
+            "dungeonName": "影牙城堡（英雄模式）",
+            "clearedAtIso": "2026-11-21T23:38:05.916Z",
+            "characterName": "阿尔萨斯",
+            "characterClass": "DK",
+            "characterSpec": "FROST",
+            "totalDurationSec": 130.5,
+            "encounters": [
+              {
+                "bossIndex": 0,
+                "bossId": "ashbury",
+                "bossName": "亚什布里男爵",
+                "result": "KILL",
+                "durationSec": 48.5,
+                "wipesBeforeKill": 0,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 520000,
+                    "dps": 10721,
+                    "totalHealing": 680000,
+                    "hps": 14020,
+                    "overhealPct": 15.2,
+                    "damageTaken": 450000,
+                    "interrupts": 3,
+                    "deaths": 0
+                  }
+                ]
+              },
+              {
+                "bossIndex": 4,
+                "bossId": "godfrey",
+                "bossName": "高弗雷勋爵",
+                "result": "KILL",
+                "durationSec": 82,
+                "wipesBeforeKill": 1,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 850000,
+                    "dps": 10365,
+                    "totalHealing": 920000,
+                    "hps": 11219,
+                    "overhealPct": 18,
+                    "damageTaken": 620000,
+                    "interrupts": 4,
+                    "deaths": 0
+                  }
+                ]
+              }
+            ],
+            "characterStats": {
+              "totalDamage": 1370000,
+              "dps": 10498,
+              "totalHealing": 1600000,
+              "effectiveHealing": 1600000,
+              "effectiveHps": 12261,
+              "overhealPct": 12.5,
+              "damageTaken": 1070000,
+              "interrupts": 7,
+              "deaths": 0
+            }
+          }
+        ],
+        "createdAtIso": "2026-11-21T23:38:05.915Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {}
+      }
+    ],
+    "createdAtIso": "2026-11-21T23:38:05.915Z"
+  },
+  {
+    "id": "acc_1795304308283_zx2c5",
+    "username": "Hero_1795304308283",
+    "passwordHash": "pass123",
+    "characters": [
+      {
+        "id": "char_1795304308283_uhhnk",
+        "name": "阿尔萨斯",
+        "classId": "DK",
+        "lastSpec": "FROST",
+        "specKeybindings": {
+          "BLOOD": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "F",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          },
+          "FROST": {
+            "0": "Q",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "E",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [
+          {
+            "id": "cert_1795304308283_f0zt8",
+            "dungeonId": "shadowfang_keep",
+            "dungeonName": "影牙城堡（英雄模式）",
+            "clearedAtIso": "2026-11-21T23:38:28.283Z",
+            "characterName": "阿尔萨斯",
+            "characterClass": "DK",
+            "characterSpec": "FROST",
+            "totalDurationSec": 130.5,
+            "encounters": [
+              {
+                "bossIndex": 0,
+                "bossId": "ashbury",
+                "bossName": "亚什布里男爵",
+                "result": "KILL",
+                "durationSec": 48.5,
+                "wipesBeforeKill": 0,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 520000,
+                    "dps": 10721,
+                    "totalHealing": 680000,
+                    "hps": 14020,
+                    "overhealPct": 15.2,
+                    "damageTaken": 450000,
+                    "interrupts": 3,
+                    "deaths": 0
+                  }
+                ]
+              },
+              {
+                "bossIndex": 4,
+                "bossId": "godfrey",
+                "bossName": "高弗雷勋爵",
+                "result": "KILL",
+                "durationSec": 82,
+                "wipesBeforeKill": 1,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 850000,
+                    "dps": 10365,
+                    "totalHealing": 920000,
+                    "hps": 11219,
+                    "overhealPct": 18,
+                    "damageTaken": 620000,
+                    "interrupts": 4,
+                    "deaths": 0
+                  }
+                ]
+              }
+            ],
+            "characterStats": {
+              "totalDamage": 1370000,
+              "dps": 10498,
+              "totalHealing": 1600000,
+              "effectiveHealing": 1600000,
+              "effectiveHps": 12261,
+              "overhealPct": 12.5,
+              "damageTaken": 1070000,
+              "interrupts": 7,
+              "deaths": 0
+            }
+          }
+        ],
+        "createdAtIso": "2026-11-21T23:38:28.283Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {}
+      }
+    ],
+    "createdAtIso": "2026-11-21T23:38:28.283Z"
+  },
+  {
+    "id": "acc_1795304557385_aaz6v",
+    "username": "Hero_1795304557385",
+    "passwordHash": "pass123",
+    "characters": [
+      {
+        "id": "char_1795304557385_47b6w",
+        "name": "阿尔萨斯",
+        "classId": "DK",
+        "lastSpec": "FROST",
+        "specKeybindings": {
+          "BLOOD": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "F",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          },
+          "FROST": {
+            "0": "Q",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "E",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [
+          {
+            "id": "cert_1795304557386_apklc",
+            "dungeonId": "shadowfang_keep",
+            "dungeonName": "影牙城堡（英雄模式）",
+            "clearedAtIso": "2026-11-21T23:42:37.386Z",
+            "characterName": "阿尔萨斯",
+            "characterClass": "DK",
+            "characterSpec": "FROST",
+            "totalDurationSec": 130.5,
+            "encounters": [
+              {
+                "bossIndex": 0,
+                "bossId": "ashbury",
+                "bossName": "亚什布里男爵",
+                "result": "KILL",
+                "durationSec": 48.5,
+                "wipesBeforeKill": 0,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 520000,
+                    "dps": 10721,
+                    "totalHealing": 680000,
+                    "hps": 14020,
+                    "overhealPct": 15.2,
+                    "damageTaken": 450000,
+                    "interrupts": 3,
+                    "deaths": 0
+                  }
+                ]
+              },
+              {
+                "bossIndex": 4,
+                "bossId": "godfrey",
+                "bossName": "高弗雷勋爵",
+                "result": "KILL",
+                "durationSec": 82,
+                "wipesBeforeKill": 1,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 850000,
+                    "dps": 10365,
+                    "totalHealing": 920000,
+                    "hps": 11219,
+                    "overhealPct": 18,
+                    "damageTaken": 620000,
+                    "interrupts": 4,
+                    "deaths": 0
+                  }
+                ]
+              }
+            ],
+            "characterStats": {
+              "totalDamage": 1370000,
+              "dps": 10498,
+              "totalHealing": 1600000,
+              "effectiveHealing": 1600000,
+              "effectiveHps": 12261,
+              "overhealPct": 12.5,
+              "damageTaken": 1070000,
+              "interrupts": 7,
+              "deaths": 0
+            }
+          }
+        ],
+        "createdAtIso": "2026-11-21T23:42:37.385Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {}
+      }
+    ],
+    "createdAtIso": "2026-11-21T23:42:37.385Z"
+  },
+  {
+    "id": "acc_1795304601100_l5co1",
+    "username": "Hero_1795304601100",
+    "passwordHash": "pass123",
+    "characters": [
+      {
+        "id": "char_1795304601100_j8kcv",
+        "name": "阿尔萨斯",
+        "classId": "DK",
+        "lastSpec": "FROST",
+        "specKeybindings": {
+          "BLOOD": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "F",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          },
+          "FROST": {
+            "0": "Q",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "E",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [
+          {
+            "id": "cert_1795304601101_ln588",
+            "dungeonId": "shadowfang_keep",
+            "dungeonName": "影牙城堡（英雄模式）",
+            "clearedAtIso": "2026-11-21T23:43:21.101Z",
+            "characterName": "阿尔萨斯",
+            "characterClass": "DK",
+            "characterSpec": "FROST",
+            "totalDurationSec": 130.5,
+            "encounters": [
+              {
+                "bossIndex": 0,
+                "bossId": "ashbury",
+                "bossName": "亚什布里男爵",
+                "result": "KILL",
+                "durationSec": 48.5,
+                "wipesBeforeKill": 0,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 520000,
+                    "dps": 10721,
+                    "totalHealing": 680000,
+                    "hps": 14020,
+                    "overhealPct": 15.2,
+                    "damageTaken": 450000,
+                    "interrupts": 3,
+                    "deaths": 0
+                  }
+                ]
+              },
+              {
+                "bossIndex": 4,
+                "bossId": "godfrey",
+                "bossName": "高弗雷勋爵",
+                "result": "KILL",
+                "durationSec": 82,
+                "wipesBeforeKill": 1,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 850000,
+                    "dps": 10365,
+                    "totalHealing": 920000,
+                    "hps": 11219,
+                    "overhealPct": 18,
+                    "damageTaken": 620000,
+                    "interrupts": 4,
+                    "deaths": 0
+                  }
+                ]
+              }
+            ],
+            "characterStats": {
+              "totalDamage": 1370000,
+              "dps": 10498,
+              "totalHealing": 1600000,
+              "effectiveHealing": 1600000,
+              "effectiveHps": 12261,
+              "overhealPct": 12.5,
+              "damageTaken": 1070000,
+              "interrupts": 7,
+              "deaths": 0
+            }
+          }
+        ],
+        "createdAtIso": "2026-11-21T23:43:21.100Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {}
+      }
+    ],
+    "createdAtIso": "2026-11-21T23:43:21.100Z"
+  },
+  {
+    "id": "acc_1795304630660_u8psv",
+    "username": "Hero_1795304630660",
+    "passwordHash": "pass123",
+    "characters": [
+      {
+        "id": "char_1795304630660_5530i",
+        "name": "阿尔萨斯",
+        "classId": "DK",
+        "lastSpec": "FROST",
+        "specKeybindings": {
+          "BLOOD": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "F",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          },
+          "FROST": {
+            "0": "Q",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "E",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [
+          {
+            "id": "cert_1795304630661_4tyxf",
+            "dungeonId": "shadowfang_keep",
+            "dungeonName": "影牙城堡（英雄模式）",
+            "clearedAtIso": "2026-11-21T23:43:50.661Z",
+            "characterName": "阿尔萨斯",
+            "characterClass": "DK",
+            "characterSpec": "FROST",
+            "totalDurationSec": 130.5,
+            "encounters": [
+              {
+                "bossIndex": 0,
+                "bossId": "ashbury",
+                "bossName": "亚什布里男爵",
+                "result": "KILL",
+                "durationSec": 48.5,
+                "wipesBeforeKill": 0,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 520000,
+                    "dps": 10721,
+                    "totalHealing": 680000,
+                    "hps": 14020,
+                    "overhealPct": 15.2,
+                    "damageTaken": 450000,
+                    "interrupts": 3,
+                    "deaths": 0
+                  }
+                ]
+              },
+              {
+                "bossIndex": 4,
+                "bossId": "godfrey",
+                "bossName": "高弗雷勋爵",
+                "result": "KILL",
+                "durationSec": 82,
+                "wipesBeforeKill": 1,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 850000,
+                    "dps": 10365,
+                    "totalHealing": 920000,
+                    "hps": 11219,
+                    "overhealPct": 18,
+                    "damageTaken": 620000,
+                    "interrupts": 4,
+                    "deaths": 0
+                  }
+                ]
+              }
+            ],
+            "characterStats": {
+              "totalDamage": 1370000,
+              "dps": 10498,
+              "totalHealing": 1600000,
+              "effectiveHealing": 1600000,
+              "effectiveHps": 12261,
+              "overhealPct": 12.5,
+              "damageTaken": 1070000,
+              "interrupts": 7,
+              "deaths": 0
+            }
+          }
+        ],
+        "createdAtIso": "2026-11-21T23:43:50.660Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {}
+      }
+    ],
+    "createdAtIso": "2026-11-21T23:43:50.660Z"
+  },
+  {
+    "id": "acc_1795304654714_yt64h",
+    "username": "Hero_1795304654714",
+    "passwordHash": "pass123",
+    "characters": [
+      {
+        "id": "char_1795304654714_nljjw",
+        "name": "阿尔萨斯",
+        "classId": "DK",
+        "lastSpec": "FROST",
+        "specKeybindings": {
+          "BLOOD": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "F",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          },
+          "FROST": {
+            "0": "Q",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "E",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [
+          {
+            "id": "cert_1795304654715_yyekd",
+            "dungeonId": "shadowfang_keep",
+            "dungeonName": "影牙城堡（英雄模式）",
+            "clearedAtIso": "2026-11-21T23:44:14.715Z",
+            "characterName": "阿尔萨斯",
+            "characterClass": "DK",
+            "characterSpec": "FROST",
+            "totalDurationSec": 130.5,
+            "encounters": [
+              {
+                "bossIndex": 0,
+                "bossId": "ashbury",
+                "bossName": "亚什布里男爵",
+                "result": "KILL",
+                "durationSec": 48.5,
+                "wipesBeforeKill": 0,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 520000,
+                    "dps": 10721,
+                    "totalHealing": 680000,
+                    "hps": 14020,
+                    "overhealPct": 15.2,
+                    "damageTaken": 450000,
+                    "interrupts": 3,
+                    "deaths": 0
+                  }
+                ]
+              },
+              {
+                "bossIndex": 4,
+                "bossId": "godfrey",
+                "bossName": "高弗雷勋爵",
+                "result": "KILL",
+                "durationSec": 82,
+                "wipesBeforeKill": 1,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 850000,
+                    "dps": 10365,
+                    "totalHealing": 920000,
+                    "hps": 11219,
+                    "overhealPct": 18,
+                    "damageTaken": 620000,
+                    "interrupts": 4,
+                    "deaths": 0
+                  }
+                ]
+              }
+            ],
+            "characterStats": {
+              "totalDamage": 1370000,
+              "dps": 10498,
+              "totalHealing": 1600000,
+              "effectiveHealing": 1600000,
+              "effectiveHps": 12261,
+              "overhealPct": 12.5,
+              "damageTaken": 1070000,
+              "interrupts": 7,
+              "deaths": 0
+            }
+          }
+        ],
+        "createdAtIso": "2026-11-21T23:44:14.714Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {}
+      }
+    ],
+    "createdAtIso": "2026-11-21T23:44:14.714Z"
+  },
+  {
+    "id": "acc_1795304664152_qk9v2",
+    "username": "Hero_1795304664152",
+    "passwordHash": "pass123",
+    "characters": [
+      {
+        "id": "char_1795304664152_0la0l",
+        "name": "阿尔萨斯",
+        "classId": "DK",
+        "lastSpec": "FROST",
+        "specKeybindings": {
+          "BLOOD": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "F",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          },
+          "FROST": {
+            "0": "Q",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "E",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [
+          {
+            "id": "cert_1795304664152_gjvq5",
+            "dungeonId": "shadowfang_keep",
+            "dungeonName": "影牙城堡（英雄模式）",
+            "clearedAtIso": "2026-11-21T23:44:24.152Z",
+            "characterName": "阿尔萨斯",
+            "characterClass": "DK",
+            "characterSpec": "FROST",
+            "totalDurationSec": 130.5,
+            "encounters": [
+              {
+                "bossIndex": 0,
+                "bossId": "ashbury",
+                "bossName": "亚什布里男爵",
+                "result": "KILL",
+                "durationSec": 48.5,
+                "wipesBeforeKill": 0,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 520000,
+                    "dps": 10721,
+                    "totalHealing": 680000,
+                    "hps": 14020,
+                    "overhealPct": 15.2,
+                    "damageTaken": 450000,
+                    "interrupts": 3,
+                    "deaths": 0
+                  }
+                ]
+              },
+              {
+                "bossIndex": 4,
+                "bossId": "godfrey",
+                "bossName": "高弗雷勋爵",
+                "result": "KILL",
+                "durationSec": 82,
+                "wipesBeforeKill": 1,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 850000,
+                    "dps": 10365,
+                    "totalHealing": 920000,
+                    "hps": 11219,
+                    "overhealPct": 18,
+                    "damageTaken": 620000,
+                    "interrupts": 4,
+                    "deaths": 0
+                  }
+                ]
+              }
+            ],
+            "characterStats": {
+              "totalDamage": 1370000,
+              "dps": 10498,
+              "totalHealing": 1600000,
+              "effectiveHealing": 1600000,
+              "effectiveHps": 12261,
+              "overhealPct": 12.5,
+              "damageTaken": 1070000,
+              "interrupts": 7,
+              "deaths": 0
+            }
+          }
+        ],
+        "createdAtIso": "2026-11-21T23:44:24.152Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {}
+      }
+    ],
+    "createdAtIso": "2026-11-21T23:44:24.152Z"
+  },
+  {
+    "id": "acc_1795304932216_dnbh8",
+    "username": "Hero_1795304932216",
+    "passwordHash": "pass123",
+    "characters": [
+      {
+        "id": "char_1795304932216_vhic3",
+        "name": "阿尔萨斯",
+        "classId": "DK",
+        "lastSpec": "FROST",
+        "specKeybindings": {
+          "BLOOD": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "F",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          },
+          "FROST": {
+            "0": "Q",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "E",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [
+          {
+            "id": "cert_1795304932217_6srcp",
+            "dungeonId": "shadowfang_keep",
+            "dungeonName": "影牙城堡（英雄模式）",
+            "clearedAtIso": "2026-11-21T23:48:52.217Z",
+            "characterName": "阿尔萨斯",
+            "characterClass": "DK",
+            "characterSpec": "FROST",
+            "totalDurationSec": 130.5,
+            "encounters": [
+              {
+                "bossIndex": 0,
+                "bossId": "ashbury",
+                "bossName": "亚什布里男爵",
+                "result": "KILL",
+                "durationSec": 48.5,
+                "wipesBeforeKill": 0,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 520000,
+                    "dps": 10721,
+                    "totalHealing": 680000,
+                    "hps": 14020,
+                    "overhealPct": 15.2,
+                    "damageTaken": 450000,
+                    "interrupts": 3,
+                    "deaths": 0
+                  }
+                ]
+              },
+              {
+                "bossIndex": 4,
+                "bossId": "godfrey",
+                "bossName": "高弗雷勋爵",
+                "result": "KILL",
+                "durationSec": 82,
+                "wipesBeforeKill": 1,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 850000,
+                    "dps": 10365,
+                    "totalHealing": 920000,
+                    "hps": 11219,
+                    "overhealPct": 18,
+                    "damageTaken": 620000,
+                    "interrupts": 4,
+                    "deaths": 0
+                  }
+                ]
+              }
+            ],
+            "characterStats": {
+              "totalDamage": 1370000,
+              "dps": 10498,
+              "totalHealing": 1600000,
+              "effectiveHealing": 1600000,
+              "effectiveHps": 12261,
+              "overhealPct": 12.5,
+              "damageTaken": 1070000,
+              "interrupts": 7,
+              "deaths": 0
+            }
+          }
+        ],
+        "createdAtIso": "2026-11-21T23:48:52.216Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {}
+      }
+    ],
+    "createdAtIso": "2026-11-21T23:48:52.216Z"
+  },
+  {
+    "id": "acc_1795305152094_7gmj1",
+    "username": "Hero_1795305152094",
+    "passwordHash": "pass123",
+    "characters": [
+      {
+        "id": "char_1795305152094_42gtf",
+        "name": "阿尔萨斯",
+        "classId": "DK",
+        "lastSpec": "FROST",
+        "specKeybindings": {
+          "BLOOD": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "F",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          },
+          "FROST": {
+            "0": "Q",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "E",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [
+          {
+            "id": "cert_1795305152095_6qx47",
+            "dungeonId": "shadowfang_keep",
+            "dungeonName": "影牙城堡（英雄模式）",
+            "clearedAtIso": "2026-11-21T23:52:32.095Z",
+            "characterName": "阿尔萨斯",
+            "characterClass": "DK",
+            "characterSpec": "FROST",
+            "totalDurationSec": 130.5,
+            "encounters": [
+              {
+                "bossIndex": 0,
+                "bossId": "ashbury",
+                "bossName": "亚什布里男爵",
+                "result": "KILL",
+                "durationSec": 48.5,
+                "wipesBeforeKill": 0,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 520000,
+                    "dps": 10721,
+                    "totalHealing": 680000,
+                    "hps": 14020,
+                    "overhealPct": 15.2,
+                    "damageTaken": 450000,
+                    "interrupts": 3,
+                    "deaths": 0
+                  }
+                ]
+              },
+              {
+                "bossIndex": 4,
+                "bossId": "godfrey",
+                "bossName": "高弗雷勋爵",
+                "result": "KILL",
+                "durationSec": 82,
+                "wipesBeforeKill": 1,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 850000,
+                    "dps": 10365,
+                    "totalHealing": 920000,
+                    "hps": 11219,
+                    "overhealPct": 18,
+                    "damageTaken": 620000,
+                    "interrupts": 4,
+                    "deaths": 0
+                  }
+                ]
+              }
+            ],
+            "characterStats": {
+              "totalDamage": 1370000,
+              "dps": 10498,
+              "totalHealing": 1600000,
+              "effectiveHealing": 1600000,
+              "effectiveHps": 12261,
+              "overhealPct": 12.5,
+              "damageTaken": 1070000,
+              "interrupts": 7,
+              "deaths": 0
+            }
+          }
+        ],
+        "createdAtIso": "2026-11-21T23:52:32.094Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {}
+      }
+    ],
+    "createdAtIso": "2026-11-21T23:52:32.094Z"
+  },
+  {
+    "id": "acc_1795305156166_db5uq",
+    "username": "Hero_1795305156166",
+    "passwordHash": "pass123",
+    "characters": [
+      {
+        "id": "char_1795305156166_h9r5l",
+        "name": "阿尔萨斯",
+        "classId": "DK",
+        "lastSpec": "FROST",
+        "specKeybindings": {
+          "BLOOD": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "F",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          },
+          "FROST": {
+            "0": "Q",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "E",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [
+          {
+            "id": "cert_1795305156167_i0agj",
+            "dungeonId": "shadowfang_keep",
+            "dungeonName": "影牙城堡（英雄模式）",
+            "clearedAtIso": "2026-11-21T23:52:36.167Z",
+            "characterName": "阿尔萨斯",
+            "characterClass": "DK",
+            "characterSpec": "FROST",
+            "totalDurationSec": 130.5,
+            "encounters": [
+              {
+                "bossIndex": 0,
+                "bossId": "ashbury",
+                "bossName": "亚什布里男爵",
+                "result": "KILL",
+                "durationSec": 48.5,
+                "wipesBeforeKill": 0,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 520000,
+                    "dps": 10721,
+                    "totalHealing": 680000,
+                    "hps": 14020,
+                    "overhealPct": 15.2,
+                    "damageTaken": 450000,
+                    "interrupts": 3,
+                    "deaths": 0
+                  }
+                ]
+              },
+              {
+                "bossIndex": 4,
+                "bossId": "godfrey",
+                "bossName": "高弗雷勋爵",
+                "result": "KILL",
+                "durationSec": 82,
+                "wipesBeforeKill": 1,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 850000,
+                    "dps": 10365,
+                    "totalHealing": 920000,
+                    "hps": 11219,
+                    "overhealPct": 18,
+                    "damageTaken": 620000,
+                    "interrupts": 4,
+                    "deaths": 0
+                  }
+                ]
+              }
+            ],
+            "characterStats": {
+              "totalDamage": 1370000,
+              "dps": 10498,
+              "totalHealing": 1600000,
+              "effectiveHealing": 1600000,
+              "effectiveHps": 12261,
+              "overhealPct": 12.5,
+              "damageTaken": 1070000,
+              "interrupts": 7,
+              "deaths": 0
+            }
+          }
+        ],
+        "createdAtIso": "2026-11-21T23:52:36.166Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {}
+      }
+    ],
+    "createdAtIso": "2026-11-21T23:52:36.166Z"
+  },
+  {
+    "id": "acc_1795305206753_vtwra",
+    "username": "Hero_1795305206753",
+    "passwordHash": "pass123",
+    "characters": [
+      {
+        "id": "char_1795305206753_hr9c8",
+        "name": "阿尔萨斯",
+        "classId": "DK",
+        "lastSpec": "FROST",
+        "specKeybindings": {
+          "BLOOD": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "F",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          },
+          "FROST": {
+            "0": "Q",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "E",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [
+          {
+            "id": "cert_1795305206753_frn0n",
+            "dungeonId": "shadowfang_keep",
+            "dungeonName": "影牙城堡（英雄模式）",
+            "clearedAtIso": "2026-11-21T23:53:26.753Z",
+            "characterName": "阿尔萨斯",
+            "characterClass": "DK",
+            "characterSpec": "FROST",
+            "totalDurationSec": 130.5,
+            "encounters": [
+              {
+                "bossIndex": 0,
+                "bossId": "ashbury",
+                "bossName": "亚什布里男爵",
+                "result": "KILL",
+                "durationSec": 48.5,
+                "wipesBeforeKill": 0,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 520000,
+                    "dps": 10721,
+                    "totalHealing": 680000,
+                    "hps": 14020,
+                    "overhealPct": 15.2,
+                    "damageTaken": 450000,
+                    "interrupts": 3,
+                    "deaths": 0
+                  }
+                ]
+              },
+              {
+                "bossIndex": 4,
+                "bossId": "godfrey",
+                "bossName": "高弗雷勋爵",
+                "result": "KILL",
+                "durationSec": 82,
+                "wipesBeforeKill": 1,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 850000,
+                    "dps": 10365,
+                    "totalHealing": 920000,
+                    "hps": 11219,
+                    "overhealPct": 18,
+                    "damageTaken": 620000,
+                    "interrupts": 4,
+                    "deaths": 0
+                  }
+                ]
+              }
+            ],
+            "characterStats": {
+              "totalDamage": 1370000,
+              "dps": 10498,
+              "totalHealing": 1600000,
+              "effectiveHealing": 1600000,
+              "effectiveHps": 12261,
+              "overhealPct": 12.5,
+              "damageTaken": 1070000,
+              "interrupts": 7,
+              "deaths": 0
+            }
+          }
+        ],
+        "createdAtIso": "2026-11-21T23:53:26.753Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {}
+      }
+    ],
+    "createdAtIso": "2026-11-21T23:53:26.753Z"
+  },
+  {
+    "id": "acc_1795305223261_qcixl",
+    "username": "Hero_1795305223261",
+    "passwordHash": "pass123",
+    "characters": [
+      {
+        "id": "char_1795305223261_pioyd",
+        "name": "阿尔萨斯",
+        "classId": "DK",
+        "lastSpec": "FROST",
+        "specKeybindings": {
+          "BLOOD": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "F",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          },
+          "FROST": {
+            "0": "Q",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "E",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [
+          {
+            "id": "cert_1795305223262_rytqb",
+            "dungeonId": "shadowfang_keep",
+            "dungeonName": "影牙城堡（英雄模式）",
+            "clearedAtIso": "2026-11-21T23:53:43.262Z",
+            "characterName": "阿尔萨斯",
+            "characterClass": "DK",
+            "characterSpec": "FROST",
+            "totalDurationSec": 130.5,
+            "encounters": [
+              {
+                "bossIndex": 0,
+                "bossId": "ashbury",
+                "bossName": "亚什布里男爵",
+                "result": "KILL",
+                "durationSec": 48.5,
+                "wipesBeforeKill": 0,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 520000,
+                    "dps": 10721,
+                    "totalHealing": 680000,
+                    "hps": 14020,
+                    "overhealPct": 15.2,
+                    "damageTaken": 450000,
+                    "interrupts": 3,
+                    "deaths": 0
+                  }
+                ]
+              },
+              {
+                "bossIndex": 4,
+                "bossId": "godfrey",
+                "bossName": "高弗雷勋爵",
+                "result": "KILL",
+                "durationSec": 82,
+                "wipesBeforeKill": 1,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 850000,
+                    "dps": 10365,
+                    "totalHealing": 920000,
+                    "hps": 11219,
+                    "overhealPct": 18,
+                    "damageTaken": 620000,
+                    "interrupts": 4,
+                    "deaths": 0
+                  }
+                ]
+              }
+            ],
+            "characterStats": {
+              "totalDamage": 1370000,
+              "dps": 10498,
+              "totalHealing": 1600000,
+              "effectiveHealing": 1600000,
+              "effectiveHps": 12261,
+              "overhealPct": 12.5,
+              "damageTaken": 1070000,
+              "interrupts": 7,
+              "deaths": 0
+            }
+          }
+        ],
+        "createdAtIso": "2026-11-21T23:53:43.261Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {}
+      }
+    ],
+    "createdAtIso": "2026-11-21T23:53:43.261Z"
+  },
+  {
+    "id": "acc_1795305323625_9g0et",
+    "username": "Hero_1795305323625",
+    "passwordHash": "pass123",
+    "characters": [
+      {
+        "id": "char_1795305323625_h1g5q",
+        "name": "阿尔萨斯",
+        "classId": "DK",
+        "lastSpec": "FROST",
+        "specKeybindings": {
+          "BLOOD": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "F",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          },
+          "FROST": {
+            "0": "Q",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "E",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [
+          {
+            "id": "cert_1795305323625_bpcrf",
+            "dungeonId": "shadowfang_keep",
+            "dungeonName": "影牙城堡（英雄模式）",
+            "clearedAtIso": "2026-11-21T23:55:23.625Z",
+            "characterName": "阿尔萨斯",
+            "characterClass": "DK",
+            "characterSpec": "FROST",
+            "totalDurationSec": 130.5,
+            "encounters": [
+              {
+                "bossIndex": 0,
+                "bossId": "ashbury",
+                "bossName": "亚什布里男爵",
+                "result": "KILL",
+                "durationSec": 48.5,
+                "wipesBeforeKill": 0,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 520000,
+                    "dps": 10721,
+                    "totalHealing": 680000,
+                    "hps": 14020,
+                    "overhealPct": 15.2,
+                    "damageTaken": 450000,
+                    "interrupts": 3,
+                    "deaths": 0
+                  }
+                ]
+              },
+              {
+                "bossIndex": 4,
+                "bossId": "godfrey",
+                "bossName": "高弗雷勋爵",
+                "result": "KILL",
+                "durationSec": 82,
+                "wipesBeforeKill": 1,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 850000,
+                    "dps": 10365,
+                    "totalHealing": 920000,
+                    "hps": 11219,
+                    "overhealPct": 18,
+                    "damageTaken": 620000,
+                    "interrupts": 4,
+                    "deaths": 0
+                  }
+                ]
+              }
+            ],
+            "characterStats": {
+              "totalDamage": 1370000,
+              "dps": 10498,
+              "totalHealing": 1600000,
+              "effectiveHealing": 1600000,
+              "effectiveHps": 12261,
+              "overhealPct": 12.5,
+              "damageTaken": 1070000,
+              "interrupts": 7,
+              "deaths": 0
+            }
+          }
+        ],
+        "createdAtIso": "2026-11-21T23:55:23.625Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {}
+      }
+    ],
+    "createdAtIso": "2026-11-21T23:55:23.625Z"
+  },
+  {
+    "id": "acc_1795305327950_0tisp",
+    "username": "Hero_1795305327950",
+    "passwordHash": "pass123",
+    "characters": [
+      {
+        "id": "char_1795305327950_x6jyl",
+        "name": "阿尔萨斯",
+        "classId": "DK",
+        "lastSpec": "FROST",
+        "specKeybindings": {
+          "BLOOD": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "F",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          },
+          "FROST": {
+            "0": "Q",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "E",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [
+          {
+            "id": "cert_1795305327950_smik2",
+            "dungeonId": "shadowfang_keep",
+            "dungeonName": "影牙城堡（英雄模式）",
+            "clearedAtIso": "2026-11-21T23:55:27.950Z",
+            "characterName": "阿尔萨斯",
+            "characterClass": "DK",
+            "characterSpec": "FROST",
+            "totalDurationSec": 130.5,
+            "encounters": [
+              {
+                "bossIndex": 0,
+                "bossId": "ashbury",
+                "bossName": "亚什布里男爵",
+                "result": "KILL",
+                "durationSec": 48.5,
+                "wipesBeforeKill": 0,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 520000,
+                    "dps": 10721,
+                    "totalHealing": 680000,
+                    "hps": 14020,
+                    "overhealPct": 15.2,
+                    "damageTaken": 450000,
+                    "interrupts": 3,
+                    "deaths": 0
+                  }
+                ]
+              },
+              {
+                "bossIndex": 4,
+                "bossId": "godfrey",
+                "bossName": "高弗雷勋爵",
+                "result": "KILL",
+                "durationSec": 82,
+                "wipesBeforeKill": 1,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 850000,
+                    "dps": 10365,
+                    "totalHealing": 920000,
+                    "hps": 11219,
+                    "overhealPct": 18,
+                    "damageTaken": 620000,
+                    "interrupts": 4,
+                    "deaths": 0
+                  }
+                ]
+              }
+            ],
+            "characterStats": {
+              "totalDamage": 1370000,
+              "dps": 10498,
+              "totalHealing": 1600000,
+              "effectiveHealing": 1600000,
+              "effectiveHps": 12261,
+              "overhealPct": 12.5,
+              "damageTaken": 1070000,
+              "interrupts": 7,
+              "deaths": 0
+            }
+          }
+        ],
+        "createdAtIso": "2026-11-21T23:55:27.950Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {}
+      }
+    ],
+    "createdAtIso": "2026-11-21T23:55:27.950Z"
+  },
+  {
+    "id": "acc_1795305413043_tmz7a",
+    "username": "Hero_1795305413043",
+    "passwordHash": "pass123",
+    "characters": [
+      {
+        "id": "char_1795305413043_ryatz",
+        "name": "阿尔萨斯",
+        "classId": "DK",
+        "lastSpec": "FROST",
+        "specKeybindings": {
+          "BLOOD": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "F",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          },
+          "FROST": {
+            "0": "Q",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "E",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [
+          {
+            "id": "cert_1795305413043_xu1i6",
+            "dungeonId": "shadowfang_keep",
+            "dungeonName": "影牙城堡（英雄模式）",
+            "clearedAtIso": "2026-11-21T23:56:53.043Z",
+            "characterName": "阿尔萨斯",
+            "characterClass": "DK",
+            "characterSpec": "FROST",
+            "totalDurationSec": 130.5,
+            "encounters": [
+              {
+                "bossIndex": 0,
+                "bossId": "ashbury",
+                "bossName": "亚什布里男爵",
+                "result": "KILL",
+                "durationSec": 48.5,
+                "wipesBeforeKill": 0,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 520000,
+                    "dps": 10721,
+                    "totalHealing": 680000,
+                    "hps": 14020,
+                    "overhealPct": 15.2,
+                    "damageTaken": 450000,
+                    "interrupts": 3,
+                    "deaths": 0
+                  }
+                ]
+              },
+              {
+                "bossIndex": 4,
+                "bossId": "godfrey",
+                "bossName": "高弗雷勋爵",
+                "result": "KILL",
+                "durationSec": 82,
+                "wipesBeforeKill": 1,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 850000,
+                    "dps": 10365,
+                    "totalHealing": 920000,
+                    "hps": 11219,
+                    "overhealPct": 18,
+                    "damageTaken": 620000,
+                    "interrupts": 4,
+                    "deaths": 0
+                  }
+                ]
+              }
+            ],
+            "characterStats": {
+              "totalDamage": 1370000,
+              "dps": 10498,
+              "totalHealing": 1600000,
+              "effectiveHealing": 1600000,
+              "effectiveHps": 12261,
+              "overhealPct": 12.5,
+              "damageTaken": 1070000,
+              "interrupts": 7,
+              "deaths": 0
+            }
+          }
+        ],
+        "createdAtIso": "2026-11-21T23:56:53.043Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {}
+      }
+    ],
+    "createdAtIso": "2026-11-21T23:56:53.043Z"
+  },
+  {
+    "id": "acc_1795305425803_6mqfi",
+    "username": "Hero_1795305425803",
+    "passwordHash": "pass123",
+    "characters": [
+      {
+        "id": "char_1795305425803_el6m5",
+        "name": "阿尔萨斯",
+        "classId": "DK",
+        "lastSpec": "FROST",
+        "specKeybindings": {
+          "BLOOD": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "F",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          },
+          "FROST": {
+            "0": "Q",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "E",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [
+          {
+            "id": "cert_1795305425804_frxt0",
+            "dungeonId": "shadowfang_keep",
+            "dungeonName": "影牙城堡（英雄模式）",
+            "clearedAtIso": "2026-11-21T23:57:05.804Z",
+            "characterName": "阿尔萨斯",
+            "characterClass": "DK",
+            "characterSpec": "FROST",
+            "totalDurationSec": 130.5,
+            "encounters": [
+              {
+                "bossIndex": 0,
+                "bossId": "ashbury",
+                "bossName": "亚什布里男爵",
+                "result": "KILL",
+                "durationSec": 48.5,
+                "wipesBeforeKill": 0,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 520000,
+                    "dps": 10721,
+                    "totalHealing": 680000,
+                    "hps": 14020,
+                    "overhealPct": 15.2,
+                    "damageTaken": 450000,
+                    "interrupts": 3,
+                    "deaths": 0
+                  }
+                ]
+              },
+              {
+                "bossIndex": 4,
+                "bossId": "godfrey",
+                "bossName": "高弗雷勋爵",
+                "result": "KILL",
+                "durationSec": 82,
+                "wipesBeforeKill": 1,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 850000,
+                    "dps": 10365,
+                    "totalHealing": 920000,
+                    "hps": 11219,
+                    "overhealPct": 18,
+                    "damageTaken": 620000,
+                    "interrupts": 4,
+                    "deaths": 0
+                  }
+                ]
+              }
+            ],
+            "characterStats": {
+              "totalDamage": 1370000,
+              "dps": 10498,
+              "totalHealing": 1600000,
+              "effectiveHealing": 1600000,
+              "effectiveHps": 12261,
+              "overhealPct": 12.5,
+              "damageTaken": 1070000,
+              "interrupts": 7,
+              "deaths": 0
+            }
+          }
+        ],
+        "createdAtIso": "2026-11-21T23:57:05.803Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {}
+      }
+    ],
+    "createdAtIso": "2026-11-21T23:57:05.803Z"
+  },
+  {
+    "id": "acc_1795305438317_tmop2",
+    "username": "Hero_1795305438317",
+    "passwordHash": "pass123",
+    "characters": [
+      {
+        "id": "char_1795305438317_yqbvi",
+        "name": "阿尔萨斯",
+        "classId": "DK",
+        "lastSpec": "FROST",
+        "specKeybindings": {
+          "BLOOD": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "F",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          },
+          "FROST": {
+            "0": "Q",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "E",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [
+          {
+            "id": "cert_1795305438317_1zfvi",
+            "dungeonId": "shadowfang_keep",
+            "dungeonName": "影牙城堡（英雄模式）",
+            "clearedAtIso": "2026-11-21T23:57:18.317Z",
+            "characterName": "阿尔萨斯",
+            "characterClass": "DK",
+            "characterSpec": "FROST",
+            "totalDurationSec": 130.5,
+            "encounters": [
+              {
+                "bossIndex": 0,
+                "bossId": "ashbury",
+                "bossName": "亚什布里男爵",
+                "result": "KILL",
+                "durationSec": 48.5,
+                "wipesBeforeKill": 0,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 520000,
+                    "dps": 10721,
+                    "totalHealing": 680000,
+                    "hps": 14020,
+                    "overhealPct": 15.2,
+                    "damageTaken": 450000,
+                    "interrupts": 3,
+                    "deaths": 0
+                  }
+                ]
+              },
+              {
+                "bossIndex": 4,
+                "bossId": "godfrey",
+                "bossName": "高弗雷勋爵",
+                "result": "KILL",
+                "durationSec": 82,
+                "wipesBeforeKill": 1,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 850000,
+                    "dps": 10365,
+                    "totalHealing": 920000,
+                    "hps": 11219,
+                    "overhealPct": 18,
+                    "damageTaken": 620000,
+                    "interrupts": 4,
+                    "deaths": 0
+                  }
+                ]
+              }
+            ],
+            "characterStats": {
+              "totalDamage": 1370000,
+              "dps": 10498,
+              "totalHealing": 1600000,
+              "effectiveHealing": 1600000,
+              "effectiveHps": 12261,
+              "overhealPct": 12.5,
+              "damageTaken": 1070000,
+              "interrupts": 7,
+              "deaths": 0
+            }
+          }
+        ],
+        "createdAtIso": "2026-11-21T23:57:18.317Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {}
+      }
+    ],
+    "createdAtIso": "2026-11-21T23:57:18.317Z"
+  },
+  {
+    "id": "acc_1795305449835_fd6vx",
+    "username": "Hero_1795305449835",
+    "passwordHash": "pass123",
+    "characters": [
+      {
+        "id": "char_1795305449835_wcjq1",
+        "name": "阿尔萨斯",
+        "classId": "DK",
+        "lastSpec": "FROST",
+        "specKeybindings": {
+          "BLOOD": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "F",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          },
+          "FROST": {
+            "0": "Q",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "E",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [
+          {
+            "id": "cert_1795305449836_mwq6k",
+            "dungeonId": "shadowfang_keep",
+            "dungeonName": "影牙城堡（英雄模式）",
+            "clearedAtIso": "2026-11-21T23:57:29.836Z",
+            "characterName": "阿尔萨斯",
+            "characterClass": "DK",
+            "characterSpec": "FROST",
+            "totalDurationSec": 130.5,
+            "encounters": [
+              {
+                "bossIndex": 0,
+                "bossId": "ashbury",
+                "bossName": "亚什布里男爵",
+                "result": "KILL",
+                "durationSec": 48.5,
+                "wipesBeforeKill": 0,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 520000,
+                    "dps": 10721,
+                    "totalHealing": 680000,
+                    "hps": 14020,
+                    "overhealPct": 15.2,
+                    "damageTaken": 450000,
+                    "interrupts": 3,
+                    "deaths": 0
+                  }
+                ]
+              },
+              {
+                "bossIndex": 4,
+                "bossId": "godfrey",
+                "bossName": "高弗雷勋爵",
+                "result": "KILL",
+                "durationSec": 82,
+                "wipesBeforeKill": 1,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 850000,
+                    "dps": 10365,
+                    "totalHealing": 920000,
+                    "hps": 11219,
+                    "overhealPct": 18,
+                    "damageTaken": 620000,
+                    "interrupts": 4,
+                    "deaths": 0
+                  }
+                ]
+              }
+            ],
+            "characterStats": {
+              "totalDamage": 1370000,
+              "dps": 10498,
+              "totalHealing": 1600000,
+              "effectiveHealing": 1600000,
+              "effectiveHps": 12261,
+              "overhealPct": 12.5,
+              "damageTaken": 1070000,
+              "interrupts": 7,
+              "deaths": 0
+            }
+          }
+        ],
+        "createdAtIso": "2026-11-21T23:57:29.835Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {}
+      }
+    ],
+    "createdAtIso": "2026-11-21T23:57:29.835Z"
+  },
+  {
+    "id": "acc_1795305646287_iba44",
+    "username": "Hero_1795305646287",
+    "passwordHash": "pass123",
+    "characters": [
+      {
+        "id": "char_1795305646287_3lnc8",
+        "name": "阿尔萨斯",
+        "classId": "DK",
+        "lastSpec": "FROST",
+        "specKeybindings": {
+          "BLOOD": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "F",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          },
+          "FROST": {
+            "0": "Q",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "E",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [
+          {
+            "id": "cert_1795305646287_u4fdz",
+            "dungeonId": "shadowfang_keep",
+            "dungeonName": "影牙城堡（英雄模式）",
+            "clearedAtIso": "2026-11-22T00:00:46.287Z",
+            "characterName": "阿尔萨斯",
+            "characterClass": "DK",
+            "characterSpec": "FROST",
+            "totalDurationSec": 130.5,
+            "encounters": [
+              {
+                "bossIndex": 0,
+                "bossId": "ashbury",
+                "bossName": "亚什布里男爵",
+                "result": "KILL",
+                "durationSec": 48.5,
+                "wipesBeforeKill": 0,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 520000,
+                    "dps": 10721,
+                    "totalHealing": 680000,
+                    "hps": 14020,
+                    "overhealPct": 15.2,
+                    "damageTaken": 450000,
+                    "interrupts": 3,
+                    "deaths": 0
+                  }
+                ]
+              },
+              {
+                "bossIndex": 4,
+                "bossId": "godfrey",
+                "bossName": "高弗雷勋爵",
+                "result": "KILL",
+                "durationSec": 82,
+                "wipesBeforeKill": 1,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 850000,
+                    "dps": 10365,
+                    "totalHealing": 920000,
+                    "hps": 11219,
+                    "overhealPct": 18,
+                    "damageTaken": 620000,
+                    "interrupts": 4,
+                    "deaths": 0
+                  }
+                ]
+              }
+            ],
+            "characterStats": {
+              "totalDamage": 1370000,
+              "dps": 10498,
+              "totalHealing": 1600000,
+              "effectiveHealing": 1600000,
+              "effectiveHps": 12261,
+              "overhealPct": 12.5,
+              "damageTaken": 1070000,
+              "interrupts": 7,
+              "deaths": 0
+            }
+          }
+        ],
+        "createdAtIso": "2026-11-22T00:00:46.287Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {}
+      }
+    ],
+    "createdAtIso": "2026-11-22T00:00:46.287Z"
+  },
+  {
+    "id": "acc_1795305669666_vd4wy",
+    "username": "Hero_1795305669666",
+    "passwordHash": "pass123",
+    "characters": [
+      {
+        "id": "char_1795305669666_2k35h",
+        "name": "阿尔萨斯",
+        "classId": "DK",
+        "lastSpec": "FROST",
+        "specKeybindings": {
+          "BLOOD": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "F",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          },
+          "FROST": {
+            "0": "Q",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "E",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [
+          {
+            "id": "cert_1795305669667_cz7j4",
+            "dungeonId": "shadowfang_keep",
+            "dungeonName": "影牙城堡（英雄模式）",
+            "clearedAtIso": "2026-11-22T00:01:09.667Z",
+            "characterName": "阿尔萨斯",
+            "characterClass": "DK",
+            "characterSpec": "FROST",
+            "totalDurationSec": 130.5,
+            "encounters": [
+              {
+                "bossIndex": 0,
+                "bossId": "ashbury",
+                "bossName": "亚什布里男爵",
+                "result": "KILL",
+                "durationSec": 48.5,
+                "wipesBeforeKill": 0,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 520000,
+                    "dps": 10721,
+                    "totalHealing": 680000,
+                    "hps": 14020,
+                    "overhealPct": 15.2,
+                    "damageTaken": 450000,
+                    "interrupts": 3,
+                    "deaths": 0
+                  }
+                ]
+              },
+              {
+                "bossIndex": 4,
+                "bossId": "godfrey",
+                "bossName": "高弗雷勋爵",
+                "result": "KILL",
+                "durationSec": 82,
+                "wipesBeforeKill": 1,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 850000,
+                    "dps": 10365,
+                    "totalHealing": 920000,
+                    "hps": 11219,
+                    "overhealPct": 18,
+                    "damageTaken": 620000,
+                    "interrupts": 4,
+                    "deaths": 0
+                  }
+                ]
+              }
+            ],
+            "characterStats": {
+              "totalDamage": 1370000,
+              "dps": 10498,
+              "totalHealing": 1600000,
+              "effectiveHealing": 1600000,
+              "effectiveHps": 12261,
+              "overhealPct": 12.5,
+              "damageTaken": 1070000,
+              "interrupts": 7,
+              "deaths": 0
+            }
+          }
+        ],
+        "createdAtIso": "2026-11-22T00:01:09.666Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {}
+      }
+    ],
+    "createdAtIso": "2026-11-22T00:01:09.666Z"
+  },
+  {
+    "id": "acc_1795305878366_5mntu",
+    "username": "Hero_1795305878366",
+    "passwordHash": "pass123",
+    "characters": [
+      {
+        "id": "char_1795305878367_g2wof",
+        "name": "阿尔萨斯",
+        "classId": "DK",
+        "lastSpec": "FROST",
+        "specKeybindings": {
+          "BLOOD": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "F",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          },
+          "FROST": {
+            "0": "Q",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "E",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [
+          {
+            "id": "cert_1795305878367_lf8sk",
+            "dungeonId": "shadowfang_keep",
+            "dungeonName": "影牙城堡（英雄模式）",
+            "clearedAtIso": "2026-11-22T00:04:38.367Z",
+            "characterName": "阿尔萨斯",
+            "characterClass": "DK",
+            "characterSpec": "FROST",
+            "totalDurationSec": 130.5,
+            "encounters": [
+              {
+                "bossIndex": 0,
+                "bossId": "ashbury",
+                "bossName": "亚什布里男爵",
+                "result": "KILL",
+                "durationSec": 48.5,
+                "wipesBeforeKill": 0,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 520000,
+                    "dps": 10721,
+                    "totalHealing": 680000,
+                    "hps": 14020,
+                    "overhealPct": 15.2,
+                    "damageTaken": 450000,
+                    "interrupts": 3,
+                    "deaths": 0
+                  }
+                ]
+              },
+              {
+                "bossIndex": 4,
+                "bossId": "godfrey",
+                "bossName": "高弗雷勋爵",
+                "result": "KILL",
+                "durationSec": 82,
+                "wipesBeforeKill": 1,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 850000,
+                    "dps": 10365,
+                    "totalHealing": 920000,
+                    "hps": 11219,
+                    "overhealPct": 18,
+                    "damageTaken": 620000,
+                    "interrupts": 4,
+                    "deaths": 0
+                  }
+                ]
+              }
+            ],
+            "characterStats": {
+              "totalDamage": 1370000,
+              "dps": 10498,
+              "totalHealing": 1600000,
+              "effectiveHealing": 1600000,
+              "effectiveHps": 12261,
+              "overhealPct": 12.5,
+              "damageTaken": 1070000,
+              "interrupts": 7,
+              "deaths": 0
+            }
+          }
+        ],
+        "createdAtIso": "2026-11-22T00:04:38.367Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {}
+      }
+    ],
+    "createdAtIso": "2026-11-22T00:04:38.366Z"
+  },
+  {
+    "id": "acc_1795305936085_brxuk",
+    "username": "Hero_1795305936085",
+    "passwordHash": "pass123",
+    "characters": [
+      {
+        "id": "char_1795305936085_ttxa0",
+        "name": "阿尔萨斯",
+        "classId": "DK",
+        "lastSpec": "FROST",
+        "specKeybindings": {
+          "BLOOD": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "F",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          },
+          "FROST": {
+            "0": "Q",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "E",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [
+          {
+            "id": "cert_1795305936085_fqxie",
+            "dungeonId": "shadowfang_keep",
+            "dungeonName": "影牙城堡（英雄模式）",
+            "clearedAtIso": "2026-11-22T00:05:36.085Z",
+            "characterName": "阿尔萨斯",
+            "characterClass": "DK",
+            "characterSpec": "FROST",
+            "totalDurationSec": 130.5,
+            "encounters": [
+              {
+                "bossIndex": 0,
+                "bossId": "ashbury",
+                "bossName": "亚什布里男爵",
+                "result": "KILL",
+                "durationSec": 48.5,
+                "wipesBeforeKill": 0,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 520000,
+                    "dps": 10721,
+                    "totalHealing": 680000,
+                    "hps": 14020,
+                    "overhealPct": 15.2,
+                    "damageTaken": 450000,
+                    "interrupts": 3,
+                    "deaths": 0
+                  }
+                ]
+              },
+              {
+                "bossIndex": 4,
+                "bossId": "godfrey",
+                "bossName": "高弗雷勋爵",
+                "result": "KILL",
+                "durationSec": 82,
+                "wipesBeforeKill": 1,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 850000,
+                    "dps": 10365,
+                    "totalHealing": 920000,
+                    "hps": 11219,
+                    "overhealPct": 18,
+                    "damageTaken": 620000,
+                    "interrupts": 4,
+                    "deaths": 0
+                  }
+                ]
+              }
+            ],
+            "characterStats": {
+              "totalDamage": 1370000,
+              "dps": 10498,
+              "totalHealing": 1600000,
+              "effectiveHealing": 1600000,
+              "effectiveHps": 12261,
+              "overhealPct": 12.5,
+              "damageTaken": 1070000,
+              "interrupts": 7,
+              "deaths": 0
+            }
+          }
+        ],
+        "createdAtIso": "2026-11-22T00:05:36.085Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {}
+      }
+    ],
+    "createdAtIso": "2026-11-22T00:05:36.085Z"
+  },
+  {
+    "id": "acc_1795306119783_9t6t2",
+    "username": "Hero_1795306119783",
+    "passwordHash": "pass123",
+    "characters": [
+      {
+        "id": "char_1795306119783_ydgcu",
+        "name": "阿尔萨斯",
+        "classId": "DK",
+        "lastSpec": "FROST",
+        "specKeybindings": {
+          "BLOOD": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "F",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          },
+          "FROST": {
+            "0": "Q",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "E",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [
+          {
+            "id": "cert_1795306119784_fqchq",
+            "dungeonId": "shadowfang_keep",
+            "dungeonName": "影牙城堡（英雄模式）",
+            "clearedAtIso": "2026-11-22T00:08:39.784Z",
+            "characterName": "阿尔萨斯",
+            "characterClass": "DK",
+            "characterSpec": "FROST",
+            "totalDurationSec": 130.5,
+            "encounters": [
+              {
+                "bossIndex": 0,
+                "bossId": "ashbury",
+                "bossName": "亚什布里男爵",
+                "result": "KILL",
+                "durationSec": 48.5,
+                "wipesBeforeKill": 0,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 520000,
+                    "dps": 10721,
+                    "totalHealing": 680000,
+                    "hps": 14020,
+                    "overhealPct": 15.2,
+                    "damageTaken": 450000,
+                    "interrupts": 3,
+                    "deaths": 0
+                  }
+                ]
+              },
+              {
+                "bossIndex": 4,
+                "bossId": "godfrey",
+                "bossName": "高弗雷勋爵",
+                "result": "KILL",
+                "durationSec": 82,
+                "wipesBeforeKill": 1,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 850000,
+                    "dps": 10365,
+                    "totalHealing": 920000,
+                    "hps": 11219,
+                    "overhealPct": 18,
+                    "damageTaken": 620000,
+                    "interrupts": 4,
+                    "deaths": 0
+                  }
+                ]
+              }
+            ],
+            "characterStats": {
+              "totalDamage": 1370000,
+              "dps": 10498,
+              "totalHealing": 1600000,
+              "effectiveHealing": 1600000,
+              "effectiveHps": 12261,
+              "overhealPct": 12.5,
+              "damageTaken": 1070000,
+              "interrupts": 7,
+              "deaths": 0
+            }
+          }
+        ],
+        "createdAtIso": "2026-11-22T00:08:39.783Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {}
+      }
+    ],
+    "createdAtIso": "2026-11-22T00:08:39.783Z"
+  },
+  {
+    "id": "acc_1795306222205_l5to0",
+    "username": "Hero_1795306222205",
+    "passwordHash": "pass123",
+    "characters": [
+      {
+        "id": "char_1795306222205_kw4t7",
+        "name": "阿尔萨斯",
+        "classId": "DK",
+        "lastSpec": "FROST",
+        "specKeybindings": {
+          "BLOOD": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "F",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          },
+          "FROST": {
+            "0": "Q",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "E",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [
+          {
+            "id": "cert_1795306222206_sb8bd",
+            "dungeonId": "shadowfang_keep",
+            "dungeonName": "影牙城堡（英雄模式）",
+            "clearedAtIso": "2026-11-22T00:10:22.206Z",
+            "characterName": "阿尔萨斯",
+            "characterClass": "DK",
+            "characterSpec": "FROST",
+            "totalDurationSec": 130.5,
+            "encounters": [
+              {
+                "bossIndex": 0,
+                "bossId": "ashbury",
+                "bossName": "亚什布里男爵",
+                "result": "KILL",
+                "durationSec": 48.5,
+                "wipesBeforeKill": 0,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 520000,
+                    "dps": 10721,
+                    "totalHealing": 680000,
+                    "hps": 14020,
+                    "overhealPct": 15.2,
+                    "damageTaken": 450000,
+                    "interrupts": 3,
+                    "deaths": 0
+                  }
+                ]
+              },
+              {
+                "bossIndex": 4,
+                "bossId": "godfrey",
+                "bossName": "高弗雷勋爵",
+                "result": "KILL",
+                "durationSec": 82,
+                "wipesBeforeKill": 1,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 850000,
+                    "dps": 10365,
+                    "totalHealing": 920000,
+                    "hps": 11219,
+                    "overhealPct": 18,
+                    "damageTaken": 620000,
+                    "interrupts": 4,
+                    "deaths": 0
+                  }
+                ]
+              }
+            ],
+            "characterStats": {
+              "totalDamage": 1370000,
+              "dps": 10498,
+              "totalHealing": 1600000,
+              "effectiveHealing": 1600000,
+              "effectiveHps": 12261,
+              "overhealPct": 12.5,
+              "damageTaken": 1070000,
+              "interrupts": 7,
+              "deaths": 0
+            }
+          }
+        ],
+        "createdAtIso": "2026-11-22T00:10:22.205Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {}
+      }
+    ],
+    "createdAtIso": "2026-11-22T00:10:22.205Z"
+  },
+  {
+    "id": "acc_1795306243745_jh4q2",
+    "username": "Hero_1795306243745",
+    "passwordHash": "pass123",
+    "characters": [
+      {
+        "id": "char_1795306243745_0jcsn",
+        "name": "阿尔萨斯",
+        "classId": "DK",
+        "lastSpec": "FROST",
+        "specKeybindings": {
+          "BLOOD": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "F",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          },
+          "FROST": {
+            "0": "Q",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "E",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [
+          {
+            "id": "cert_1795306243746_0184i",
+            "dungeonId": "shadowfang_keep",
+            "dungeonName": "影牙城堡（英雄模式）",
+            "clearedAtIso": "2026-11-22T00:10:43.746Z",
+            "characterName": "阿尔萨斯",
+            "characterClass": "DK",
+            "characterSpec": "FROST",
+            "totalDurationSec": 130.5,
+            "encounters": [
+              {
+                "bossIndex": 0,
+                "bossId": "ashbury",
+                "bossName": "亚什布里男爵",
+                "result": "KILL",
+                "durationSec": 48.5,
+                "wipesBeforeKill": 0,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 520000,
+                    "dps": 10721,
+                    "totalHealing": 680000,
+                    "hps": 14020,
+                    "overhealPct": 15.2,
+                    "damageTaken": 450000,
+                    "interrupts": 3,
+                    "deaths": 0
+                  }
+                ]
+              },
+              {
+                "bossIndex": 4,
+                "bossId": "godfrey",
+                "bossName": "高弗雷勋爵",
+                "result": "KILL",
+                "durationSec": 82,
+                "wipesBeforeKill": 1,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 850000,
+                    "dps": 10365,
+                    "totalHealing": 920000,
+                    "hps": 11219,
+                    "overhealPct": 18,
+                    "damageTaken": 620000,
+                    "interrupts": 4,
+                    "deaths": 0
+                  }
+                ]
+              }
+            ],
+            "characterStats": {
+              "totalDamage": 1370000,
+              "dps": 10498,
+              "totalHealing": 1600000,
+              "effectiveHealing": 1600000,
+              "effectiveHps": 12261,
+              "overhealPct": 12.5,
+              "damageTaken": 1070000,
+              "interrupts": 7,
+              "deaths": 0
+            }
+          }
+        ],
+        "createdAtIso": "2026-11-22T00:10:43.745Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {}
+      }
+    ],
+    "createdAtIso": "2026-11-22T00:10:43.745Z"
+  },
+  {
+    "id": "acc_1795306291383_y5pc7",
+    "username": "Hero_1795306291383",
+    "passwordHash": "pass123",
+    "characters": [
+      {
+        "id": "char_1795306291383_wrctp",
+        "name": "阿尔萨斯",
+        "classId": "DK",
+        "lastSpec": "FROST",
+        "specKeybindings": {
+          "BLOOD": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "F",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          },
+          "FROST": {
+            "0": "Q",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "E",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [
+          {
+            "id": "cert_1795306291384_fqbl4",
+            "dungeonId": "shadowfang_keep",
+            "dungeonName": "影牙城堡（英雄模式）",
+            "clearedAtIso": "2026-11-22T00:11:31.384Z",
+            "characterName": "阿尔萨斯",
+            "characterClass": "DK",
+            "characterSpec": "FROST",
+            "totalDurationSec": 130.5,
+            "encounters": [
+              {
+                "bossIndex": 0,
+                "bossId": "ashbury",
+                "bossName": "亚什布里男爵",
+                "result": "KILL",
+                "durationSec": 48.5,
+                "wipesBeforeKill": 0,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 520000,
+                    "dps": 10721,
+                    "totalHealing": 680000,
+                    "hps": 14020,
+                    "overhealPct": 15.2,
+                    "damageTaken": 450000,
+                    "interrupts": 3,
+                    "deaths": 0
+                  }
+                ]
+              },
+              {
+                "bossIndex": 4,
+                "bossId": "godfrey",
+                "bossName": "高弗雷勋爵",
+                "result": "KILL",
+                "durationSec": 82,
+                "wipesBeforeKill": 1,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 850000,
+                    "dps": 10365,
+                    "totalHealing": 920000,
+                    "hps": 11219,
+                    "overhealPct": 18,
+                    "damageTaken": 620000,
+                    "interrupts": 4,
+                    "deaths": 0
+                  }
+                ]
+              }
+            ],
+            "characterStats": {
+              "totalDamage": 1370000,
+              "dps": 10498,
+              "totalHealing": 1600000,
+              "effectiveHealing": 1600000,
+              "effectiveHps": 12261,
+              "overhealPct": 12.5,
+              "damageTaken": 1070000,
+              "interrupts": 7,
+              "deaths": 0
+            }
+          }
+        ],
+        "createdAtIso": "2026-11-22T00:11:31.383Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {}
+      }
+    ],
+    "createdAtIso": "2026-11-22T00:11:31.383Z"
+  },
+  {
+    "id": "acc_1795306430476_gl8rr",
+    "username": "Hero_1795306430476",
+    "passwordHash": "pass123",
+    "characters": [
+      {
+        "id": "char_1795306430476_11d29",
+        "name": "阿尔萨斯",
+        "classId": "DK",
+        "lastSpec": "FROST",
+        "specKeybindings": {
+          "BLOOD": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "F",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          },
+          "FROST": {
+            "0": "Q",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "E",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [
+          {
+            "id": "cert_1795306430477_19wwz",
+            "dungeonId": "shadowfang_keep",
+            "dungeonName": "影牙城堡（英雄模式）",
+            "clearedAtIso": "2026-11-22T00:13:50.477Z",
+            "characterName": "阿尔萨斯",
+            "characterClass": "DK",
+            "characterSpec": "FROST",
+            "totalDurationSec": 130.5,
+            "encounters": [
+              {
+                "bossIndex": 0,
+                "bossId": "ashbury",
+                "bossName": "亚什布里男爵",
+                "result": "KILL",
+                "durationSec": 48.5,
+                "wipesBeforeKill": 0,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 520000,
+                    "dps": 10721,
+                    "totalHealing": 680000,
+                    "hps": 14020,
+                    "overhealPct": 15.2,
+                    "damageTaken": 450000,
+                    "interrupts": 3,
+                    "deaths": 0
+                  }
+                ]
+              },
+              {
+                "bossIndex": 4,
+                "bossId": "godfrey",
+                "bossName": "高弗雷勋爵",
+                "result": "KILL",
+                "durationSec": 82,
+                "wipesBeforeKill": 1,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 850000,
+                    "dps": 10365,
+                    "totalHealing": 920000,
+                    "hps": 11219,
+                    "overhealPct": 18,
+                    "damageTaken": 620000,
+                    "interrupts": 4,
+                    "deaths": 0
+                  }
+                ]
+              }
+            ],
+            "characterStats": {
+              "totalDamage": 1370000,
+              "dps": 10498,
+              "totalHealing": 1600000,
+              "effectiveHealing": 1600000,
+              "effectiveHps": 12261,
+              "overhealPct": 12.5,
+              "damageTaken": 1070000,
+              "interrupts": 7,
+              "deaths": 0
+            }
+          }
+        ],
+        "createdAtIso": "2026-11-22T00:13:50.476Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {}
+      }
+    ],
+    "createdAtIso": "2026-11-22T00:13:50.476Z"
+  },
+  {
+    "id": "acc_1795306444742_balqq",
+    "username": "Hero_1795306444742",
+    "passwordHash": "pass123",
+    "characters": [
+      {
+        "id": "char_1795306444742_za4n2",
+        "name": "阿尔萨斯",
+        "classId": "DK",
+        "lastSpec": "FROST",
+        "specKeybindings": {
+          "BLOOD": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "F",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          },
+          "FROST": {
+            "0": "Q",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "E",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [
+          {
+            "id": "cert_1795306444742_9f6zp",
+            "dungeonId": "shadowfang_keep",
+            "dungeonName": "影牙城堡（英雄模式）",
+            "clearedAtIso": "2026-11-22T00:14:04.742Z",
+            "characterName": "阿尔萨斯",
+            "characterClass": "DK",
+            "characterSpec": "FROST",
+            "totalDurationSec": 130.5,
+            "encounters": [
+              {
+                "bossIndex": 0,
+                "bossId": "ashbury",
+                "bossName": "亚什布里男爵",
+                "result": "KILL",
+                "durationSec": 48.5,
+                "wipesBeforeKill": 0,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 520000,
+                    "dps": 10721,
+                    "totalHealing": 680000,
+                    "hps": 14020,
+                    "overhealPct": 15.2,
+                    "damageTaken": 450000,
+                    "interrupts": 3,
+                    "deaths": 0
+                  }
+                ]
+              },
+              {
+                "bossIndex": 4,
+                "bossId": "godfrey",
+                "bossName": "高弗雷勋爵",
+                "result": "KILL",
+                "durationSec": 82,
+                "wipesBeforeKill": 1,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 850000,
+                    "dps": 10365,
+                    "totalHealing": 920000,
+                    "hps": 11219,
+                    "overhealPct": 18,
+                    "damageTaken": 620000,
+                    "interrupts": 4,
+                    "deaths": 0
+                  }
+                ]
+              }
+            ],
+            "characterStats": {
+              "totalDamage": 1370000,
+              "dps": 10498,
+              "totalHealing": 1600000,
+              "effectiveHealing": 1600000,
+              "effectiveHps": 12261,
+              "overhealPct": 12.5,
+              "damageTaken": 1070000,
+              "interrupts": 7,
+              "deaths": 0
+            }
+          }
+        ],
+        "createdAtIso": "2026-11-22T00:14:04.742Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {}
+      }
+    ],
+    "createdAtIso": "2026-11-22T00:14:04.742Z"
+  },
+  {
+    "id": "acc_1795306660090_dm765",
+    "username": "Hero_1795306660090",
+    "passwordHash": "pass123",
+    "characters": [
+      {
+        "id": "char_1795306660090_5mcqt",
+        "name": "阿尔萨斯",
+        "classId": "DK",
+        "lastSpec": "FROST",
+        "specKeybindings": {
+          "BLOOD": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "F",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          },
+          "FROST": {
+            "0": "Q",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "E",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [
+          {
+            "id": "cert_1795306660091_jlq9t",
+            "dungeonId": "shadowfang_keep",
+            "dungeonName": "影牙城堡（英雄模式）",
+            "clearedAtIso": "2026-11-22T00:17:40.091Z",
+            "characterName": "阿尔萨斯",
+            "characterClass": "DK",
+            "characterSpec": "FROST",
+            "totalDurationSec": 130.5,
+            "encounters": [
+              {
+                "bossIndex": 0,
+                "bossId": "ashbury",
+                "bossName": "亚什布里男爵",
+                "result": "KILL",
+                "durationSec": 48.5,
+                "wipesBeforeKill": 0,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 520000,
+                    "dps": 10721,
+                    "totalHealing": 680000,
+                    "hps": 14020,
+                    "overhealPct": 15.2,
+                    "damageTaken": 450000,
+                    "interrupts": 3,
+                    "deaths": 0
+                  }
+                ]
+              },
+              {
+                "bossIndex": 4,
+                "bossId": "godfrey",
+                "bossName": "高弗雷勋爵",
+                "result": "KILL",
+                "durationSec": 82,
+                "wipesBeforeKill": 1,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 850000,
+                    "dps": 10365,
+                    "totalHealing": 920000,
+                    "hps": 11219,
+                    "overhealPct": 18,
+                    "damageTaken": 620000,
+                    "interrupts": 4,
+                    "deaths": 0
+                  }
+                ]
+              }
+            ],
+            "characterStats": {
+              "totalDamage": 1370000,
+              "dps": 10498,
+              "totalHealing": 1600000,
+              "effectiveHealing": 1600000,
+              "effectiveHps": 12261,
+              "overhealPct": 12.5,
+              "damageTaken": 1070000,
+              "interrupts": 7,
+              "deaths": 0
+            }
+          }
+        ],
+        "createdAtIso": "2026-11-22T00:17:40.090Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {}
+      }
+    ],
+    "createdAtIso": "2026-11-22T00:17:40.090Z"
+  },
+  {
+    "id": "acc_1795306664411_1carh",
+    "username": "Hero_1795306664411",
+    "passwordHash": "pass123",
+    "characters": [
+      {
+        "id": "char_1795306664411_ca0r4",
+        "name": "阿尔萨斯",
+        "classId": "DK",
+        "lastSpec": "FROST",
+        "specKeybindings": {
+          "BLOOD": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "F",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          },
+          "FROST": {
+            "0": "Q",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "E",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [
+          {
+            "id": "cert_1795306664412_3de6q",
+            "dungeonId": "shadowfang_keep",
+            "dungeonName": "影牙城堡（英雄模式）",
+            "clearedAtIso": "2026-11-22T00:17:44.412Z",
+            "characterName": "阿尔萨斯",
+            "characterClass": "DK",
+            "characterSpec": "FROST",
+            "totalDurationSec": 130.5,
+            "encounters": [
+              {
+                "bossIndex": 0,
+                "bossId": "ashbury",
+                "bossName": "亚什布里男爵",
+                "result": "KILL",
+                "durationSec": 48.5,
+                "wipesBeforeKill": 0,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 520000,
+                    "dps": 10721,
+                    "totalHealing": 680000,
+                    "hps": 14020,
+                    "overhealPct": 15.2,
+                    "damageTaken": 450000,
+                    "interrupts": 3,
+                    "deaths": 0
+                  }
+                ]
+              },
+              {
+                "bossIndex": 4,
+                "bossId": "godfrey",
+                "bossName": "高弗雷勋爵",
+                "result": "KILL",
+                "durationSec": 82,
+                "wipesBeforeKill": 1,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 850000,
+                    "dps": 10365,
+                    "totalHealing": 920000,
+                    "hps": 11219,
+                    "overhealPct": 18,
+                    "damageTaken": 620000,
+                    "interrupts": 4,
+                    "deaths": 0
+                  }
+                ]
+              }
+            ],
+            "characterStats": {
+              "totalDamage": 1370000,
+              "dps": 10498,
+              "totalHealing": 1600000,
+              "effectiveHealing": 1600000,
+              "effectiveHps": 12261,
+              "overhealPct": 12.5,
+              "damageTaken": 1070000,
+              "interrupts": 7,
+              "deaths": 0
+            }
+          }
+        ],
+        "createdAtIso": "2026-11-22T00:17:44.411Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {}
+      }
+    ],
+    "createdAtIso": "2026-11-22T00:17:44.411Z"
+  },
+  {
+    "id": "acc_1795306711540_1xrl5",
+    "username": "Hero_1795306711540",
+    "passwordHash": "pass123",
+    "characters": [
+      {
+        "id": "char_1795306711540_gzrdd",
+        "name": "阿尔萨斯",
+        "classId": "DK",
+        "lastSpec": "FROST",
+        "specKeybindings": {
+          "BLOOD": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "F",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          },
+          "FROST": {
+            "0": "Q",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "E",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [
+          {
+            "id": "cert_1795306711542_96s46",
+            "dungeonId": "shadowfang_keep",
+            "dungeonName": "影牙城堡（英雄模式）",
+            "clearedAtIso": "2026-11-22T00:18:31.542Z",
+            "characterName": "阿尔萨斯",
+            "characterClass": "DK",
+            "characterSpec": "FROST",
+            "totalDurationSec": 130.5,
+            "encounters": [
+              {
+                "bossIndex": 0,
+                "bossId": "ashbury",
+                "bossName": "亚什布里男爵",
+                "result": "KILL",
+                "durationSec": 48.5,
+                "wipesBeforeKill": 0,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 520000,
+                    "dps": 10721,
+                    "totalHealing": 680000,
+                    "hps": 14020,
+                    "overhealPct": 15.2,
+                    "damageTaken": 450000,
+                    "interrupts": 3,
+                    "deaths": 0
+                  }
+                ]
+              },
+              {
+                "bossIndex": 4,
+                "bossId": "godfrey",
+                "bossName": "高弗雷勋爵",
+                "result": "KILL",
+                "durationSec": 82,
+                "wipesBeforeKill": 1,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 850000,
+                    "dps": 10365,
+                    "totalHealing": 920000,
+                    "hps": 11219,
+                    "overhealPct": 18,
+                    "damageTaken": 620000,
+                    "interrupts": 4,
+                    "deaths": 0
+                  }
+                ]
+              }
+            ],
+            "characterStats": {
+              "totalDamage": 1370000,
+              "dps": 10498,
+              "totalHealing": 1600000,
+              "effectiveHealing": 1600000,
+              "effectiveHps": 12261,
+              "overhealPct": 12.5,
+              "damageTaken": 1070000,
+              "interrupts": 7,
+              "deaths": 0
+            }
+          }
+        ],
+        "createdAtIso": "2026-11-22T00:18:31.540Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {}
+      }
+    ],
+    "createdAtIso": "2026-11-22T00:18:31.540Z"
+  },
+  {
+    "id": "acc_1795307171757_4da7m",
+    "username": "Hero_1795307171757",
+    "passwordHash": "pass123",
+    "characters": [
+      {
+        "id": "char_1795307171757_5a0uq",
+        "name": "阿尔萨斯",
+        "classId": "DK",
+        "lastSpec": "FROST",
+        "specKeybindings": {
+          "BLOOD": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "F",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          },
+          "FROST": {
+            "0": "Q",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "E",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [
+          {
+            "id": "cert_1795307171757_obbl6",
+            "dungeonId": "shadowfang_keep",
+            "dungeonName": "影牙城堡（英雄模式）",
+            "clearedAtIso": "2026-11-22T00:26:11.757Z",
+            "characterName": "阿尔萨斯",
+            "characterClass": "DK",
+            "characterSpec": "FROST",
+            "totalDurationSec": 130.5,
+            "encounters": [
+              {
+                "bossIndex": 0,
+                "bossId": "ashbury",
+                "bossName": "亚什布里男爵",
+                "result": "KILL",
+                "durationSec": 48.5,
+                "wipesBeforeKill": 0,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 520000,
+                    "dps": 10721,
+                    "totalHealing": 680000,
+                    "hps": 14020,
+                    "overhealPct": 15.2,
+                    "damageTaken": 450000,
+                    "interrupts": 3,
+                    "deaths": 0
+                  }
+                ]
+              },
+              {
+                "bossIndex": 4,
+                "bossId": "godfrey",
+                "bossName": "高弗雷勋爵",
+                "result": "KILL",
+                "durationSec": 82,
+                "wipesBeforeKill": 1,
+                "unitStats": [
+                  {
+                    "unitId": "p1",
+                    "name": "阿尔萨斯",
+                    "classId": "DK",
+                    "role": "TANK",
+                    "isPlayer": true,
+                    "totalDamage": 850000,
+                    "dps": 10365,
+                    "totalHealing": 920000,
+                    "hps": 11219,
+                    "overhealPct": 18,
+                    "damageTaken": 620000,
+                    "interrupts": 4,
+                    "deaths": 0
+                  }
+                ]
+              }
+            ],
+            "characterStats": {
+              "totalDamage": 1370000,
+              "dps": 10498,
+              "totalHealing": 1600000,
+              "effectiveHealing": 1600000,
+              "effectiveHps": 12261,
+              "overhealPct": 12.5,
+              "damageTaken": 1070000,
+              "interrupts": 7,
+              "deaths": 0
+            }
+          }
+        ],
+        "createdAtIso": "2026-11-22T00:26:11.757Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {}
+      }
+    ],
+    "createdAtIso": "2026-11-22T00:26:11.757Z"
+  }
+]

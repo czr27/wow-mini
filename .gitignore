@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build and TypeScript caches
+dist/
+build/
+out/
+.vite/
+.cache/
+.parcel-cache/
+.turbo/
+.next/
+*.tsbuildinfo
+coverage/
+
+# Env and logs
+.env
+.env.local
+.env.*.local
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# OS and IDE
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Local sync scripts
+1_首次上传.bat
+2_上传到GitHub.bat
+3_从GitHub下载.bat

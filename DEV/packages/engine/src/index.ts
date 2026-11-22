@@ -1,0 +1,27 @@
+// @cata-raid-sim/engine — Unified Entry Point
+export * from './types.js';
+export * from './engine/CombatEngine.js';
+export * from './engine/Calculator.js';
+export * from './engine/ThreatManager.js';
+export * from './engine/AuraManager.js';
+export * from './engine/ResourceManager.js';
+export * from './engine/CooldownManager.js';
+export * from './engine/RunStateMachine.js';
+export * from './engine/TierProfile.js';
+export * from './engine/ReportManager.js';
+export * from './engine/EffectsManager.js';
+export * from './auth/AccountManager.js';
+export * from './leaderboard/LeaderboardManager.js';
+export * from './ai/AIController.js';
+export * from './ai/BossAI.js';
+export * from './bosses/index.js';
+export * from './ai/TankAI.js';
+export * from './ai/HealerAI.js';
+export * from './ai/DpsAI.js';
+export * from './ai/SkillMetricEvaluator.js';
+export { DEATH_KNIGHT } from './classes/DeathKnight.js';
+export { DRUID } from './classes/Druid.js';
+export { SHAMAN } from './classes/Shaman.js';
+export { MAGE } from './classes/Mage.js';
+export { ROGUE } from './classes/Rogue.js';
+export * from './room/index.js';
