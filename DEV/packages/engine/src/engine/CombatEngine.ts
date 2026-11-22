@@ -6,6 +6,8 @@ import { AuraManager } from './AuraManager.js';
 import { ResourceManager } from './ResourceManager.js';
 import { CooldownManager } from './CooldownManager.js';
 import { EffectsManager } from './EffectsManager.js';
+import { getHastedCastTimeMs, LEVEL_80_BOSS_DAMAGE_SCALE } from './TierProfile.js';
+import { classifySpellCastMode, getCastLifecyclePolicy, type SpellCastMode } from './CastLifecycle.js';
 
 export const SPELL_ID_TO_NAME: Record<string, string> = {
   // Druid
@@ -44,6 +46,19 @@ export const SPELL_ID_TO_NAME: Record<string, string> = {
   greater_healing_wave: '强效治疗波',
   chain_heal: '治疗链',
   healing_rain: '治疗之雨',
+  healing_tide_totem: '治疗之潮图腾',
+  shaman_healing_tide_totem: '治疗之潮图腾',
+  earth_shield: '大地之盾',
+  shaman_earth_shield: '大地之盾',
+  unleash_life: '生命释放',
+  shaman_unleash_life: '生命释放',
+  ancestral_guidance: '先祖指引',
+  shaman_ancestral_guidance: '先祖指引',
+  ascendance: '升腾',
+  shaman_ascendance: '升腾',
+  ascendance_dup: '升腾(复制治疗)',
+  thunderstorm: '雷霆风暴',
+  shaman_thunderstorm: '雷霆风暴',
   lightning_bolt: '闪电箭',
   chain_lightning: '闪电链',
   lava_burst: '熔岩爆裂',
@@ -122,6 +137,161 @@ export const SPELL_ID_TO_NAME: Record<string, string> = {
   premeditation: '预谋',
   shadowstep: '暗影步',
   preparation: '伺机待发',
+  // Warrior
+  mortal_strike: '致死打击',
+  colossus_smash: '巨人打击',
+  overpower: '压制',
+  slam: '猛击',
+  bladestorm: '剑刃风暴',
+  execute: '斩杀',
+  bloodthirst: '嗜血',
+  raging_blow: '怒击',
+  whirlwind: '旋风斩',
+  berserker_rage: '狂暴之怒',
+  shield_slam: '盾牌猛击',
+  revenge: '复仇',
+  devastate: '毁灭打击',
+  thunder_clap: '雷霆一击',
+  shockwave: '震荡波',
+  taunt: '嘲讽',
+  shield_wall: '盾墙',
+  last_stand: '破釜沉舟',
+  pummel: '拳击',
+  battle_shout: '战斗怒吼',
+  // Paladin
+  holy_shock: '神圣震击',
+  flash_of_light: '圣光闪现',
+  holy_light: '圣光术',
+  divine_light: '神圣之光',
+  word_of_glory: '荣耀圣令',
+  light_of_dawn: '黎明圣光',
+  holy_radiance: '圣光普照',
+  beacon_of_light: '圣光道标',
+  divine_plea: '神圣恳求',
+  cleanse: '清洁术',
+  redemption: '救赎',
+  shield_of_the_righteous: '正义盾击',
+  avengers_shield: '复仇者之盾',
+  hammer_of_the_righteous: '正义之锤',
+  consecration: '奉献',
+  hand_of_reckoning: '清算之手',
+  divine_protection: '圣佑术',
+  ardent_defender: '炽热防御者',
+  divine_shield: '圣盾术',
+  crusader_strike: '十字军打击',
+  templars_verdict: '圣殿骑士的裁决',
+  judgement: '审判',
+  divine_storm: '神圣风暴',
+  rebuke: '责难',
+  avenging_wrath: '复仇之怒',
+  blessing_of_kings: '王者祝福',
+  // Hunter
+  kill_command: '杀戮命令',
+  cobra_shot: '眼镜蛇射击',
+  steady_shot: '稳固射击',
+  arcane_shot: '奥术射击',
+  aimed_shot: '瞄准射击',
+  chimera_shot: '奇美拉射击',
+  explosive_shot: '爆炸射击',
+  black_arrow: '黑箭',
+  serpent_sting: '毒蛇钉刺',
+  multi_shot: '多重射击',
+  explosive_trap: '爆炸陷阱',
+  kill_shot: '杀戮射击',
+  bestial_wrath: '狂野怒火',
+  rapid_fire: '急速射击',
+  silencing_shot: '沉默射击',
+  deterrence: '威慑',
+  misdirection: '误导',
+  // Priest
+  power_word_shield: '真言术：盾',
+  penance: '苦修',
+  flash_heal: '快速治疗',
+  heal: '治疗术',
+  greater_heal: '强效治疗术',
+  prayer_of_healing: '治疗祷言',
+  circle_of_healing: '治疗之环',
+  prayer_of_mending: '愈合祷言',
+  divine_hymn: '神圣赞美诗',
+  holy_word_sanctuary: '圣言术：佑',
+  pain_suppression: '痛苦压制',
+  power_word_barrier: '真言术：障',
+  guardian_spirit: '守护之魂',
+  power_infusion: '能量灌注',
+  purify: '纯净术',
+  dispel_magic: '驱散魔法',
+  resurrection: '复活术',
+  shadow_word_pain: '暗言术：痛',
+  vampiric_touch: '吸血鬼之触',
+  devouring_plague: '噬灵疫病',
+  mind_blast: '心灵震爆',
+  mind_flay: '精神鞭笞',
+  mind_sear: '精神灼烧',
+  shadow_word_death: '暗言术：灭',
+  shadowfiend: '暗影魔',
+  dispersion: '消散',
+  silence: '沉默',
+  power_word_fortitude: '真言术：韧',
+  // Warlock
+  corruption: '腐蚀术',
+  bane_of_agony: '痛苦灾祸',
+  unstable_affliction: '痛苦无常',
+  haunt: '鬼影缠身',
+  shadow_bolt: '暗影箭',
+  drain_soul: '吸取灵魂',
+  seed_of_corruption: '腐蚀之种',
+  metamorphosis: '恶魔变形',
+  hand_of_guldan: '古尔丹之手',
+  immolation_aura: '献祭光环',
+  hellfire: '地狱烈焰',
+  immolate: '献祭',
+  incinerate: '烧尽',
+  conflagrate: '燃烧',
+  chaos_bolt: '混乱之箭',
+  shadowburn: '暗影灼烧',
+  rain_of_fire: '火焰之雨',
+  spell_lock: '法术封锁',
+  life_tap: '生命分流',
+  soulstone: '灵魂石',
+  dark_intent: '黑暗意图',
+  // Additional iconic class spells
+  flamestorm: '烈焰风暴',
+  blizzard: '暴风雪',
+  arcane_explosion: '魔爆术',
+  dragons_breath: '龙息术',
+  scorch: '灼烧',
+  icy_veins: '冰冷血脉',
+  presence_of_mind: '气定神闲',
+  mirror_image: '镜像',
+  hurricane: '飓风',
+  starfall: '星辰坠落',
+  swipe: '横扫',
+  thrash: '痛击',
+  tree_of_life: '生命之树',
+  survival_instincts: '生存本能',
+  skull_bash: '迎头痛击',
+  solar_beam: '日光术',
+  fan_of_knives: '刀扇',
+  killing_spree: '杀戮盛筵',
+  tricks_of_the_trade: '嫁祸诀窍',
+  smoke_bomb: '烟雾弹',
+  fire_nova: '火焰新星',
+  empower_rune_weapon: '符文武器增效',
+  rallying_cry: '集结呐喊',
+  recklessness: '鲁莽',
+  die_by_the_sword: '剑在人在',
+  shield_block: '盾牌格挡',
+  lay_on_hands: '圣疗术',
+  aura_mastery: '光环掌握',
+  hand_of_sacrifice: '牺牲之手',
+  hammer_of_wrath: '愤怒之锤',
+  feign_death: '假死',
+  readiness: '准备就绪',
+  renew: '恢复',
+  hymn_of_hope: '希望圣歌',
+  vampiric_embrace: '吸血鬼的拥抱',
+  unending_resolve: '不灭决心',
+  death_coil_warlock: '死亡缠绕',
   // Boss
   asphyxiate: '窒息术',
   stay_of_execution: '暂缓处决',
@@ -145,8 +315,17 @@ export class CombatEngine {
   private units: Map<string, Unit> = new Map();
   private spellBook: Map<string, Spell> = new Map();
   private eventHandlers: Map<CombatEventKind | '*', EventHandler[]> = new Map();
-  private pendingCasts: Array<{ casterId: string; spell: Spell; targetId: string; remainingMs: number }> = [];
+  private pendingCasts: Array<{
+    casterId: string;
+    spell: Spell;
+    targetId: string;
+    remainingMs: number;
+    mode: SpellCastMode;
+    costsToDeduct?: Array<{ kind: ResourceKind; cost: number }>;
+    runesReq?: Array<'BLOOD' | 'FROST' | 'UNHOLY'>;
+  }> = [];
   private schoolLockouts: Map<string, Map<SpellSchool, number>> = new Map();
+  private earthShieldLastProcMs: Map<string, number> = new Map();
   private elapsedMs = 0;
 
   /** 影牙1号等首领战窒息术后安全治疗窗口剩余时长 (ms)，在此期间首领无法对友方造成任何伤害 */
@@ -281,12 +460,98 @@ export class CombatEngine {
     for (const cast of this.pendingCasts) {
       cast.remainingMs -= deltaMs;
       if (cast.remainingMs <= 0) {
-        this.resolveSpell(cast.casterId, cast.spell, cast.targetId);
+        if (cast.mode === 'CASTED') {
+          const caster = this.units.get(cast.casterId);
+          if (!caster || (!caster.alive && !caster.isAlive)) continue;
+          const costs = cast.costsToDeduct ?? [];
+          if (!this.hasSpellResources(caster, costs, cast.runesReq)) continue;
+          this.deductSpellResources(cast.casterId, caster, costs, cast.runesReq);
+          this.cooldownManager.startSpellCooldownOnly(cast.casterId, cast.spell.id, cast.spell);
+          this.resolveSpell(cast.casterId, cast.spell, cast.targetId);
+        }
+        // CHANNELED spells already deducted resources, entered CD, and started resolving on initiation
       } else {
         resolved.push(cast);
       }
     }
     this.pendingCasts = resolved;
+  }
+
+  private hasSpellResources(
+    caster: Unit,
+    costsToDeduct: Array<{ kind: ResourceKind; cost: number }>,
+    runesReq?: Array<'BLOOD' | 'FROST' | 'UNHOLY'>
+  ): boolean {
+    for (const { kind, cost } of costsToDeduct) {
+      const res = caster.resources?.find(r => r.kind === kind);
+      const cur = res?.current ?? (
+        kind === 'MANA' ? (caster.mp ?? 0) :
+        kind === 'ENERGY' ? (caster.energy ?? 0) :
+        kind === 'RAGE' ? (caster.rage ?? 0) :
+        kind === 'FOCUS' ? (caster.focus ?? 0) :
+        kind === 'HOLY_POWER' ? (caster.holyPower ?? 0) :
+        kind === 'RUNIC_POWER' ? (caster.runicPower ?? 0) :
+        kind === 'COMBO_POINTS' ? (caster.comboPoints ?? 0) : 0
+      );
+      if (cur < cost) return false;
+    }
+    if (runesReq && runesReq.length > 0) {
+      const readyRunes = caster.runes?.filter(r => r.cooldownMs === 0) ?? [];
+      if (readyRunes.length < runesReq.length) return false;
+      const temp = [...readyRunes];
+      for (const req of runesReq) {
+        const idx = temp.findIndex(r => r.runeType === req);
+        if (idx === -1) return false;
+        temp.splice(idx, 1);
+      }
+    }
+    return true;
+  }
+
+  private deductSpellResources(
+    casterId: string,
+    caster: Unit,
+    costsToDeduct: Array<{ kind: ResourceKind; cost: number }>,
+    runesReq?: Array<'BLOOD' | 'FROST' | 'UNHOLY'>
+  ): void {
+    for (const { kind, cost } of costsToDeduct) {
+      const res = caster.resources?.find(r => r.kind === kind);
+      if (res) {
+        res.current -= cost;
+      }
+      if (kind === 'MANA') caster.mp = (caster.mp ?? res?.current ?? 0) - (res ? 0 : cost);
+      else if (kind === 'ENERGY') caster.energy = (caster.energy ?? res?.current ?? 0) - (res ? 0 : cost);
+      else if (kind === 'RAGE') caster.rage = (caster.rage ?? res?.current ?? 0) - (res ? 0 : cost);
+      else if (kind === 'FOCUS') caster.focus = (caster.focus ?? res?.current ?? 0) - (res ? 0 : cost);
+      else if (kind === 'HOLY_POWER') caster.holyPower = (caster.holyPower ?? res?.current ?? 0) - (res ? 0 : cost);
+      else if (kind === 'RUNIC_POWER') caster.runicPower = (caster.runicPower ?? res?.current ?? 0) - (res ? 0 : cost);
+      else if (kind === 'COMBO_POINTS') caster.comboPoints = (caster.comboPoints ?? res?.current ?? 0) - (res ? 0 : cost);
+
+      if (res) {
+        if (kind === 'MANA') caster.mp = res.current;
+        else if (kind === 'ENERGY') caster.energy = res.current;
+        else if (kind === 'RAGE') caster.rage = res.current;
+        else if (kind === 'FOCUS') caster.focus = res.current;
+        else if (kind === 'HOLY_POWER') caster.holyPower = res.current;
+        else if (kind === 'RUNIC_POWER') caster.runicPower = res.current;
+        else if (kind === 'COMBO_POINTS') caster.comboPoints = res.current;
+      }
+
+      this.emitEvent({
+        kind: 'RESOURCE_CHANGE',
+        sourceId: casterId,
+        targetId: casterId,
+        value: -cost,
+        resourceKind: kind,
+        timestamp: this.elapsedMs,
+      });
+    }
+
+    if (runesReq && runesReq.length > 0) {
+      this.resourceManager.consumeRunes(casterId, runesReq);
+      const rpGain = runesReq.length * 10;
+      this.resourceManager.restore(casterId, 'RUNIC_POWER', rpGain);
+    }
   }
 
   private getSpellResourceCost(spell: Spell, kind: ResourceKind): number {
@@ -355,50 +620,24 @@ export class CombatEngine {
       }
     }
 
-    // Atomically deduct resources
-    for (const { kind, cost } of costsToDeduct) {
-      const res = caster.resources?.find(r => r.kind === kind);
-      if (res) {
-        res.current -= cost;
-      }
-      if (kind === 'MANA') caster.mp = (caster.mp ?? res?.current ?? 0) - (res ? 0 : cost);
-      else if (kind === 'ENERGY') caster.energy = (caster.energy ?? res?.current ?? 0) - (res ? 0 : cost);
-      else if (kind === 'RAGE') caster.rage = (caster.rage ?? res?.current ?? 0) - (res ? 0 : cost);
-      else if (kind === 'FOCUS') caster.focus = (caster.focus ?? res?.current ?? 0) - (res ? 0 : cost);
-      else if (kind === 'HOLY_POWER') caster.holyPower = (caster.holyPower ?? res?.current ?? 0) - (res ? 0 : cost);
-      else if (kind === 'RUNIC_POWER') caster.runicPower = (caster.runicPower ?? res?.current ?? 0) - (res ? 0 : cost);
-      else if (kind === 'COMBO_POINTS') caster.comboPoints = (caster.comboPoints ?? res?.current ?? 0) - (res ? 0 : cost);
+    const castMode = classifySpellCastMode({
+      spellId,
+      castTimeMs: spell.castTimeMs,
+      channelDurationMs: (spell as any).channelDurationMs,
+    });
+    const lifecycle = getCastLifecyclePolicy(castMode);
 
-      if (res) {
-        if (kind === 'MANA') caster.mp = res.current;
-        else if (kind === 'ENERGY') caster.energy = res.current;
-        else if (kind === 'RAGE') caster.rage = res.current;
-        else if (kind === 'FOCUS') caster.focus = res.current;
-        else if (kind === 'HOLY_POWER') caster.holyPower = res.current;
-        else if (kind === 'RUNIC_POWER') caster.runicPower = res.current;
-        else if (kind === 'COMBO_POINTS') caster.comboPoints = res.current;
-      }
-
-      this.emitEvent({
-        kind: 'RESOURCE_CHANGE',
-        sourceId: casterId,
-        targetId: casterId,
-        value: -cost,
-        resourceKind: kind,
-        timestamp: this.elapsedMs,
-      });
+    // Deduct resources immediately ONLY for INSTANT & CHANNELED (CASTED defers until cast completion)
+    if (lifecycle.deductResourceOnStart) {
+      this.deductSpellResources(casterId, caster, costsToDeduct, runesReq);
     }
 
-    // Consume DK Runes & generate Runic Power
-    if (runesReq && runesReq.length > 0) {
-      this.resourceManager.consumeRunes(casterId, runesReq);
-      // In Cataclysm, spending runes generates 10 RP per rune spent
-      const rpGain = runesReq.length * 10;
-      this.resourceManager.restore(casterId, 'RUNIC_POWER', rpGain);
+    // Start GCD + spell CD for INSTANT & CHANNELED; for CASTED start GCD only (spell CD starts on completion)
+    if (lifecycle.triggerCooldownOnStart) {
+      this.cooldownManager.startCooldown(casterId, spellId, spell, caster);
+    } else if (lifecycle.triggerGcdOnStart) {
+      this.cooldownManager.startGcdForSpell(casterId, spell, caster);
     }
-
-    // Start GCD + spell CD
-    this.cooldownManager.startCooldown(casterId, spellId, spell, caster);
 
     this.emitEvent({
       kind: 'SPELL_CAST',
@@ -408,9 +647,30 @@ export class CombatEngine {
       timestamp: this.elapsedMs,
     });
 
-    if (spell.castTimeMs > 0) {
-      // Queue as cast-in-progress
-      this.pendingCasts.push({ casterId, spell, targetId, remainingMs: spell.castTimeMs });
+    if (castMode === 'CASTED') {
+      const hastedCastMs = getHastedCastTimeMs(spell.castTimeMs, caster.stats?.haste ?? 0);
+      this.pendingCasts.push({
+        casterId,
+        spell,
+        targetId,
+        remainingMs: hastedCastMs,
+        mode: 'CASTED',
+        costsToDeduct,
+        runesReq,
+      });
+    } else if (castMode === 'CHANNELED') {
+      const baseChannelMs = (spell as any).channelDurationMs && (spell as any).channelDurationMs > 0
+        ? (spell as any).channelDurationMs
+        : (spell.castTimeMs > 0 ? spell.castTimeMs : 4000);
+      const hastedChannelMs = getHastedCastTimeMs(baseChannelMs, caster.stats?.haste ?? 0);
+      this.pendingCasts.push({
+        casterId,
+        spell,
+        targetId,
+        remainingMs: hastedChannelMs,
+        mode: 'CHANNELED',
+      });
+      this.resolveSpell(casterId, spell, targetId);
     } else {
       this.resolveSpell(casterId, spell, targetId);
     }
@@ -464,6 +724,10 @@ export class CombatEngine {
           school = effect.school ?? spell.school ?? 'SHADOW';
         } else if (effect.type === 'HEAL') {
           kind = 'HEAL';
+        } else if (effect.type === 'HOT') {
+          kind = 'APPLY_HOT';
+        } else if (effect.type === 'DOT') {
+          kind = 'APPLY_DOT';
         } else if (effect.type === 'BUFF') {
           kind = 'APPLY_BUFF';
         } else if (effect.type === 'DEBUFF') {
@@ -478,6 +742,10 @@ export class CombatEngine {
           kind = 'SUMMON_GROUND_EFFECT';
         } else if (effect.type === 'SHIELD') {
           kind = 'SHIELD';
+        } else if (effect.type === 'DISPEL') {
+          kind = 'DISPEL';
+        } else if (effect.type === 'RESURRECT') {
+          kind = 'RESURRECT';
         }
       }
 
@@ -490,6 +758,58 @@ export class CombatEngine {
 
       const baseValue = effect.baseValue ?? 0;
       const valueVariance = effect.valueVariance ?? 0.05;
+      const durationMs = effect.durationMs ?? 0;
+      const tickIntervalMs = effect.tickIntervalMs ?? 0;
+      const auraId = effect.auraId as string | undefined;
+      const maxStacks = effect.maxStacks ?? 1;
+
+      const applyTimedAura = (
+        auraTargetId: string,
+        opts: {
+          spellId: string;
+          name: string;
+          kind: 'BUFF' | 'DEBUFF';
+          tags: Array<'HOT' | 'DOT' | 'SHIELD' | 'STAT'>;
+          tickValue?: number;
+          stacks?: number;
+        }
+      ) => {
+        const auraTarget = this.units.get(auraTargetId);
+        if (!auraTarget) return;
+        // Prefer registered templates when present; otherwise apply from spell effect data
+        if (auraId && this.auraManager.applyAuraById(auraId, casterId, auraTargetId)) {
+          const applied = auraTarget.buffs.find(b => b.spellId === auraId && b.sourceUnitId === casterId);
+          if (applied) {
+            if (opts.tickValue && opts.tickValue > 0) applied.tickValue = opts.tickValue;
+            if (opts.stacks) {
+              applied.stacks = opts.stacks;
+              applied.maxStacks = Math.max(applied.maxStacks || 1, opts.stacks);
+            }
+            if (durationMs > 0) {
+              applied.durationMs = durationMs;
+              applied.remainingMs = durationMs;
+            }
+            if (tickIntervalMs > 0) applied.tickIntervalMs = tickIntervalMs;
+          }
+          return;
+        }
+        this.applyBuff(auraTarget, {
+          id: `${opts.spellId}_${auraTargetId}_${this.elapsedMs}`,
+          spellId: opts.spellId,
+          name: opts.name,
+          kind: opts.kind,
+          tags: opts.tags,
+          sourceUnitId: casterId,
+          targetUnitId: auraTargetId,
+          stacks: opts.stacks ?? 1,
+          maxStacks: Math.max(maxStacks, opts.stacks ?? 1),
+          durationMs: durationMs || 10_000,
+          remainingMs: durationMs || 10_000,
+          school,
+          tickIntervalMs: tickIntervalMs || undefined,
+          tickValue: opts.tickValue,
+        });
+      };
 
       switch (kind) {
         case 'DAMAGE': {
@@ -517,16 +837,76 @@ export class CombatEngine {
 
         case 'SHIELD': {
           target.absorb = (target.absorb ?? 0) + baseValue;
+          applyTimedAura(targetId, {
+            spellId: auraId || spell.id,
+            name: spell.name,
+            kind: 'BUFF',
+            tags: ['SHIELD'],
+            stacks: maxStacks,
+          });
+          break;
+        }
+
+        case 'APPLY_HOT': {
+          const hotTargetId = target.role === 'ENEMY' ? casterId : targetId;
+          applyTimedAura(hotTargetId, {
+            spellId: auraId || spell.id,
+            name: `${spell.name} (HoT)`,
+            kind: 'BUFF',
+            tags: ['HOT'],
+            tickValue: baseValue,
+            stacks: 1,
+          });
+          break;
+        }
+
+        case 'APPLY_DOT': {
+          applyTimedAura(targetId, {
+            spellId: auraId || spell.id,
+            name: `${spell.name} (DoT)`,
+            kind: 'DEBUFF',
+            tags: ['DOT'],
+            tickValue: baseValue,
+            stacks: 1,
+          });
           break;
         }
 
         case 'APPLY_BUFF':
-        case 'APPLY_DEBUFF':
-          if (effect.auraId) {
-            // Aura templates are resolved by the caller; here we just signal
-            this.auraManager.applyAuraById(effect.auraId, casterId, targetId);
-          }
+        case 'APPLY_DEBUFF': {
+          const isDebuff = kind === 'APPLY_DEBUFF';
+          const isSelfBuff =
+            spell.targetType === 'SELF' ||
+            auraId === 'unleash_life' ||
+            auraId === 'ascendance' ||
+            auraId === 'ancestral_guidance';
+          const buffTargetId = isDebuff
+            ? targetId
+            : isSelfBuff
+            ? casterId
+            : target.role === 'ENEMY'
+            ? casterId
+            : targetId;
+          const stacks =
+            auraId === 'earth_shield' || spell.id === 'shaman_earth_shield' ? Math.max(9, maxStacks) : 1;
+          applyTimedAura(buffTargetId, {
+            spellId: auraId || spell.id,
+            name:
+              auraId === 'earth_shield' || spell.id === 'shaman_earth_shield'
+                ? `${spell.name} (${stacks}层)`
+                : spell.name,
+            kind: isDebuff ? 'DEBUFF' : 'BUFF',
+            tags:
+              auraId === 'earth_shield' || spell.id === 'shaman_earth_shield'
+                ? ['SHIELD']
+                : isDebuff
+                ? ['STAT']
+                : ['STAT'],
+            tickValue: tickIntervalMs > 0 && baseValue > 0 ? baseValue : undefined,
+            stacks,
+          });
           break;
+        }
 
         case 'INTERRUPT':
           this.interruptCast(targetId, 4000);
@@ -551,24 +931,33 @@ export class CombatEngine {
           break;
         }
 
-        case 'SUMMON_GROUND_EFFECT':
-          if (effect.groundEffectKind) {
+        case 'RESURRECT':
+          this.resurrectUnit(targetId, 0.35, 0.35);
+          break;
+
+        case 'SUMMON_GROUND_EFFECT': {
+          const groundKind = effect.groundKind || effect.groundEffectKind;
+          if (groundKind) {
+            const isHealingTide =
+              spell.id === 'shaman_healing_tide_totem' ||
+              spell.id.includes('healing_tide');
             this.effectsManager.addGroundEffect({
               id: `${spell.id}_${this.elapsedMs}`,
-              kind: effect.groundEffectKind,
-              spellId: spell.id,
+              kind: groundKind,
+              spellId: isHealingTide ? 'healing_tide' : spell.id,
               ownerId: casterId,
-              x: target.position?.x ?? 0,
-              y: target.position?.y ?? 0,
-              radius: 5,
-              colorHex: '#00FF00',
-              remainingMs: 10_000,
-              tickIntervalMs: 1_000,
+              x: target.position?.x ?? caster.position?.x ?? 0,
+              y: target.position?.y ?? caster.position?.y ?? 0,
+              radius: effect.groundRadius ?? (groundKind === 'TOTEM' ? 40 : 8),
+              colorHex: effect.groundColorHex ?? '#38BDF8',
+              remainingMs: durationMs || 10_000,
+              tickIntervalMs: tickIntervalMs || (isHealingTide ? 2_000 : 1_000),
               tickElapsedMs: 0,
-              tickValue: baseValue,
+              tickValue: baseValue || (isHealingTide ? 5200 : 0),
             });
           }
           break;
+        }
       }
     }
   }
@@ -600,8 +989,37 @@ export class CombatEngine {
       }
     }
 
+    // 萨满升腾(元素/增强/通用) 伤害增效 (+35%)
+    let modifiedAmount = amount;
+    if (
+      source &&
+      source.buffs?.some(
+        b =>
+          b.spellId === 'ascendance_ele' ||
+          b.spellId === 'ascendance_enh' ||
+          b.spellId === 'ascendance' ||
+          b.spellId === 'shaman_ascendance'
+      ) &&
+      target.role === 'ENEMY'
+    ) {
+      modifiedAmount = Math.round(modifiedAmount * 1.35);
+    }
+
+    // 盗贼宿敌：对标记目标伤害 +20%
+    if (
+      source &&
+      target.role === 'ENEMY' &&
+      target.buffs?.some(
+        b =>
+          (b.spellId === 'vendetta_debuff' || b.spellId === 'vendetta' || b.spellId === 'rogue_vendetta') &&
+          (!b.sourceUnitId || b.sourceUnitId === sourceId)
+      )
+    ) {
+      modifiedAmount = Math.round(modifiedAmount * 1.20);
+    }
+
     // Apply absorb shield
-    let effective = amount;
+    let effective = modifiedAmount;
     let absorbedAmount = 0;
     if (target.absorb > 0) {
       absorbedAmount = Math.min(target.absorb, effective);
@@ -723,6 +1141,106 @@ export class CombatEngine {
       this.resourceManager.restore(sourceId, 'RAGE', 10);
     }
 
+    // ── 1. 大地之盾 (Earth Shield) 受击触发治疗（消耗 1 层，3 秒内置 CD） ──
+    if (effective > 0 && target.hp > 0 && target.role !== 'ENEMY' && target.buffs?.length) {
+      const esIdx = target.buffs.findIndex(
+        b => b.spellId === 'earth_shield' || b.spellId === 'shaman_earth_shield'
+      );
+      if (esIdx !== -1) {
+        const esBuff = target.buffs[esIdx];
+        const lastProc = this.earthShieldLastProcMs.get(targetId) ?? -99999;
+        if ((esBuff.stacks || 0) > 0 && this.elapsedMs - lastProc >= 3000) {
+          this.earthShieldLastProcMs.set(targetId, this.elapsedMs);
+          esBuff.stacks = Math.max(0, (esBuff.stacks || 1) - 1);
+          const esCrit = Math.random() < 0.25;
+          const esHeal = Math.round(6800 * (esCrit ? 1.5 : 1.0));
+          const esSourceId = esBuff.sourceUnitId || targetId;
+          this.applyHeal(esSourceId, targetId, esHeal, esCrit, 0, 'earth_shield', true);
+          if (esBuff.stacks <= 0) {
+            target.buffs.splice(esIdx, 1);
+          }
+        }
+      }
+    }
+
+    // ── 2. 萨满大地之流 (Telluric Currents)：闪电链 / 闪电箭命中敌人回蓝 ──
+    // Cata 元素天赋：闪电箭伤害的一部分转化为法力；本模拟按技能描述对闪电链同样生效。
+    if (source && source.classId === 'SHAMAN' && target.role === 'ENEMY' && effective > 0 && spellId) {
+      const spLower = spellId.toLowerCase();
+      const isChainLightning =
+        spLower === 'chain_lightning' ||
+        spLower === 'shaman_chain_lightning' ||
+        spellId === '闪电链';
+      const isLightningBolt =
+        spLower === 'lightning_bolt' ||
+        spLower === 'shaman_lightning_bolt' ||
+        spellId === '闪电箭';
+      if ((isChainLightning || isLightningBolt) && (source.maxMp ?? 0) > 0) {
+        const maxMp = source.maxMp || 45000;
+        // 80 级满级标定：闪电箭约回 8% 最大法力（上限），闪电链每次命中约回 5%（上限）
+        // 同时保底按伤害比例回蓝，避免低伤时几乎无回蓝体感。
+        const manaGain = isChainLightning
+          ? Math.max(Math.round(effective * 0.25), Math.min(Math.round(maxMp * 0.05), Math.round(effective * 0.40)))
+          : Math.max(Math.round(effective * 0.30), Math.min(Math.round(maxMp * 0.08), Math.round(effective * 0.45)));
+        source.mp = Math.min(maxMp, (source.mp ?? 0) + manaGain);
+        const manaRes = source.resources?.find(r => r.kind === 'MANA');
+        if (manaRes) {
+          manaRes.current = source.mp;
+          manaRes.max = maxMp;
+        }
+        this.effectsManager.addFloatingText({
+          id: `tc_mana_${Date.now()}_${sourceId}_${Math.random()}`,
+          targetId: sourceId,
+          text: `💧 +${manaGain.toLocaleString()} 法力 (大地之流)`,
+          category: 'STATUS',
+          isCrit: false,
+          isToPlayer: Boolean(source.isPlayer),
+          createdAtMs: Date.now(),
+        });
+      }
+    }
+
+    // ── 3. 先祖指引 (Ancestral Guidance)：造成直接伤害的 40% 转化为智能群体治疗（最多 3 名伤员）──
+    if (
+      source &&
+      !isDot &&
+      effective > 0 &&
+      target.role === 'ENEMY' &&
+      source.buffs?.some(b => b.spellId === 'ancestral_guidance' || b.spellId === 'shaman_ancestral_guidance')
+    ) {
+      const injuredAllies = this.friendlyUnits
+        .filter(u => u.isAlive && u.hp > 0 && u.hp < u.maxHp)
+        .sort((a, b) => (a.hp / a.maxHp) - (b.hp / b.maxHp))
+        .slice(0, 3);
+      const targets = injuredAllies.length > 0 ? injuredAllies : this.friendlyUnits.filter(u => u.isAlive && u.hp > 0).slice(0, 3);
+      if (targets.length > 0) {
+        const totalConverted = Math.round(effective * 0.40);
+        const perAlly = Math.max(1, Math.round(totalConverted / targets.length));
+        for (const ally of targets) {
+          this.applyHeal(sourceId, ally.id, perAlly, false, 0, 'ancestral_guidance', true);
+        }
+      }
+    }
+
+    // ── 4. 暗牧吸血鬼的拥抱 (Vampiric Embrace)：伤害的 25% 转化为群体治疗 ──
+    if (
+      source &&
+      effective > 0 &&
+      target.role === 'ENEMY' &&
+      source.buffs?.some(b => b.spellId === 'vampiric_embrace' || b.spellId === 'priest_vampiric_embrace')
+    ) {
+      const injuredAllies = this.friendlyUnits
+        .filter(u => u.isAlive && u.hp > 0 && u.hp < u.maxHp)
+        .sort((a, b) => (a.hp / a.maxHp) - (b.hp / b.maxHp))
+        .slice(0, 3);
+      if (injuredAllies.length > 0) {
+        const perAlly = Math.max(1, Math.round((effective * 0.25) / injuredAllies.length));
+        for (const ally of injuredAllies) {
+          this.applyHeal(sourceId, ally.id, perAlly, false, 0, 'vampiric_embrace', true);
+        }
+      }
+    }
+
     if (target.hp <= 0) {
       this.killUnit(targetId);
     }
@@ -736,11 +1254,41 @@ export class CombatEngine {
     isCrit: boolean,
     overheal: number,
     spellId?: string,
+    isDerived = false,
   ): void {
     const target = this.units.get(targetId);
     if (!target || !target.isAlive) return;
 
-    const safeAmount = Math.max(0, amount);
+    const source = this.units.get(sourceId);
+    let safeAmount = Math.max(0, amount);
+
+    // ── 真实治疗增效触发器（仅作用于非衍生直接治疗，避免循环触发）──
+    if (!isDerived && safeAmount > 0 && source) {
+      const spLower = (spellId || '').toLowerCase();
+      // 1. 生命释放 (Unleash Life): 下一次直接治疗提高 +30% 并消耗 Buff
+      if (spLower !== 'unleash_life' && spLower !== 'shaman_unleash_life' && spellId !== '生命释放') {
+        const ulIdx = source.buffs?.findIndex(
+          b => b.spellId === 'unleash_life' || b.spellId === 'shaman_unleash_life'
+        );
+        if (ulIdx !== undefined && ulIdx !== -1) {
+          safeAmount = Math.round(safeAmount * 1.30);
+          source.buffs.splice(ulIdx, 1);
+        }
+      }
+      // 2. 大地之盾 (Earth Shield): 目标受到该萨满治疗效果 +20%
+      if (
+        target.buffs?.some(
+          b => (b.spellId === 'earth_shield' || b.spellId === 'shaman_earth_shield') && (!b.sourceUnitId || b.sourceUnitId === sourceId)
+        )
+      ) {
+        safeAmount = Math.round(safeAmount * 1.20);
+      }
+      // 3. 德鲁伊生命之树化身 (Tree of Life): 治疗量 +20%
+      if (source.buffs?.some(b => b.spellId === 'tree_of_life' || b.spellId === 'druid_tree_of_life')) {
+        safeAmount = Math.round(safeAmount * 1.20);
+      }
+    }
+
     const prevHp = Math.min(target.maxHp, Math.max(0, target.hp));
     target.hp = Math.min(target.maxHp, prevHp + safeAmount);
     const effectiveHeal = Math.max(0, target.hp - prevHp);
@@ -755,7 +1303,6 @@ export class CombatEngine {
     );
 
     // 统一战斗统计更新（包含直接治疗与HoT跳字，严格保证非负）
-    const source = this.units.get(sourceId);
     if (source) {
       if (!source.combatStats) {
         source.combatStats = { damageDealt: 0, healingDone: 0, overhealDone: 0, damageTaken: 0, interruptCount: 0 };
@@ -796,11 +1343,70 @@ export class CombatEngine {
       sourceId,
       targetId,
       spellId,
-      value: amount,
+      value: safeAmount,
       isCrit,
-      overheal,
+      overheal: finalOverheal,
       timestamp: this.elapsedMs,
     });
+
+    // ── 衍生复制治疗触发器（仅当 !isDerived 时触发，严格防递归死循环）──
+    if (!isDerived && safeAmount > 0 && source) {
+      // A. 水之升腾 (Ascendance - Restoration): 100% 治疗量均摊复制给附近最多 5 名受伤友方
+      if (
+        source.buffs?.some(
+          b =>
+            b.spellId === 'ascendance_resto' ||
+            b.spellId === 'ascendance' ||
+            b.spellId === 'shaman_ascendance'
+        )
+      ) {
+        const injured = this.friendlyUnits
+          .filter(u => u.isAlive && u.hp > 0 && u.hp < u.maxHp)
+          .sort((a, b) => (a.hp / a.maxHp) - (b.hp / b.maxHp))
+          .slice(0, 5);
+        const dupTargets = injured.length > 0
+          ? injured
+          : this.friendlyUnits.filter(u => u.isAlive && u.hp > 0).slice(0, 5);
+        if (dupTargets.length > 0) {
+          const perAlly = Math.max(1, Math.round(safeAmount / dupTargets.length));
+          for (const ally of dupTargets) {
+            this.applyHeal(sourceId, ally.id, perAlly, false, 0, 'ascendance_dup', true);
+          }
+        }
+      }
+
+      // B. 先祖指引 (Ancestral Guidance): 60% 直接治疗量智能复制给最多 3 名最低血量友方
+      if (source.buffs?.some(b => b.spellId === 'ancestral_guidance' || b.spellId === 'shaman_ancestral_guidance')) {
+        const injured = this.friendlyUnits
+          .filter(u => u.isAlive && u.hp > 0 && u.hp < u.maxHp)
+          .sort((a, b) => (a.hp / a.maxHp) - (b.hp / b.maxHp))
+          .slice(0, 3);
+        const agTargets = injured.length > 0
+          ? injured
+          : this.friendlyUnits.filter(u => u.isAlive && u.hp > 0).slice(0, 3);
+        if (agTargets.length > 0) {
+          const perAlly = Math.max(1, Math.round((safeAmount * 0.60) / agTargets.length));
+          for (const ally of agTargets) {
+            this.applyHeal(sourceId, ally.id, perAlly, false, 0, 'ancestral_guidance', true);
+          }
+        }
+      }
+
+      // C. 圣光道标 (Beacon of Light): 对非道标目标的直接治疗复制 50% 给携带道标的友方
+      const beaconCarrier = this.friendlyUnits.find(
+        u =>
+          u.id !== targetId &&
+          u.isAlive &&
+          u.hp > 0 &&
+          u.buffs?.some(
+            b => (b.spellId === 'beacon_of_light' || b.spellId === 'paladin_beacon_of_light') && (!b.sourceUnitId || b.sourceUnitId === sourceId)
+          )
+      );
+      if (beaconCarrier) {
+        const beaconAmt = Math.max(1, Math.round(safeAmount * 0.50));
+        this.applyHeal(sourceId, beaconCarrier.id, beaconAmt, false, 0, 'beacon_of_light', true);
+      }
+    }
   }
 
   killUnit(unitId: string): void {
@@ -970,6 +1576,10 @@ export class CombatEngine {
     }
 
     let finalAmount = amount;
+    // Scale legacy boss/enemy hits to Level 80 HP pools (Tank 65k / DPS 36k)
+    if (source.role === 'ENEMY' && target.role !== 'ENEMY' && spellName !== '窒息术') {
+      finalAmount *= LEVEL_80_BOSS_DAMAGE_SCALE;
+    }
     if (this.difficulty === 'CUSTOM') {
       if (source.isPlayer) {
         finalAmount *= (this.customDifficulty.playerDamageCoeff ?? 1.0);
@@ -1176,9 +1786,144 @@ export class CombatEngine {
     this.elapsedMs = 0;
     this.bossHealingGraceRemainingMs = 0;
     this.pendingCasts = [];
+    this.schoolLockouts.clear();
+    this.earthShieldLastProcMs.clear();
     this.units.clear();
     this.threatManager.resetAll();
     this.cooldownManager.reset();
     this.effectsManager.clearAll();
+  }
+
+  /** Host-side compact snapshot for room combat sync (guests apply, do not tick). */
+  buildNetworkUnitSnapshots(): Array<{
+    id: string;
+    name: string;
+    classId: string;
+    spec?: string;
+    role: string;
+    isPlayer: boolean;
+    isAlive: boolean;
+    hp: number;
+    maxHp: number;
+    mp?: number;
+    maxMp?: number;
+    energy?: number;
+    rage?: number;
+    runicPower?: number;
+    focus?: number;
+    absorb: number;
+    position: { x: number; y: number };
+    buffs: Buff[];
+    combatStats?: Unit['combatStats'];
+  }> {
+    return this.getAllUnits().map((u) => ({
+      id: u.id,
+      name: u.name,
+      classId: u.classId,
+      spec: u.spec,
+      role: u.role,
+      isPlayer: u.isPlayer,
+      isAlive: u.isAlive,
+      hp: u.hp,
+      maxHp: u.maxHp,
+      mp: u.mp,
+      maxMp: u.maxMp,
+      energy: u.energy,
+      rage: u.rage,
+      runicPower: u.runicPower,
+      focus: u.focus,
+      absorb: u.absorb,
+      position: { ...u.position },
+      buffs: u.buffs.map((b) => ({ ...b })),
+      combatStats: u.combatStats ? { ...u.combatStats } : undefined,
+    }));
+  }
+
+  /** Guest-side: overlay host snapshot onto local units (create stubs if missing). */
+  applyNetworkUnitSnapshots(
+    snapshots: Array<{
+      id: string;
+      name: string;
+      classId: string;
+      spec?: string;
+      role: string;
+      isPlayer: boolean;
+      isAlive: boolean;
+      hp: number;
+      maxHp: number;
+      mp?: number;
+      maxMp?: number;
+      energy?: number;
+      rage?: number;
+      runicPower?: number;
+      focus?: number;
+      absorb: number;
+      position: { x: number; y: number };
+      buffs: Buff[];
+      combatStats?: Unit['combatStats'];
+    }>
+  ): void {
+    const seen = new Set<string>();
+    for (const s of snapshots) {
+      seen.add(s.id);
+      let unit = this.units.get(s.id);
+      if (!unit) {
+        unit = {
+          id: s.id,
+          name: s.name,
+          classId: s.classId as Unit['classId'],
+          spec: s.spec,
+          role: s.role as Unit['role'],
+          isPlayer: s.isPlayer,
+          isAlive: s.isAlive,
+          hp: s.hp,
+          maxHp: s.maxHp,
+          mp: s.mp,
+          maxMp: s.maxMp,
+          energy: s.energy,
+          rage: s.rage,
+          runicPower: s.runicPower,
+          focus: s.focus,
+          resources: [],
+          stats: {
+            attackPower: 0,
+            spellPower: 0,
+            critChance: 0,
+            haste: 0,
+            armor: 0,
+            spellResist: 0,
+            block: 0,
+            parry: 0,
+            dodge: 0,
+            mastery: 0,
+            versatility: 0,
+            speed: 0,
+          },
+          buffs: [],
+          threatTable: [],
+          absorb: s.absorb,
+          position: { ...s.position },
+        };
+        this.addUnit(unit);
+      }
+      unit.name = s.name;
+      unit.spec = s.spec;
+      unit.isAlive = s.isAlive;
+      unit.hp = s.hp;
+      unit.maxHp = s.maxHp;
+      unit.mp = s.mp;
+      unit.maxMp = s.maxMp;
+      unit.energy = s.energy;
+      unit.rage = s.rage;
+      unit.runicPower = s.runicPower;
+      unit.focus = s.focus;
+      unit.absorb = s.absorb;
+      unit.position = { ...s.position };
+      unit.buffs = s.buffs.map((b) => ({ ...b }));
+      if (s.combatStats) unit.combatStats = { ...s.combatStats };
+    }
+    for (const id of Array.from(this.units.keys())) {
+      if (!seen.has(id)) this.units.delete(id);
+    }
   }
 }

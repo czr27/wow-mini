@@ -123,6 +123,17 @@ export default defineConfig({
         path.resolve(__dirname, '../../..'), // allow root wow_simu workspace
       ],
     },
+    proxy: {
+      '/api': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
+      },
+      '/ws-proxy': {
+        target: 'ws://localhost:3001',
+        ws: true,
+        rewrite: () => '/',
+      },
+    },
   },
   build: {
     outDir: 'dist',

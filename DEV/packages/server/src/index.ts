@@ -3,7 +3,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, WebSocket } from 'ws';
-import type { UserAccount, CharacterRecord, CharacterUiLayout } from '@cata-raid-sim/engine';
+import type { UserAccount, CharacterUiLayout } from '@cata-raid-sim/engine';
+import { mergeAccountLists } from '@cata-raid-sim/engine';
+import { RoomWsHub } from './roomWs.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -124,25 +126,21 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // 4. Batch sync accounts from client to server (persisted to server disk)
+    // 4. Batch sync accounts from client to server (LWW by updatedAtMs, then persist)
     if (pathname === '/api/accounts/sync' && req.method === 'POST') {
       const body = await readJsonBody(req);
       const accountsToSync: UserAccount[] = Array.isArray(body) ? body : (body.accounts || (body.id ? [body] : []));
-      for (const acc of accountsToSync) {
-        if (acc && acc.username) {
-          const key = acc.username.toLowerCase();
-          const existing = accountsMap.get(key);
-          if (existing) {
-            // Merge characters & layout
-            accountsMap.set(key, { ...existing, ...acc });
-          } else {
-            accountsMap.set(key, acc);
-          }
+      const existingList = Array.from(accountsMap.values());
+      const merged = mergeAccountLists(existingList, accountsToSync);
+      accountsMap.clear();
+      for (const acc of merged) {
+        if (acc?.username) {
+          accountsMap.set(acc.username.toLowerCase(), acc);
         }
       }
       saveAccountsToDisk();
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ success: true, count: accountsMap.size }));
+      res.end(JSON.stringify({ success: true, count: accountsMap.size, accounts: merged }));
       return;
     }
 
@@ -231,20 +229,12 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-// Setup WebSocket Server for multiplayer rooms and live sync
+// Setup WebSocket Server for multiplayer rooms, presence, and host combat relay
 const wss = new WebSocketServer({ server });
+const roomHub = new RoomWsHub();
 
 wss.on('connection', (ws: WebSocket) => {
-  ws.on('message', (message: string) => {
-    try {
-      const data = JSON.parse(message.toString());
-      if (data.type === 'PING') {
-        ws.send(JSON.stringify({ type: 'PONG', time: Date.now() }));
-      }
-    } catch {}
-  });
-
-  ws.send(JSON.stringify({ type: 'CONNECTED', message: 'Cata Raid Sim Server Online' }));
+  roomHub.handleConnection(ws);
 });
 
 if (process.env.NODE_ENV !== 'test') {
@@ -265,4 +255,4 @@ export function stopServer(): Promise<void> {
   });
 }
 
-export { server, wss, accountsMap, saveAccountsToDisk, loadAccountsFromDisk };
+export { server, wss, accountsMap, saveAccountsToDisk, loadAccountsFromDisk, roomHub };

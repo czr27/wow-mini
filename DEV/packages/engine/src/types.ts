@@ -98,6 +98,7 @@ export interface Unit {
   id: string;
   name: string;
   classId: ClassId | 'BOSS' | 'NPC';
+  spec?: string;
   role: RoleId | 'ENEMY';
   isPlayer: boolean;
   isPet?: boolean;
@@ -143,10 +144,13 @@ export interface ThreatEntry {
 export type SpellEffectKind =
   | 'DAMAGE'
   | 'HEAL'
+  | 'SHIELD'
   | 'APPLY_BUFF'
   | 'APPLY_DEBUFF'
   | 'INTERRUPT'
   | 'TAUNT'
+  | 'DISPEL'
+  | 'RESURRECT'
   | 'RESOURCE_RESTORE'
   | 'SUMMON_GROUND_EFFECT';
 
@@ -154,9 +158,15 @@ export interface SpellEffect {
   kind: SpellEffectKind;
   school: SpellSchool;
   baseValue: number;         // damage / heal / resource amount
-  valueVariance: number;     // ± fraction
+  valueVariance?: number;    // ± fraction
   /** ID of the buff/debuff template to apply */
   auraId?: string;
+  durationMs?: number;
+  tickIntervalMs?: number;
+  maxStacks?: number;
+  threatMultiplier?: number;
+  dispelTypes?: string[];
+  description?: string;
   groundEffectKind?: GroundEffect['kind'];
   /** Specify target resource for RESOURCE_RESTORE */
   resourceKind?: ResourceKind;
@@ -167,11 +177,23 @@ export interface Spell {
   name: string;
   classId: ClassId | 'BOSS';
   school: SpellSchool;
-  targetType: 'ENEMY' | 'FRIEND' | 'SELF' | 'AOE_ENEMY' | 'AOE_FRIEND';
-  castTimeMs: number;        // 0 = instant
+  targetType:
+    | 'ENEMY'
+    | 'FRIEND'
+    | 'SELF'
+    | 'AOE_ENEMY'
+    | 'AOE_FRIEND'
+    | 'SINGLE_ENEMY'
+    | 'SINGLE_ALLY'
+    | 'AOE_ALLY'
+    | 'GROUND'
+    | 'SMART_ALLY';
+  castTimeMs: number;        // 0 = instant, -1 = channeled
+  channelDurationMs?: number;
   gcdCategory: 'NORMAL' | 'ROGUE' | 'OFF_GCD';
   resourceCost: Partial<Record<ResourceKind, number>>;
   cooldownMs: number;
+  description?: string;
   effects: SpellEffect[];
   /** rune types consumed (DK) */
   runesRequired?: Array<'BLOOD' | 'FROST' | 'UNHOLY'>;
@@ -179,6 +201,22 @@ export interface Spell {
   range?: number;
   /** If true, cannot be cast in combat (e.g. Revive / Ancestral Spirit) */
   outOfCombatOnly?: boolean;
+  /** Long-duration raid buff */
+  isRaidBuff?: boolean;
+}
+
+export interface ClassSpecDef {
+  id: string;
+  name: string;
+  role: RoleId;
+  spells: Spell[];
+}
+
+export interface ClassDef {
+  id: ClassId;
+  name: string;
+  colorHex: string;
+  specs: ClassSpecDef[];
 }
 
 // ── Ground Effect ─────────────────────────────────────────────
@@ -224,6 +262,36 @@ export const GROUND_TARGET_SPELL_DEFS: Record<
     maxRange: 320,
   },
   spirit_link: {
+    name: '灵魂链接图腾',
+    radius: 55,
+    color: '#2dd4bf',
+    maxRange: 280,
+  },
+  healing_tide: {
+    name: '治疗之潮图腾',
+    radius: 70,
+    color: '#0ea5e9',
+    maxRange: 280,
+  },
+  healing_tide_totem: {
+    name: '治疗之潮图腾',
+    radius: 70,
+    color: '#0ea5e9',
+    maxRange: 280,
+  },
+  mana_tide: {
+    name: '法力之潮图腾',
+    radius: 70,
+    color: '#38bdf8',
+    maxRange: 280,
+  },
+  mana_tide_totem: {
+    name: '法力之潮图腾',
+    radius: 70,
+    color: '#38bdf8',
+    maxRange: 280,
+  },
+  spirit_link_totem: {
     name: '灵魂链接图腾',
     radius: 55,
     color: '#2dd4bf',
@@ -392,11 +460,11 @@ export interface UiPosition {
 }
 
 export interface CharacterUiLayout {
-  raidFrames?: UiPosition & { width?: number; height?: number };
-  actionBar?: UiPosition;
-  playerFrame?: UiPosition;
-  targetFrame?: UiPosition;
-  statsPanel?: UiPosition;
+  raidFrames?: (UiPosition & { width?: number; height?: number }) | null;
+  actionBar?: UiPosition | null;
+  playerFrame?: UiPosition | null;
+  targetFrame?: UiPosition | null;
+  statsPanel?: UiPosition | null;
 }
 
 export interface CharacterRecord {
@@ -411,6 +479,8 @@ export interface CharacterRecord {
   // Dungeon clear reward certificates
   clearCertificates: DungeonClearCertificate[];
   createdAtIso: string;
+  /** Last local/server mutation time for LWW cross-client merge (ms epoch) */
+  updatedAtMs?: number;
   // Raid target marks habit/persisted for team players: playerName -> mark string (e.g. '💀', '⭐')
   savedRaidMarks?: Record<string, string>;
   // Last selected dungeon tier ('5man' | '20man')
@@ -429,6 +499,8 @@ export interface UserAccount {
   passwordHash: string;
   characters: CharacterRecord[];
   createdAtIso: string;
+  /** Last account-level mutation time for LWW cross-client merge (ms epoch) */
+  updatedAtMs?: number;
 }
 
 export interface DungeonClearCertificate {

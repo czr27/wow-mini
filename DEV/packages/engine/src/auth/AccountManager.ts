@@ -9,6 +9,7 @@ import {
   DEFAULT_CUSTOM_DIFFICULTY,
   CharacterUiLayout,
 } from '../types.js';
+import { bumpUpdatedAt, mergeAccountLists, mergeAccounts } from './accountMerge.js';
 
 // Default default keybinding habits for each class and spec
 export function getDefaultSpecKeybindings(classId: ClassId, spec: string): KeybindingMap {
@@ -59,6 +60,11 @@ export function getDefaultSpecForClass(classId: ClassId): string {
     case 'SHAMAN': return 'RESTORATION';
     case 'MAGE': return 'FIRE';
     case 'ROGUE': return 'COMBAT';
+    case 'WARRIOR': return 'PROTECTION';
+    case 'PALADIN': return 'HOLY';
+    case 'HUNTER': return 'MARKSMANSHIP';
+    case 'PRIEST': return 'HOLY';
+    case 'WARLOCK': return 'AFFLICTION';
     default: return 'DEFAULT';
   }
 }
@@ -82,12 +88,17 @@ export class AccountManager {
   private initDefaultAccount() {
     const defaultUser = this.register('Champion', 'wow123');
     if (defaultUser) {
-      // Create default characters
+      // Seed all 10 Cataclysm playable classes for instant tryout
       const dk = this.createCharacter('莫格莱尼', 'DK', 'BLOOD');
-      const druid = this.createCharacter('玛法里奥', 'DRUID', 'RESTORATION');
-      const shaman = this.createCharacter('萨尔', 'SHAMAN', 'RESTORATION');
-      const mage = this.createCharacter('吉安娜', 'MAGE', 'FIRE');
-      const rogue = this.createCharacter('瓦莉拉', 'ROGUE', 'COMBAT');
+      this.createCharacter('玛法里奥', 'DRUID', 'RESTORATION');
+      this.createCharacter('萨尔', 'SHAMAN', 'RESTORATION');
+      this.createCharacter('吉安娜', 'MAGE', 'FIRE');
+      this.createCharacter('瓦莉拉', 'ROGUE', 'COMBAT');
+      this.createCharacter('瓦里安', 'WARRIOR', 'ARMS');
+      this.createCharacter('提里奥', 'PALADIN', 'HOLY');
+      this.createCharacter('希尔瓦娜斯', 'HUNTER', 'MARKSMANSHIP');
+      this.createCharacter('安度因', 'PRIEST', 'HOLY');
+      this.createCharacter('古尔丹', 'WARLOCK', 'AFFLICTION');
       if (dk) {
         this.currentCharacterId = dk.id;
         if (typeof localStorage !== 'undefined') {
@@ -160,12 +171,14 @@ export class AccountManager {
       return null; // Username already exists
     }
 
+    const now = Date.now();
     const account: UserAccount = {
-      id: `acc_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      id: `acc_${now}_${Math.random().toString(36).substring(2, 7)}`,
       username: username.trim(),
       passwordHash: passwordHash || 'default',
       characters: [],
       createdAtIso: new Date().toISOString(),
+      updatedAtMs: now,
     };
 
     this.accounts.set(key, account);
@@ -252,8 +265,9 @@ export class AccountManager {
     if (!acc) return null;
 
     const chosenSpec = spec || getDefaultSpecForClass(classId);
+    const now = Date.now();
     const newChar: CharacterRecord = {
-      id: `char_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+      id: `char_${now}_${Math.random().toString(36).substring(2, 7)}`,
       name: name.trim(),
       classId,
       lastSpec: chosenSpec,
@@ -262,6 +276,7 @@ export class AccountManager {
       },
       clearCertificates: [],
       createdAtIso: new Date().toISOString(),
+      updatedAtMs: now,
       lastDungeonTier: '5man',
       lastDungeonDifficulty: 'HEROIC',
       lastCustomDifficulty: { ...DEFAULT_CUSTOM_DIFFICULTY },
@@ -269,6 +284,7 @@ export class AccountManager {
     };
 
     acc.characters.push(newChar);
+    bumpUpdatedAt(acc, now);
     this.currentCharacterId = newChar.id;
     this.saveToStorage();
     return newChar;
@@ -284,10 +300,17 @@ export class AccountManager {
       if (this.currentCharacterId === charId) {
         this.currentCharacterId = acc.characters.length > 0 ? acc.characters[0].id : null;
       }
+      bumpUpdatedAt(acc);
       this.saveToStorage();
       return true;
     }
     return false;
+  }
+
+  private touchCharacter(char: CharacterRecord, acc: UserAccount) {
+    const now = Date.now();
+    bumpUpdatedAt(char, now);
+    bumpUpdatedAt(acc, now);
   }
 
   public setCharacterSpec(charId: string, spec: string): boolean {
@@ -300,6 +323,7 @@ export class AccountManager {
     if (!char.specKeybindings[spec]) {
       char.specKeybindings[spec] = getDefaultSpecKeybindings(char.classId, spec);
     }
+    this.touchCharacter(char, acc);
     this.saveToStorage();
     return true;
   }
@@ -317,6 +341,7 @@ export class AccountManager {
       char.specKeybindings[spec] = getDefaultSpecKeybindings(char.classId, spec);
     }
     char.specKeybindings[spec][slotIndex] = hotkey;
+    this.touchCharacter(char, acc);
     this.saveToStorage();
     return true;
   }
@@ -331,6 +356,7 @@ export class AccountManager {
       char.specKeybindings = {};
     }
     char.specKeybindings[spec] = { ...bindings };
+    this.touchCharacter(char, acc);
     this.saveToStorage();
     return true;
   }
@@ -345,6 +371,7 @@ export class AccountManager {
       char.specSlotLayouts = {};
     }
     char.specSlotLayouts[spec] = { ...layout };
+    this.touchCharacter(char, acc);
     this.saveToStorage();
     return true;
   }
@@ -356,6 +383,7 @@ export class AccountManager {
     if (!char) return false;
 
     char.clearCertificates.unshift(cert);
+    this.touchCharacter(char, acc);
     this.saveToStorage();
     return true;
   }
@@ -374,6 +402,7 @@ export class AccountManager {
     } else {
       delete char.savedRaidMarks[playerName];
     }
+    this.touchCharacter(char, acc);
     this.saveToStorage();
     return true;
   }
@@ -401,6 +430,7 @@ export class AccountManager {
     if (customDifficulty) {
       char.lastCustomDifficulty = { ...customDifficulty };
     }
+    this.touchCharacter(char, acc);
     this.saveToStorage();
     return true;
   }
@@ -434,10 +464,16 @@ export class AccountManager {
     if (!char.uiLayout) {
       char.uiLayout = {};
     }
-    char.uiLayout = {
-      ...char.uiLayout,
-      ...layout,
-    };
+    const nextLayout: CharacterUiLayout = { ...char.uiLayout };
+    for (const [key, val] of Object.entries(layout) as Array<[keyof CharacterUiLayout, any]>) {
+      if (val === null || val === undefined) {
+        delete nextLayout[key];
+      } else {
+        (nextLayout as any)[key] = val;
+      }
+    }
+    char.uiLayout = nextLayout;
+    this.touchCharacter(char, acc);
     this.saveToStorage();
     return true;
   }
@@ -457,7 +493,7 @@ export class AccountManager {
   /**
    * 触发向服务器端同步所有账号与角色数据 (防抖落地)
    */
-  public triggerServerSync(serverUrl = 'http://localhost:3001') {
+  public triggerServerSync(serverUrl = typeof window !== 'undefined' ? '' : 'http://localhost:3001') {
     if (typeof fetch === 'undefined') return;
     if (this.serverSyncTimer) clearTimeout(this.serverSyncTimer);
     this.serverSyncTimer = setTimeout(async () => {
@@ -475,31 +511,46 @@ export class AccountManager {
   }
 
   /**
-   * 从服务器端加载权威账号与角色数据 (用于登录账号后跨端拉取最新配置)
+   * 从服务器端加载账号与角色数据，与本地按时间戳 LWW 合并后再写回服务器。
    */
-  public async loadFromServer(serverUrl = 'http://localhost:3001'): Promise<boolean> {
+  public async loadFromServer(serverUrl = typeof window !== 'undefined' ? '' : 'http://localhost:3001'): Promise<boolean> {
     if (typeof fetch === 'undefined') return false;
     try {
       const res = await fetch(`${serverUrl}/api/accounts`);
       if (!res.ok) return false;
       const list: UserAccount[] = await res.json();
-      if (Array.isArray(list) && list.length > 0) {
-        for (const acc of list) {
-          for (const char of acc.characters) {
-            if (!char.uiLayout) char.uiLayout = {};
-          }
-          this.accounts.set(acc.username.toLowerCase(), acc);
+      if (!Array.isArray(list) || list.length === 0) return false;
+
+      const localList = Array.from(this.accounts.values());
+      const merged = mergeAccountLists(localList, list);
+      this.accounts.clear();
+      for (const acc of merged) {
+        for (const char of acc.characters) {
+          if (!char.uiLayout) char.uiLayout = {};
         }
-        if (typeof localStorage !== 'undefined') {
-          try {
-            localStorage.setItem(this.storageKey, JSON.stringify(list));
-          } catch {}
-        }
-        return true;
+        this.accounts.set(acc.username.toLowerCase(), acc);
       }
+      if (typeof localStorage !== 'undefined') {
+        try {
+          localStorage.setItem(this.storageKey, JSON.stringify(merged));
+        } catch {}
+      }
+      // Push merged authority blob back so all clients converge on server
+      this.triggerServerSync(serverUrl);
+      return true;
     } catch {
       // Server not reachable, gracefully fallback to local
     }
     return false;
+  }
+
+  /** Merge a single remote account into local (e.g. after login fetch). */
+  public mergeRemoteAccount(remote: UserAccount): UserAccount {
+    const key = remote.username.toLowerCase();
+    const local = this.accounts.get(key);
+    const merged = local ? mergeAccounts(local, remote) : remote;
+    this.accounts.set(key, merged);
+    this.saveToStorage();
+    return merged;
   }
 }

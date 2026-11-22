@@ -1,4 +1,4 @@
-import type { ClassId, RoleId, DungeonDifficulty, Unit } from '../types.js';
+import type { ClassId, RoleId, DungeonDifficulty, CustomDifficultySettings, Unit } from '../types.js';
 import type { CombatEngine } from '../engine/CombatEngine.js';
 import type { RunStateMachine } from '../engine/RunStateMachine.js';
 import {
@@ -17,7 +17,7 @@ import {
   getRoleBySpec,
 } from './RoomTypes.js';
 
-// Lore pool for AI teammates
+// Lore pool for AI teammates (all 10 Cataclysm classes with authentic lore pairings)
 const AI_ROSTER_POOL: {
   TANK: Array<{ name: string; classId: ClassId; spec: string }>;
   HEALER: Array<{ name: string; classId: ClassId; spec: string }>;
@@ -25,35 +25,146 @@ const AI_ROSTER_POOL: {
 } = {
   TANK: [
     { name: '莫格莱尼', classId: 'DK', spec: 'BLOOD' },
-    { name: '乌瑟尔', classId: 'DK', spec: 'BLOOD' },
+    { name: '乌瑟尔', classId: 'PALADIN', spec: 'PROTECTION' },
+    { name: '穆拉丁', classId: 'WARRIOR', spec: 'PROTECTION' },
+    { name: '哈缪尔', classId: 'DRUID', spec: 'FERAL' },
     { name: '萨萨里安', classId: 'DK', spec: 'BLOOD' },
-    { name: '穆拉丁', classId: 'DK', spec: 'BLOOD' },
+    { name: '博瓦尔', classId: 'PALADIN', spec: 'PROTECTION' },
   ],
   HEALER: [
-    { name: '玛法里奥', classId: 'DRUID', spec: 'RESTORATION' },
     { name: '先知努波顿', classId: 'SHAMAN', spec: 'RESTORATION' },
-    { name: '安度因', classId: 'DRUID', spec: 'RESTORATION' },
-    { name: '莉亚德琳', classId: 'SHAMAN', spec: 'RESTORATION' },
-    { name: '泰兰德', classId: 'DRUID', spec: 'RESTORATION' },
+    { name: '安度因', classId: 'PRIEST', spec: 'HOLY' },
+    { name: '莉亚德琳', classId: 'PALADIN', spec: 'HOLY' },
+    { name: '玛法里奥', classId: 'DRUID', spec: 'RESTORATION' },
+    { name: '先知维伦', classId: 'PRIEST', spec: 'DISCIPLINE' },
+    { name: '泰兰德', classId: 'PRIEST', spec: 'HOLY' },
   ],
   DPS: [
     { name: '吉安娜', classId: 'MAGE', spec: 'FIRE' },
     { name: '瓦莉拉', classId: 'ROGUE', spec: 'COMBAT' },
     { name: '萨尔', classId: 'SHAMAN', spec: 'ELEMENTAL' },
+    { name: '希尔瓦娜斯', classId: 'HUNTER', spec: 'MARKSMANSHIP' },
+    { name: '瓦里安', classId: 'WARRIOR', spec: 'ARMS' },
+    { name: '古尔丹之影', classId: 'WARLOCK', spec: 'AFFLICTION' },
+    { name: '提里奥', classId: 'PALADIN', spec: 'RETRIBUTION' },
+    { name: '本尼迪塔斯', classId: 'PRIEST', spec: 'SHADOW' },
+    { name: '雷克萨', classId: 'HUNTER', spec: 'BEAST_MASTERY' },
+    { name: '萨鲁法尔', classId: 'WARRIOR', spec: 'FURY' },
+    { name: '威尔弗雷德', classId: 'WARLOCK', spec: 'DESTRUCTION' },
     { name: '卡德加', classId: 'MAGE', spec: 'ARCANE' },
-    { name: '萨鲁法尔', classId: 'DK', spec: 'FROST' },
     { name: '肖尔', classId: 'ROGUE', spec: 'ASSASSINATION' },
-    { name: '古尔丹之影', classId: 'MAGE', spec: 'FIRE' },
-    { name: '威尔弗雷德', classId: 'MAGE', spec: 'FROST' },
-    { name: '希尔瓦娜斯', classId: 'ROGUE', spec: 'COMBAT' },
-    { name: '雷克萨', classId: 'SHAMAN', spec: 'ELEMENTAL' },
-    { name: '本尼迪塔斯', classId: 'MAGE', spec: 'ARCANE' },
     { name: '库尔提拉', classId: 'DK', spec: 'FROST' },
-    { name: '瓦里安', classId: 'DK', spec: 'FROST' },
-    { name: '伊利丹之魂', classId: 'ROGUE', spec: 'COMBAT' },
-    { name: '布莱恩', classId: 'ROGUE', spec: 'ASSASSINATION' },
+    { name: '布莱恩', classId: 'HUNTER', spec: 'SURVIVAL' },
   ],
 };
+
+// Authentic lore hero names grouped by ClassId and optionally SpecId
+const CLASS_LORE_NAMES: Record<ClassId, { default: string[]; bySpec?: Record<string, string[]> }> = {
+  DK: {
+    default: ['莫格莱尼', '萨萨里安', '库尔提拉', '达里安', '科尔蒂拉'],
+    bySpec: {
+      BLOOD: ['莫格莱尼', '达里安', '萨萨里安'],
+      FROST: ['库尔提拉', '萨萨里安', '莫格莱尼'],
+      UNHOLY: ['达里安', '瑞文戴尔', '库尔提拉'],
+    },
+  },
+  DRUID: {
+    default: ['玛法里奥', '哈缪尔', '布罗尔', '范达尔', '塞纳留斯之影'],
+    bySpec: {
+      RESTORATION: ['玛法里奥', '雷姆洛斯', '哈缪尔'],
+      BALANCE: ['玛法里奥', '范达尔', '月光先知'],
+      FERAL: ['哈缪尔', '布罗尔', '利爪德鲁伊'],
+    },
+  },
+  SHAMAN: {
+    default: ['萨尔', '先知努波顿', '德雷克塔尔', '雷加尔', '穆尔戈'],
+    bySpec: {
+      RESTORATION: ['先知努波顿', '德雷克塔尔', '雷加尔'],
+      ELEMENTAL: ['萨尔', '德雷克塔尔', '风暴先知'],
+      ENHANCEMENT: ['雷加尔', '萨尔', '毁灭之锤'],
+    },
+  },
+  MAGE: {
+    default: ['吉安娜', '卡德加', '罗宁', '安东尼达斯', '阿鲁高'],
+    bySpec: {
+      FIRE: ['罗宁', '吉安娜', '凯尔萨斯'],
+      FROST: ['吉安娜', '安东尼达斯', '卡德加'],
+      ARCANE: ['卡德加', '麦迪文之影', '安东尼达斯'],
+    },
+  },
+  ROGUE: {
+    default: ['瓦莉拉', '肖尔', '伽罗娜', '范克里夫', '莉莉安'],
+    bySpec: {
+      COMBAT: ['瓦莉拉', '范克里夫', '莉莉安'],
+      ASSASSINATION: ['肖尔', '伽罗娜', '瓦莉拉'],
+      SUBTLETY: ['伽罗娜', '肖尔', '暗影行者'],
+    },
+  },
+  WARRIOR: {
+    default: ['瓦里安', '穆拉丁', '萨鲁法尔', '加尔鲁什', '布洛克斯'],
+    bySpec: {
+      PROTECTION: ['穆拉丁', '瓦里安', '洛萨之影'],
+      ARMS: ['瓦里安', '加尔鲁什', '布洛克斯'],
+      FURY: ['萨鲁法尔', '加尔鲁什', '布洛克斯'],
+    },
+  },
+  PALADIN: {
+    default: ['提里奥', '乌瑟尔', '莉亚德琳', '博瓦尔', '图拉扬'],
+    bySpec: {
+      HOLY: ['莉亚德琳', '乌瑟尔', '圣光祭司'],
+      PROTECTION: ['乌瑟尔', '博瓦尔', '图拉扬'],
+      RETRIBUTION: ['提里奥', '图拉扬', '莉亚德琳'],
+    },
+  },
+  HUNTER: {
+    default: ['希尔瓦娜斯', '雷克萨', '布莱恩', '奥蕾莉亚', '赫米特'],
+    bySpec: {
+      BEAST_MASTERY: ['雷克萨', '米莎驯兽师', '赫米特'],
+      MARKSMANSHIP: ['希尔瓦娜斯', '奥蕾莉亚', '温蕾萨'],
+      SURVIVAL: ['布莱恩', '赫米特', '雷克萨'],
+    },
+  },
+  PRIEST: {
+    default: ['安度因', '先知维伦', '泰兰德', '本尼迪塔斯', '莫伊拉'],
+    bySpec: {
+      DISCIPLINE: ['先知维伦', '莫伊拉', '安度因'],
+      HOLY: ['安度因', '泰兰德', '先知维伦'],
+      SHADOW: ['本尼迪塔斯', '暗影主教', '莫伊拉'],
+    },
+  },
+  WARLOCK: {
+    default: ['古尔丹之影', '威尔弗雷德', '坎雷萨德', '耐奥祖', '朱贝卡'],
+    bySpec: {
+      AFFLICTION: ['古尔丹之影', '朱贝卡', '耐奥祖'],
+      DEMONOLOGY: ['威尔弗雷德', '坎雷萨德', '古尔丹之影'],
+      DESTRUCTION: ['坎雷萨德', '威尔弗雷德', '毁灭术士'],
+    },
+  },
+};
+
+export function pickLoreNameForClassSpec(
+  classId: ClassId,
+  spec: string,
+  existingNames: Set<string>
+): string {
+  const entry = CLASS_LORE_NAMES[classId];
+  const specUp = (spec || '').toUpperCase();
+  const preferred = [
+    ...(entry?.bySpec?.[specUp] ?? []),
+    ...(entry?.default ?? []),
+  ];
+  for (const name of preferred) {
+    if (!existingNames.has(name)) {
+      return name;
+    }
+  }
+  const base = preferred[0] || `${classId}勇士`;
+  let suffix = 2;
+  while (existingNames.has(`${base}${suffix}`)) {
+    suffix++;
+  }
+  return `${base}${suffix}`;
+}
 
 /**
  * Pure validation helper for map switching
@@ -131,8 +242,9 @@ export function validateStartGame(room: LobbyRoom): StartGameValidation {
     c => c.TANK === currentTanks && c.HEALER === currentHealers && c.DPS === currentDps
   );
 
-  if (isFull && !isRoleCompositionValid) {
-    reasons.push('队伍分工不符合副本要求');
+    if (isFull && !isRoleCompositionValid) {
+    const reqText = quota.tier === '5man' ? '1坦 1治 3输出' : '2坦 4~5治 13~14输出';
+    reasons.push(`队伍分工不符合副本要求（当前 ${currentTanks}坦 ${currentHealers}治 ${currentDps}输出，需 ${reqText}）`);
   }
 
   // Check all members ready (players must have isReady = true, AI is always ready)
@@ -189,6 +301,7 @@ export class RoomManager {
     name: string;
     dungeonId?: string;
     difficulty?: DungeonDifficulty;
+    customDifficulty?: CustomDifficultySettings;
     host: PlayerInfo;
   }): LobbyRoom {
     const dungeonId = options.dungeonId || 'shadowfang_keep';
@@ -198,7 +311,7 @@ export class RoomManager {
     const hostRole = options.host.role || getRoleBySpec(options.host.classId, options.host.spec);
     const slots = buildDefaultSlots(dungeonId);
 
-    // Find the first slot matching host's role
+    // Find the first unoccupied slot matching hostRole (UI slots remain role-agnostic)
     let hostSlot = slots.find(s => s.role === hostRole && !s.occupied);
     if (!hostSlot) {
       hostSlot = slots[0];
@@ -226,6 +339,7 @@ export class RoomManager {
       name: options.name,
       dungeonId,
       difficulty,
+      customDifficulty: options.customDifficulty ? { ...options.customDifficulty } : undefined,
       status: 'LOBBY',
       hostId: options.host.id,
       slots,
@@ -242,12 +356,155 @@ export class RoomManager {
     return this.rooms.get(roomId);
   }
 
+  /** Upsert a room snapshot from the network authority (client mirror). */
+  public upsertRoom(room: LobbyRoom): void {
+    this.rooms.set(room.id, room);
+  }
+
+  /**
+   * Remove any rooms that have zero human players (AI-only or empty rooms)
+   */
+  public cleanupAiOnlyRooms(): number {
+    let removed = 0;
+    for (const [roomId, room] of this.rooms.entries()) {
+      const hasHumanPlayer = room.members.some(m => m.isPlayer && !m.isAi);
+      if (!hasHumanPlayer) {
+        this.rooms.delete(roomId);
+        removed++;
+      }
+    }
+    return removed;
+  }
+
   public listRooms(): LobbyRoom[] {
+    this.cleanupAiOnlyRooms();
     return Array.from(this.rooms.values());
   }
 
   public deleteRoom(roomId: string): boolean {
     return this.rooms.delete(roomId);
+  }
+
+  /**
+   * Player (or host) leaves a room.
+   * If no human players remain (only AI or empty), the room is immediately deleted.
+   * If the host leaves and other human players remain, host transfers to the first remaining human.
+   */
+  /**
+   * Mid-combat / disconnect: convert a human member into an AI occupying the same slot.
+   * Returns the new AI member id, or null if the member was not found / already AI.
+   */
+  public replaceHumanWithAi(
+    roomId: string,
+    memberId: string
+  ): { ok: boolean; aiMemberId?: string; roomDeleted?: boolean; newHostId?: string; room?: LobbyRoom } {
+    const room = this.getRoom(roomId);
+    if (!room) return { ok: false };
+
+    const member = room.members.find((m) => m.id === memberId);
+    if (!member || member.isAi) return { ok: false };
+
+    const wasHost = room.hostId === memberId;
+    const existingNames = new Set(room.members.filter((m) => m.id !== memberId).map((m) => m.name));
+    const pool = AI_ROSTER_POOL[member.role] || AI_ROSTER_POOL.DPS;
+    const available = pool.filter((c) => !existingNames.has(c.name));
+    const candidate =
+      available.find((c) => c.classId === member.classId && c.spec === member.spec) ||
+      available.find((c) => c.classId === member.classId) ||
+      available[0] ||
+      pool[0];
+
+    const aiMemberId = `ai_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    member.id = aiMemberId;
+    member.name = candidate?.name || `${member.name}-AI`;
+    if (candidate) {
+      member.classId = candidate.classId;
+      member.spec = candidate.spec;
+      member.role = getRoleBySpec(candidate.classId, candidate.spec);
+    }
+    member.isPlayer = false;
+    member.isAi = true;
+    member.isHost = false;
+    member.isReady = true;
+
+    const slot = room.slots.find((s) => s.index === member.slotIndex);
+    if (slot) {
+      slot.member = member;
+      slot.role = member.role;
+    }
+
+    let newHostId: string | undefined;
+    if (wasHost) {
+      const nextHost = room.members.find((m) => m.isPlayer && !m.isAi);
+      if (nextHost) {
+        nextHost.isHost = true;
+        nextHost.isReady = true;
+        room.hostId = nextHost.id;
+        newHostId = nextHost.id;
+      } else {
+        // No humans left — delete room
+        this.rooms.delete(roomId);
+        return { ok: true, aiMemberId, roomDeleted: true };
+      }
+    }
+
+    return { ok: true, aiMemberId, newHostId, room };
+  }
+
+  public leaveRoom(
+    roomId: string,
+    memberId: string
+  ): { removed: boolean; roomDeleted: boolean; newHostId?: string } {
+    const room = this.getRoom(roomId);
+    if (!room) return { removed: false, roomDeleted: false };
+
+    // Remove from waiting queue if present
+    this.leaveWaitingQueue(roomId, memberId);
+
+    const idx = room.members.findIndex(m => m.id === memberId);
+    if (idx !== -1) {
+      const member = room.members[idx];
+      const slot = room.slots.find(s => s.index === member.slotIndex);
+      if (slot) {
+        slot.occupied = false;
+        slot.member = undefined;
+      }
+      room.members.splice(idx, 1);
+    }
+
+    const remainingHumans = room.members.filter(m => m.isPlayer && !m.isAi);
+    if (remainingHumans.length === 0) {
+      this.rooms.delete(roomId);
+      return { removed: idx !== -1, roomDeleted: true };
+    }
+
+    let newHostId: string | undefined;
+    if (room.hostId === memberId) {
+      const nextHost = remainingHumans[0];
+      nextHost.isHost = true;
+      nextHost.isReady = true;
+      room.hostId = nextHost.id;
+      newHostId = nextHost.id;
+    }
+
+    return { removed: idx !== -1, roomDeleted: false, newHostId };
+  }
+
+  /**
+   * Update room difficulty (NORMAL / HEROIC / CUSTOM) and optional custom parameters
+   */
+  public setRoomDifficulty(
+    roomId: string,
+    difficulty: DungeonDifficulty,
+    customDifficulty?: CustomDifficultySettings
+  ): boolean {
+    const room = this.getRoom(roomId);
+    if (!room) return false;
+    room.difficulty = difficulty;
+    if (customDifficulty) {
+      room.customDifficulty = { ...customDifficulty };
+    }
+    return true;
   }
 
   /**
@@ -373,11 +630,7 @@ export class RoomManager {
       else targetRole = 'DPS';
     }
 
-    let targetSlot = room.slots.find(s => !s.occupied && s.role === targetRole);
-    if (!targetSlot) {
-      targetSlot = room.slots.find(s => !s.occupied);
-      if (targetSlot) targetSlot.role = targetRole;
-    }
+    let targetSlot = room.slots.find(s => !s.occupied);
     if (!targetSlot) return null;
 
     const existingNames = new Set(room.members.map(m => m.name));
@@ -390,10 +643,15 @@ export class RoomManager {
     const chosenClass = classId || candidate.classId;
     const chosenSpec = spec || candidate.spec;
     const resolvedRole = getRoleBySpec(chosenClass, chosenSpec);
+    const chosenName = (classId || spec)
+      ? pickLoreNameForClassSpec(chosenClass, chosenSpec, existingNames)
+      : candidate.name;
+
+    targetSlot.role = resolvedRole;
 
     const aiMember: RoomMember = {
       id: `ai_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-      name: candidate.name,
+      name: chosenName,
       classId: chosenClass,
       spec: chosenSpec,
       role: resolvedRole,
@@ -431,6 +689,7 @@ export class RoomManager {
     }
 
     room.members.splice(idx, 1);
+    this.cleanupAiOnlyRooms();
     return true;
   }
 
@@ -509,16 +768,21 @@ export class RoomManager {
   }
 
   /**
-   * Change member's spec and role
+   * Change member's class, spec and role.
+   * For AI teammates, automatically updates their lore name to match the newly chosen class/spec.
+   * When options.allowOverQuota is true, allows free rearrangement and relies on pre-start validation.
    */
   public changeMemberSpec(
     roomId: string,
     memberId: string,
     newClassId: ClassId,
-    newSpec: string
+    newSpec: string,
+    options?: { allowOverQuota?: boolean }
   ): boolean {
-    const check = this.canSelectSpec(roomId, memberId, newSpec, newClassId);
-    if (!check.allowed) return false;
+    if (!options?.allowOverQuota) {
+      const check = this.canSelectSpec(roomId, memberId, newSpec, newClassId);
+      if (!check.allowed) return false;
+    }
 
     const room = this.getRoom(roomId);
     if (!room) return false;
@@ -526,14 +790,24 @@ export class RoomManager {
     const member = room.members.find(m => m.id === memberId);
     if (!member) return false;
 
+    const prevClassId = member.classId;
+    const prevSpec = member.spec;
     const newRole = getRoleBySpec(newClassId, newSpec);
+
     member.classId = newClassId;
     member.spec = newSpec;
     member.role = newRole;
 
+    // Auto-sync AI hero name to match the new class & spec
+    if (member.isAi && (newClassId !== prevClassId || newSpec !== prevSpec)) {
+      const otherNames = new Set(room.members.filter(m => m.id !== member.id).map(m => m.name));
+      member.name = pickLoreNameForClassSpec(newClassId, newSpec, otherNames);
+    }
+
     const slot = room.slots.find(s => s.index === member.slotIndex);
     if (slot) {
       slot.role = newRole;
+      slot.member = member;
     }
 
     return true;
@@ -824,15 +1098,38 @@ export class RoomManager {
           isHealer ||
           queued.classId === 'MAGE' ||
           queued.classId === 'SHAMAN' ||
-          (queued.classId === 'DRUID' && queued.role === 'DPS');
+          queued.classId === 'PALADIN' ||
+          queued.classId === 'PRIEST' ||
+          queued.classId === 'WARLOCK' ||
+          (queued.classId === 'DRUID' && queued.spec?.toUpperCase() !== 'FERAL');
 
-        const maxHp = isTank ? 145000 : 105000;
-        const maxMp = hasMana ? 95000 : 0;
+        const maxHp = isTank ? 65000 : 36000;
+        const maxMp = hasMana ? (isHealer ? 45000 : 42000) : 0;
+
+        const resources: Unit['resources'] = [];
+        if (hasMana) resources.push({ kind: 'MANA', current: maxMp, max: maxMp });
+        if (queued.classId === 'ROGUE' || (queued.classId === 'DRUID' && queued.spec?.toUpperCase() === 'FERAL')) {
+          resources.push({ kind: 'ENERGY', current: 100, max: 100 });
+          resources.push({ kind: 'COMBO_POINTS', current: 0, max: 5 });
+        }
+        if (queued.classId === 'DK') {
+          resources.push({ kind: 'RUNIC_POWER', current: 20, max: 100 });
+        }
+        if (queued.classId === 'WARRIOR') {
+          resources.push({ kind: 'RAGE', current: 40, max: 100 });
+        }
+        if (queued.classId === 'HUNTER') {
+          resources.push({ kind: 'FOCUS', current: 100, max: 100 });
+        }
+        if (queued.classId === 'PALADIN') {
+          resources.push({ kind: 'HOLY_POWER', current: 0, max: 3 });
+        }
 
         const newUnit: Unit = {
           id: queued.playerId,
           name: queued.playerName,
           classId: queued.classId,
+          spec: queued.spec,
           role: queued.role,
           isPlayer: true,
           isAlive: true,
@@ -842,28 +1139,26 @@ export class RoomManager {
           mp: maxMp,
           maxMp,
           energy: queued.classId === 'ROGUE' ? 100 : 0,
+          rage: queued.classId === 'WARRIOR' ? 40 : 0,
+          focus: queued.classId === 'HUNTER' ? 100 : 0,
+          runicPower: queued.classId === 'DK' ? 20 : 0,
+          holyPower: 0,
           absorb: 0,
-          resources: hasMana
-            ? [{ kind: 'MANA', current: maxMp, max: maxMp }]
-            : queued.classId === 'ROGUE'
-            ? [{ kind: 'ENERGY', current: 100, max: 100 }]
-            : queued.classId === 'DK'
-            ? [{ kind: 'RUNIC_POWER', current: 0, max: 100 }]
-            : [],
+          resources,
           buffs: [],
           threatTable: [],
           position: { x: isTank ? 440 : 180, y: 160 },
           stats: {
-            attackPower: 8000,
-            spellPower: 8000,
-            critChance: 0.25,
-            haste: 0.15,
-            armor: isTank ? 24000 : 12000,
+            attackPower: 5200,
+            spellPower: 4200,
+            critChance: 0.30,
+            haste: 0.50,
+            armor: isTank ? 22000 : 10000,
             spellResist: 0,
-            block: 0.15,
-            parry: 0.12,
-            dodge: 0.10,
-            mastery: 0.18,
+            block: isTank ? 0.25 : 0.05,
+            parry: isTank ? 0.16 : 0.05,
+            dodge: isTank ? 0.14 : 0.08,
+            mastery: 0.20,
             versatility: 0.05,
             speed: 1,
           },

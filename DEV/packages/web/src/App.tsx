@@ -38,9 +38,35 @@ import {
   type LobbyRoom,
   getRoleBySpec,
   DUNGEON_ROLE_QUOTAS,
+  LEVEL_80_STATS,
+  LEVEL_80_MAX_HASTE,
+  createLevel80BaseStats,
+  getHastedCastTimeMs,
+  getEffectiveGcdMs,
+  ALL_CLASSES_NORMALIZED,
+  getSpellByAnyId,
+  getSpellsForClassSpec,
+  getSpellGcdCategory,
+  getClassPrimaryResource,
+  isMeleeClassSpec,
+  buildUsableCandidatesForUnit,
+  getUnitResourceAmount,
+  classifySpellCastMode,
+  getCastLifecyclePolicy,
+  isChanneledSpell,
+  type NormalizedSpell,
+  type SpellResourceCostBundle,
 } from '@cata-raid-sim/engine';
+import {
+  hasSufficientPlayerResources,
+  deductPlayerResources,
+  processPlayerChannelTick,
+} from './hooks/usePlayerCastController.js';
 
 import { RoomListView, RoomDetailView, WaitingQueueOverlay } from './components/room/index.js';
+import { netClient } from './net/NetClient.js';
+import { NetworkRoomFacade } from './net/NetworkRoomFacade.js';
+import type { LobbyRoom as NetLobbyRoom, NetworkCombatSnapshot, PlayerInputPayload } from '@cata-raid-sim/engine';
 
 import { AuthAndCharacterModal, CLASS_COLORS } from './components/AuthAndCharacterModal.js';
 import { ClearCertificateModal } from './components/ClearCertificateModal.js';
@@ -66,9 +92,9 @@ const SPELL_MANA_COSTS: Record<string, number> = {
   nourish: 1800,
   rejuvenation: 2400,
   lifebloom: 1400,
-  wild_growth: 4800,
-  chain_heal: 4500,
-  healing_surge: 5200,
+  wild_growth: 2600,
+  chain_heal: 2200,
+  healing_surge: 2400,
   regrowth: 5200,
   greater_healing_wave: 5600,
   healing_touch: 5400,
@@ -86,6 +112,12 @@ const SPELL_MANA_COSTS: Record<string, number> = {
   pyroblast: 2800,
   starfire: 2800,
   chain_lightning: 3000,
+  earth_shield: 1800,
+  unleash_life: 1600,
+  healing_tide: 1200,
+  ascendance: 1000,
+  ancestral_guidance: 0,
+  thunderstorm: 0,
   moonfire: 2200,
   sunfire: 2200,
   flame_shock: 2200,
@@ -150,23 +182,41 @@ export function App() {
     amount: number;
     baseAmt: number;
     manaCost: number;
+    resourceKind?: string;
     totalMs: number;
     elapsedMs: number;
+    isHarmful?: boolean;
+    isAOE?: boolean;
+    maxTargets?: number;
+    school?: string;
+    normalizedSpell?: NormalizedSpell;
   }>>({});
 
   const getPredictedHealAmount = (spellId: string, caster?: Unit): number => {
     const PREDICTIONS: Record<string, { base: number; coeff: number }> = {
-      nourish: { base: 9500, coeff: 0.35 },
-      regrowth: { base: 16000, coeff: 0.45 },
-      healing_touch: { base: 34000, coeff: 1.1 },
-      healing_wave: { base: 22000, coeff: 0.75 },
-      healing_surge: { base: 16000, coeff: 0.55 },
-      greater_healing_wave: { base: 32000, coeff: 1.1 },
+      nourish: { base: 4200, coeff: 0.35 },
+      regrowth: { base: 6500, coeff: 0.45 },
+      healing_touch: { base: 11500, coeff: 0.85 },
+      healing_wave: { base: 4200, coeff: 0.35 },
+      healing_surge: { base: 8200, coeff: 0.55 },
+      greater_healing_wave: { base: 12000, coeff: 0.85 },
+      chain_heal: { base: 6200, coeff: 0.5 },
+      holy_light: { base: 5200, coeff: 0.4 },
+      flash_of_light: { base: 8200, coeff: 0.55 },
+      divine_light: { base: 12500, coeff: 0.85 },
+      heal: { base: 4600, coeff: 0.35 },
+      flash_heal: { base: 8500, coeff: 0.55 },
+      greater_heal: { base: 12500, coeff: 0.85 },
+      prayer_of_healing: { base: 5800, coeff: 0.45 },
     };
     const pred = PREDICTIONS[spellId];
-    if (!pred) return 0;
-    const sp = caster?.stats?.spellPower || 6000;
-    return Math.round(pred.base + sp * pred.coeff);
+    const sp = caster?.stats?.spellPower || 3200;
+    if (pred) return Math.round(pred.base + sp * pred.coeff);
+    const norm = getSpellByAnyId(spellId, caster?.classId);
+    if (norm && norm.isHeal && norm.directHeal > 0) {
+      return Math.round(norm.directHeal + sp * 0.4);
+    }
+    return 0;
   };
 
   const clearPlayerIncomingCast = () => {
@@ -193,15 +243,28 @@ export function App() {
     });
   };
 
-  const canAiUseCd = (unitId: string, spellKey: string, cdMs: number): boolean => {
+  // Pure read-only cooldown check for AI candidate evaluation (NEVER mutates CD state!)
+  const isAiCdReady = (unitId: string, spellKey: string, cdMs: number): boolean => {
+    if (cdMs <= 0) return true;
     const key = `${unitId}_${spellKey}`;
     const last = aiCooldownsRef.current[key] || 0;
-    const now = Date.now();
-    if (now - last >= cdMs) {
-      aiCooldownsRef.current[key] = now;
-      return true;
+    return Date.now() - last >= cdMs;
+  };
+
+  // Commit cooldown ONLY when AI actually casts/executes the spell
+  const markAiCdUsed = (unitId: string, spellKey: string): void => {
+    aiCooldownsRef.current[`${unitId}_${spellKey}`] = Date.now();
+  };
+
+  const inferAiSpecForUnit = (u: Unit): string => {
+    const cls = ALL_CLASSES_NORMALIZED[u.classId];
+    if (!cls) return u.spec || 'BLOOD';
+    if (u.spec) {
+      const exact = cls.specs.find(s => s.id.toUpperCase() === u.spec!.toUpperCase());
+      if (exact) return exact.id;
     }
-    return false;
+    const matching = cls.specs.find(s => s.role === u.role);
+    return matching?.id || cls.specs[0]?.id || 'BLOOD';
   };
 
   const aiPersonalitiesRef = useRef<Map<string, AIPersonality>>(new Map());
@@ -228,17 +291,36 @@ export function App() {
   };
 
   const syncUnitResources = (unit: Unit) => {
-    if (unit.resources) {
-      if (unit.maxMp && unit.maxMp > 0) {
-        const mRes = unit.resources.find(r => r.kind === 'MANA');
-        if (mRes) mRes.current = unit.mp ?? 0;
-        else unit.resources.push({ kind: 'MANA', current: unit.mp ?? 0, max: unit.maxMp });
-      }
-      if (unit.classId === 'ROGUE') {
-        const eRes = unit.resources.find(r => r.kind === 'ENERGY');
-        if (eRes) eRes.current = unit.energy ?? 0;
-        else unit.resources.push({ kind: 'ENERGY', current: unit.energy ?? 0, max: 100 });
-      }
+    if (!unit.resources) unit.resources = [];
+    if (unit.maxMp && unit.maxMp > 0) {
+      const mRes = unit.resources.find(r => r.kind === 'MANA');
+      if (mRes) mRes.current = unit.mp ?? 0;
+      else unit.resources.push({ kind: 'MANA', current: unit.mp ?? 0, max: unit.maxMp });
+    }
+    if (unit.classId === 'ROGUE') {
+      const eRes = unit.resources.find(r => r.kind === 'ENERGY');
+      if (eRes) eRes.current = unit.energy ?? 0;
+      else unit.resources.push({ kind: 'ENERGY', current: unit.energy ?? 100, max: 100 });
+    }
+    if (unit.classId === 'WARRIOR' || (unit.classId === 'DRUID' && unit.role === 'TANK')) {
+      const rRes = unit.resources.find(r => r.kind === 'RAGE');
+      if (rRes) rRes.current = unit.rage ?? 0;
+      else unit.resources.push({ kind: 'RAGE', current: unit.rage ?? 25, max: 100 });
+    }
+    if (unit.classId === 'HUNTER') {
+      const fRes = unit.resources.find(r => r.kind === 'FOCUS');
+      if (fRes) fRes.current = unit.focus ?? 100;
+      else unit.resources.push({ kind: 'FOCUS', current: unit.focus ?? 100, max: 100 });
+    }
+    if (unit.classId === 'DK') {
+      const rpRes = unit.resources.find(r => r.kind === 'RUNIC_POWER');
+      if (rpRes) rpRes.current = unit.runicPower ?? 0;
+      else unit.resources.push({ kind: 'RUNIC_POWER', current: unit.runicPower ?? 0, max: 100 });
+    }
+    if (unit.classId === 'PALADIN') {
+      const hpRes = unit.resources.find(r => r.kind === 'HOLY_POWER');
+      if (hpRes) hpRes.current = unit.holyPower ?? 0;
+      else unit.resources.push({ kind: 'HOLY_POWER', current: unit.holyPower ?? 0, max: 3 });
     }
   };
 
@@ -261,7 +343,7 @@ export function App() {
   const [hoveredTargetId, setHoveredTargetId] = useState<string | null>(null);
   const [playerCooldowns, setPlayerCooldowns] = useState<Record<string, { cdRemainingMs: number; totalCdMs: number }>>({});
   const [playerGcdRemainingMs, setPlayerGcdRemainingMs] = useState(0);
-  const [playerGcdTotalMs, setPlayerGcdTotalMs] = useState(750);
+  const [playerGcdTotalMs, setPlayerGcdTotalMs] = useState(1000);
   const [incomingHeals, setIncomingHeals] = useState<Record<string, number>>({});
   const [incomingCasts, setIncomingCasts] = useState<Record<string, IncomingHealCast[]>>({});
   const [travelRemainingMs, setTravelRemainingMs] = useState(15000);
@@ -383,47 +465,184 @@ export function App() {
   const [activeRoomId, setActiveRoomId] = useState<string | null>(null);
   const [waitingQueueRoomId, setWaitingQueueRoomId] = useState<string | null>(null);
   const [, setRoomsTick] = useState<number>(0);
+  const [netConnected, setNetConnected] = useState(false);
+  const roomFacadeRef = useRef(new NetworkRoomFacade(roomManager));
+  const isNetworkGuestRef = useRef(false);
+  const isNetworkHostRef = useRef(false);
+  const activeRoomIdRef = useRef<string | null>(null);
+  const pendingGuestInputsRef = useRef<PlayerInputPayload[]>([]);
+  const lastCombatBroadcastMsRef = useRef(0);
+  const startAdventureRef = useRef<(overrides?: {
+    tier?: '5man' | '20man';
+    difficulty?: DungeonDifficulty;
+    customDiff?: CustomDifficultySettings;
+    activeRoom?: LobbyRoom;
+  }) => void>(() => {});
+  const customDifficultyRef = useRef(customDifficulty);
+  customDifficultyRef.current = customDifficulty;
 
-  // Seed mock rooms if empty
   useEffect(() => {
-    if (roomManager.listRooms().length === 0) {
-      const r1 = roomManager.createRoom({
-        name: '影牙城堡英雄速推刷装队',
-        dungeonId: 'shadowfang_keep',
-        difficulty: 'HEROIC',
-        host: { id: 'host_mograine', name: '莫格莱尼', classId: 'DK', spec: 'BLOOD' },
-      });
-      roomManager.addAiMember(r1.id, 'HEALER');
-      roomManager.addAiMember(r1.id, 'DPS');
-      roomManager.addAiMember(r1.id, 'DPS');
+    activeRoomIdRef.current = activeRoomId;
+  }, [activeRoomId]);
 
-      const r2 = roomManager.createRoom({
-        name: '巨龙之魂英雄开荒团 [进行中]',
-        dungeonId: 'dragon_soul',
-        difficulty: 'HEROIC',
-        host: { id: 'host_uther', name: '乌瑟尔', classId: 'DK', spec: 'BLOOD' },
-      });
-      roomManager.autoFillAi(r2.id);
-      r2.status = 'IN_COMBAT';
-      r2.inCombatBossName = '莫卓克';
-      r2.inCombatBossHp = 48750000;
-      r2.inCombatBossMaxHp = 75000000;
-    }
+  // Ensure any AI-only rooms are always cleaned up on mount
+  useEffect(() => {
+    roomManager.cleanupAiOnlyRooms();
   }, []);
 
-  const handleCreateRoom = (name: string, dungeonId: string, difficulty: DungeonDifficulty) => {
+  // WebSocket: auth + room/combat sync subscription
+  useEffect(() => {
+    if (!currentChar || !account) return;
+
+    netClient.connect({
+      username: account.username,
+      playerId: currentChar.id,
+      playerName: currentChar.name,
+      classId: currentChar.classId,
+      spec: currentChar.lastSpec,
+      role: getRoleBySpec(currentChar.classId, currentChar.lastSpec),
+    });
+
+    const unsub = netClient.subscribe((msg) => {
+      if (msg.type === 'AUTH_OK' || msg.type === 'CONNECTED') {
+        setNetConnected(true);
+        setRoomsTick((t) => t + 1);
+      }
+      if (msg.type === 'ROOM_LIST_SYNC' && Array.isArray(msg.payload)) {
+        for (const room of msg.payload as NetLobbyRoom[]) {
+          roomFacadeRef.current.upsertRoom(room);
+        }
+        setRoomsTick((t) => t + 1);
+      }
+      if (msg.type === 'ROOM_UPDATE' && msg.payload) {
+        const room = msg.payload as NetLobbyRoom;
+        roomFacadeRef.current.upsertRoom(room);
+        if (currentChar && room.members.some((m) => m.id === currentChar.id)) {
+          setActiveRoomId(room.id);
+          setLobbySubView('ROOM_DETAIL');
+          isNetworkHostRef.current = room.hostId === currentChar.id;
+          isNetworkGuestRef.current = room.hostId !== currentChar.id && room.members.some((m) => m.id === currentChar.id && !m.isAi);
+        }
+        setRoomsTick((t) => t + 1);
+      }
+      if (msg.type === 'ROOM_START' && msg.payload) {
+        const room = msg.payload as NetLobbyRoom;
+        roomFacadeRef.current.upsertRoom(room);
+        setActiveRoomId(room.id);
+        isNetworkHostRef.current = !!(currentChar && room.hostId === currentChar.id);
+        isNetworkGuestRef.current = !!(currentChar && room.hostId !== currentChar.id);
+        const tier: '5man' | '20man' = room.dungeonId === 'dragon_soul' ? '20man' : '5man';
+        const effectiveCustom = room.customDifficulty || customDifficultyRef.current;
+        setDungeonTier(tier);
+        setDungeonDifficulty(room.difficulty);
+        if (room.difficulty === 'CUSTOM') setCustomDifficulty(effectiveCustom);
+        startAdventureRef.current({
+          tier,
+          difficulty: room.difficulty,
+          customDiff: effectiveCustom,
+          activeRoom: room,
+        });
+      }
+      if (msg.type === 'COMBAT_STATE' && msg.payload && isNetworkGuestRef.current) {
+        const snap = msg.payload as NetworkCombatSnapshot;
+        const engine = engineRef.current;
+        engine.applyNetworkUnitSnapshots(snap.units);
+        setFriendlyUnits([...engine.friendlyUnits]);
+        setBossUnit(engine.bossUnit ? { ...engine.bossUnit } : undefined);
+        if (snap.bossTargetId !== undefined) setBossTargetId(snap.bossTargetId ?? null);
+        if (snap.runPhase && snap.runPhase !== runPhase) {
+          setRunPhase(snap.runPhase as RunPhase);
+        }
+      }
+      if (msg.type === 'PLAYER_INPUT' && msg.payload && isNetworkHostRef.current) {
+        pendingGuestInputsRef.current.push(msg.payload as PlayerInputPayload);
+      }
+      if (msg.type === 'MEMBER_REPLACE_AI' && msg.payload) {
+        const body = msg.payload as { room: NetLobbyRoom; playerId: string; aiMemberId: string };
+        roomFacadeRef.current.upsertRoom(body.room);
+        if (isNetworkHostRef.current) {
+          const engine = engineRef.current;
+          const unit = engine.getUnit(body.playerId);
+          if (unit) {
+            // Keep unit id stable for combat; mark as AI-controlled
+            unit.isPlayer = false;
+          }
+        }
+        if (currentChar && body.playerId === currentChar.id) {
+          isNetworkGuestRef.current = false;
+          isNetworkHostRef.current = body.room.hostId === currentChar.id;
+        }
+        setRoomsTick((t) => t + 1);
+      }
+      if (msg.type === 'HOST_TRANSFER' && msg.payload) {
+        const body = msg.payload as { newHostId: string; room: NetLobbyRoom };
+        roomFacadeRef.current.upsertRoom(body.room);
+        if (currentChar) {
+          isNetworkHostRef.current = body.newHostId === currentChar.id;
+          isNetworkGuestRef.current = body.newHostId !== currentChar.id && body.room.members.some((m) => m.id === currentChar.id && !m.isAi);
+        }
+        setRoomsTick((t) => t + 1);
+      }
+    });
+
+    return () => {
+      unsub();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentChar?.id, account?.username]);
+
+  const handleLeaveActiveRoom = () => {
+    if (activeRoomId && currentChar) {
+      roomFacadeRef.current.leaveRoom(activeRoomId, currentChar.id);
+    } else if (activeRoomId) {
+      roomManager.deleteRoom(activeRoomId);
+    }
+    roomManager.cleanupAiOnlyRooms();
+    isNetworkGuestRef.current = false;
+    isNetworkHostRef.current = false;
+    setActiveRoomId(null);
+    setLobbySubView('ROOM_LIST');
+    setRoomsTick(t => t + 1);
+  };
+
+  const handleCreateRoom = (
+    name: string,
+    dungeonId: string,
+    difficulty: DungeonDifficulty,
+    customDiff?: CustomDifficultySettings
+  ) => {
     if (!currentChar) return;
+    if (customDiff) {
+      handleCustomDifficultyChange(customDiff);
+    }
+    const host = {
+      id: currentChar.id,
+      name: currentChar.name,
+      classId: currentChar.classId,
+      spec: currentChar.lastSpec,
+      role: getRoleBySpec(currentChar.classId, currentChar.lastSpec),
+    };
+    if (netClient.connected) {
+      netClient.createRoom({
+        name,
+        dungeonId,
+        difficulty,
+        customDifficulty: difficulty === 'CUSTOM' ? (customDiff || customDifficulty) : undefined,
+        host,
+      });
+      setLobbySubView('ROOM_DETAIL');
+      setRoomsTick(t => t + 1);
+      return;
+    }
     const room = roomManager.createRoom({
       name,
       dungeonId,
       difficulty,
-      host: {
-        id: currentChar.id,
-        name: currentChar.name,
-        classId: currentChar.classId,
-        spec: currentChar.lastSpec,
-      },
+      customDifficulty: difficulty === 'CUSTOM' ? (customDiff || customDifficulty) : undefined,
+      host,
     });
+    isNetworkHostRef.current = true;
+    isNetworkGuestRef.current = false;
     setActiveRoomId(room.id);
     setLobbySubView('ROOM_DETAIL');
     setRoomsTick(t => t + 1);
@@ -431,14 +650,20 @@ export function App() {
 
   const handleJoinRoom = (roomId: string) => {
     if (!currentChar) return;
+    if (netClient.connected) {
+      netClient.joinRoom(roomId);
+      setActiveRoomId(roomId);
+      setLobbySubView('ROOM_DETAIL');
+      setRoomsTick(t => t + 1);
+      return;
+    }
     const room = roomManager.getRoom(roomId);
     if (!room) return;
 
     let member = room.members.find(m => m.id === currentChar.id);
     if (!member) {
       const pRole = getRoleBySpec(currentChar.classId, currentChar.lastSpec);
-      let targetSlot = room.slots.find(s => !s.occupied && s.role === pRole);
-      if (!targetSlot) targetSlot = room.slots.find(s => !s.occupied);
+      const targetSlot = room.slots.find(s => !s.occupied);
       if (targetSlot) {
         member = {
           id: currentChar.id,
@@ -458,6 +683,8 @@ export function App() {
         room.members.push(member);
       }
     }
+    isNetworkGuestRef.current = room.hostId !== currentChar.id;
+    isNetworkHostRef.current = room.hostId === currentChar.id;
     setActiveRoomId(room.id);
     setLobbySubView('ROOM_DETAIL');
     setRoomsTick(t => t + 1);
@@ -465,6 +692,12 @@ export function App() {
 
   const handleJoinWaitingQueue = (roomId: string) => {
     if (!currentChar) return;
+    if (netClient.connected) {
+      netClient.joinRoom(roomId);
+      setWaitingQueueRoomId(roomId);
+      setRoomsTick(t => t + 1);
+      return;
+    }
     roomManager.joinWaitingQueue(roomId, {
       id: currentChar.id,
       name: currentChar.name,
@@ -478,7 +711,7 @@ export function App() {
   const handleQuickJoin = () => {
     if (!currentChar) return;
     const pRole = getRoleBySpec(currentChar.classId, currentChar.lastSpec);
-    const rooms = roomManager.listRooms();
+    const rooms = roomFacadeRef.current.listRooms();
     for (const r of rooms) {
       if (r.status === 'LOBBY') {
         const quota = DUNGEON_ROLE_QUOTAS[r.dungeonId];
@@ -489,26 +722,43 @@ export function App() {
         }
       }
     }
-    handleCreateRoom(`${currentChar.name}的速推队`, 'shadowfang_keep', 'HEROIC');
+    handleCreateRoom(`${currentChar.name}的速推队`, 'shadowfang_keep', dungeonDifficulty, dungeonDifficulty === 'CUSTOM' ? customDifficulty : undefined);
   };
 
   const handleStartGameFromRoom = () => {
     if (!activeRoomId || !currentChar) return;
-    const room = roomManager.getRoom(activeRoomId);
+    const room = roomFacadeRef.current.getRoom(activeRoomId) || roomManager.getRoom(activeRoomId);
     if (!room) return;
-    const validation = roomManager.validateStartGame(activeRoomId);
+    const validation = roomFacadeRef.current.validateStartGame(activeRoomId);
     if (!validation.canStart) {
-      alert(`无法开始游戏: ${validation.reasons.join('；')}`);
       return;
     }
+
+    if (netClient.connected) {
+      isNetworkHostRef.current = true;
+      isNetworkGuestRef.current = false;
+      // Server broadcasts ROOM_START to host + guests; adventure starts in the WS handler
+      netClient.startRoom(activeRoomId);
+      return;
+    }
+
     roomManager.startGame(activeRoomId, currentChar.id);
 
-    const tier = room.dungeonId === 'dragon_soul' ? '20man' : '5man';
+    const tier: '5man' | '20man' = room.dungeonId === 'dragon_soul' ? '20man' : '5man';
+    const effectiveCustom = room.customDifficulty || customDifficulty;
     setDungeonTier(tier);
     setDungeonDifficulty(room.difficulty);
+    if (room.difficulty === 'CUSTOM') {
+      setCustomDifficulty(effectiveCustom);
+    }
 
-    setupRaidUnits(currentChar, tier, room.difficulty, customDifficulty, room);
-    handleStartAdventure();
+    // Pass room, tier, difficulty, and custom settings directly so FIRST entry uses exact room roster & config
+    handleStartAdventure({
+      tier,
+      difficulty: room.difficulty,
+      customDiff: effectiveCustom,
+      activeRoom: room,
+    });
   };
 
   // ── [Game Load] 游戏加载时，技能/Buff 图标优先从 \ART\resources\ 寻找 ──
@@ -556,6 +806,23 @@ export function App() {
     const aiHpMult = isCustom ? Math.max(0.1, customDiff.aiHpCoeff ?? 1.0) : 1.0;
     const aiMpMult = isCustom ? Math.max(0.1, customDiff.aiMpCoeff ?? 1.0) : 1.0;
 
+    const hasManaForClassRole = (cls: ClassId, role: 'TANK' | 'HEALER' | 'DPS'): boolean => {
+      if (role === 'HEALER') return true;
+      return (
+        cls === 'MAGE' ||
+        cls === 'SHAMAN' ||
+        cls === 'PRIEST' ||
+        cls === 'WARLOCK' ||
+        cls === 'PALADIN' ||
+        (cls === 'DRUID' && role === 'DPS')
+      );
+    };
+
+    const getLv80MaxMp = (cls: ClassId, role: 'TANK' | 'HEALER' | 'DPS'): number => {
+      if (!hasManaForClassRole(cls, role)) return 0;
+      return role === 'HEALER' ? LEVEL_80_STATS.healerBaseMp : LEVEL_80_STATS.casterBaseMp;
+    };
+
     const finalizeUnit = (u: Unit): Unit => {
       if (u.isPlayer) {
         u.maxHp = Math.round(u.maxHp * playerHpMult);
@@ -575,10 +842,22 @@ export function App() {
       u.resources = [];
       if (u.maxMp && u.maxMp > 0) {
         u.resources.push({ kind: 'MANA', current: u.mp ?? u.maxMp, max: u.maxMp });
-      } else if (u.classId === 'ROGUE') {
-        u.resources.push({ kind: 'ENERGY', current: u.energy ?? 100, max: 100 });
+      }
+      if (u.classId === 'ROGUE') {
+        u.energy = u.energy ?? 100;
+        u.resources.push({ kind: 'ENERGY', current: u.energy, max: 100 });
+      } else if (u.classId === 'WARRIOR' || (u.classId === 'DRUID' && u.role === 'TANK')) {
+        u.rage = u.rage ?? 40;
+        u.resources.push({ kind: 'RAGE', current: u.rage, max: 100 });
+      } else if (u.classId === 'HUNTER') {
+        u.focus = u.focus ?? 100;
+        u.resources.push({ kind: 'FOCUS', current: u.focus, max: 100 });
       } else if (u.classId === 'DK') {
-        u.resources.push({ kind: 'RUNIC_POWER', current: 0, max: 100 });
+        u.runicPower = u.runicPower ?? 20;
+        u.resources.push({ kind: 'RUNIC_POWER', current: u.runicPower, max: 100 });
+      } else if (u.classId === 'PALADIN') {
+        u.holyPower = u.holyPower ?? 1;
+        u.resources.push({ kind: 'HOLY_POWER', current: u.holyPower, max: 3 });
       }
       return u;
     };
@@ -594,24 +873,31 @@ export function App() {
         const isHealerMember = assignedRole === 'HEALER';
 
         const nameSeed = assignedName.split('').reduce((acc, c) => acc + c.charCodeAt(0), idx * 37);
-        const apJitter = isPlayer ? 0 : ((nameSeed % 11) - 5) * 80;
-        const spJitter = isPlayer ? 0 : (((nameSeed >> 2) % 11) - 5) * 80;
+        const apJitter = isPlayer ? 0 : ((nameSeed % 11) - 5) * 40;
+        const spJitter = isPlayer ? 0 : (((nameSeed >> 2) % 11) - 5) * 40;
         const critJitter = isPlayer ? 0 : (((nameSeed >> 4) % 7) - 3) * 0.01;
-        const hasteJitter = isPlayer ? 0 : (((nameSeed >> 1) % 5) - 2) * 0.01;
+        const baseStats = createLevel80BaseStats(assignedRole);
+        const maxHp = isTankMember ? LEVEL_80_STATS.tankBaseHp : LEVEL_80_STATS.dpsHealerBaseHp;
+        const maxMp = getLv80MaxMp(assignedClass, assignedRole);
 
         party.push({
           id: isPlayer ? 'p1_player' : member.id,
           name: assignedName,
           classId: assignedClass,
+          spec: member.spec,
           role: assignedRole,
           isPlayer,
           isAlive: true,
           alive: true,
-          hp: isTankMember ? 145000 : 105000,
-          maxHp: isTankMember ? 145000 : 105000,
-          mp: isHealerMember || assignedClass === 'MAGE' || assignedClass === 'SHAMAN' || (assignedClass === 'DRUID' && assignedRole === 'DPS') ? 95000 : 0,
-          maxMp: isHealerMember || assignedClass === 'MAGE' || assignedClass === 'SHAMAN' || (assignedClass === 'DRUID' && assignedRole === 'DPS') ? 95000 : 0,
+          hp: maxHp,
+          maxHp,
+          mp: maxMp,
+          maxMp,
           energy: assignedClass === 'ROGUE' ? 100 : 0,
+          rage: assignedClass === 'WARRIOR' || (assignedClass === 'DRUID' && isTankMember) ? 40 : 0,
+          focus: assignedClass === 'HUNTER' ? 100 : 0,
+          runicPower: assignedClass === 'DK' ? 20 : 0,
+          holyPower: assignedClass === 'PALADIN' ? 1 : 0,
           absorb: 0,
           resources: [],
           buffs: [],
@@ -621,18 +907,12 @@ export function App() {
             y: 160 + (idx % 5) * 20,
           },
           stats: {
-            attackPower: 8000 + apJitter,
-            spellPower: 8000 + spJitter,
-            critChance: 0.25 + critJitter,
-            haste: 0.15 + hasteJitter,
-            armor: isTankMember ? 24000 : 12000,
-            spellResist: 0,
-            block: isTankMember ? 0.15 : 0,
-            parry: isTankMember ? 0.12 : 0,
-            dodge: isTankMember ? 0.10 : (assignedClass === 'ROGUE' ? 0.08 : 0.05),
-            mastery: 0.18,
-            versatility: 0.05,
-            speed: 1,
+            ...baseStats,
+            attackPower: Math.round(baseStats.attackPower + apJitter),
+            spellPower: Math.round(baseStats.spellPower + spJitter),
+            critChance: Math.round((baseStats.critChance + critJitter) * 100) / 100,
+            haste: LEVEL_80_MAX_HASTE,
+            dodge: isTankMember ? 0.12 : (assignedClass === 'ROGUE' ? 0.08 : 0.05),
           },
         });
       });
@@ -642,15 +922,10 @@ export function App() {
       return;
     }
 
-    const pClass = char ? char.classId : 'DK';
-    const pRole: 'TANK' | 'HEALER' | 'DPS' =
-      char?.lastSpec === 'RESTORATION'
-        ? 'HEALER'
-        : char?.lastSpec === 'BLOOD' || char?.lastSpec === 'GUARDIAN'
-        ? 'TANK'
-        : 'DPS';
+    const pClass: ClassId = char ? char.classId : 'DK';
+    const pRole: 'TANK' | 'HEALER' | 'DPS' = char?.lastSpec ? getRoleBySpec(pClass, char.lastSpec) : 'TANK';
 
-    // ── 20-Man Heroic Raid Composition (4 Squads: 2T · 4H · 14DPS) ───────────
+    // ── 20-Man Heroic Raid Composition (All 10 Cataclysm Classes · 2T · 4H · 14DPS · Lv.80 Max Haste) ──
     if (tier === '20man') {
       const party: Unit[] = [];
       const roster: Array<{
@@ -660,33 +935,33 @@ export function App() {
         posX: number;
         posY: number;
       }> = [
-        // Squad 1 (Main Tank & Core Melee - Inside 60% Central Combat Rectangle)
+        // Squad 1 (Main Tank & Core Melee)
         { name: '莫格莱尼', classId: 'DK', role: 'TANK', posX: 440, posY: 165 },
-        { name: '乌瑟尔', classId: 'DK', role: 'TANK', posX: 440, posY: 195 },
+        { name: '乌瑟尔', classId: 'PALADIN', role: 'TANK', posX: 440, posY: 195 },
         { name: '瓦莉拉', classId: 'ROGUE', role: 'DPS', posX: 465, posY: 150 },
-        { name: '瓦里安', classId: 'DK', role: 'DPS', posX: 475, posY: 210 },
+        { name: '瓦里安', classId: 'WARRIOR', role: 'DPS', posX: 475, posY: 210 },
         { name: '玛法里奥', classId: 'DRUID', role: 'HEALER', posX: 190, posY: 150 },
 
-        // Squad 2 (Melee & Off-Healer)
+        // Squad 2 (Melee & Shaman Support)
         { name: '萨萨里安', classId: 'DK', role: 'DPS', posX: 460, posY: 130 },
-        { name: '萨鲁法尔', classId: 'DK', role: 'DPS', posX: 460, posY: 230 },
+        { name: '萨鲁法尔', classId: 'WARRIOR', role: 'DPS', posX: 460, posY: 230 },
         { name: '肖尔', classId: 'ROGUE', role: 'DPS', posX: 450, posY: 180 },
         { name: '萨尔', classId: 'SHAMAN', role: 'DPS', posX: 230, posY: 130 },
         { name: '先知努波顿', classId: 'SHAMAN', role: 'HEALER', posX: 190, posY: 220 },
 
-        // Squad 3 (Casters & Raid Healer)
+        // Squad 3 (Casters & Priest Healer)
         { name: '吉安娜', classId: 'MAGE', role: 'DPS', posX: 240, posY: 160 },
         { name: '卡德加', classId: 'MAGE', role: 'DPS', posX: 250, posY: 200 },
-        { name: '古尔丹之影', classId: 'MAGE', role: 'DPS', posX: 260, posY: 140 },
-        { name: '威尔弗雷德', classId: 'MAGE', role: 'DPS', posX: 270, posY: 230 },
-        { name: '安度因', classId: 'DRUID', role: 'HEALER', posX: 180, posY: 180 },
+        { name: '古尔丹之影', classId: 'WARLOCK', role: 'DPS', posX: 260, posY: 140 },
+        { name: '威尔弗雷德', classId: 'WARLOCK', role: 'DPS', posX: 270, posY: 230 },
+        { name: '安度因', classId: 'PRIEST', role: 'HEALER', posX: 180, posY: 180 },
 
-        // Squad 4 (Ranged Marksmen & Support)
-        { name: '希尔瓦娜斯', classId: 'ROGUE', role: 'DPS', posX: 280, posY: 120 },
-        { name: '雷克萨', classId: 'SHAMAN', role: 'DPS', posX: 290, posY: 240 },
-        { name: '本尼迪塔斯', classId: 'MAGE', role: 'DPS', posX: 300, posY: 180 },
-        { name: '库尔提拉', classId: 'DK', role: 'DPS', posX: 430, posY: 200 },
-        { name: '莉亚德琳', classId: 'SHAMAN', role: 'HEALER', posX: 200, posY: 250 },
+        // Squad 4 (Hunters, Shadow Priest & Holy Paladin)
+        { name: '希尔瓦娜斯', classId: 'HUNTER', role: 'DPS', posX: 280, posY: 120 },
+        { name: '雷克萨', classId: 'HUNTER', role: 'DPS', posX: 290, posY: 240 },
+        { name: '本尼迪塔斯', classId: 'PRIEST', role: 'DPS', posX: 300, posY: 180 },
+        { name: '库尔提拉', classId: 'PALADIN', role: 'DPS', posX: 430, posY: 200 },
+        { name: '莉亚德琳', classId: 'PALADIN', role: 'HEALER', posX: 200, posY: 250 },
       ];
 
       // Assign player to the matching role slot in Squad 1
@@ -705,14 +980,14 @@ export function App() {
         const assignedRole = isPlayer ? pRole : member.role;
         const assignedName = isPlayer ? (char ? char.name : '勇士') : member.name;
         const isTankMember = assignedRole === 'TANK';
-        const isHealerMember = assignedRole === 'HEALER';
 
-        // Add subtle individual stat variation per AI member (gear / talent flavor)
         const nameSeed = assignedName.split('').reduce((acc, c) => acc + c.charCodeAt(0), idx * 37);
-        const apJitter = isPlayer ? 0 : ((nameSeed % 11) - 5) * 80; // ±400 AP
-        const spJitter = isPlayer ? 0 : (((nameSeed >> 2) % 11) - 5) * 80; // ±400 SP
-        const critJitter = isPlayer ? 0 : (((nameSeed >> 4) % 7) - 3) * 0.01; // ±0.03 Crit
-        const hasteJitter = isPlayer ? 0 : (((nameSeed >> 1) % 5) - 2) * 0.01; // ±0.02 Haste
+        const apJitter = isPlayer ? 0 : ((nameSeed % 11) - 5) * 40;
+        const spJitter = isPlayer ? 0 : (((nameSeed >> 2) % 11) - 5) * 40;
+        const critJitter = isPlayer ? 0 : (((nameSeed >> 4) % 7) - 3) * 0.01;
+        const baseStats = createLevel80BaseStats(assignedRole);
+        const maxHp = isTankMember ? LEVEL_80_STATS.tankBaseHp : LEVEL_80_STATS.dpsHealerBaseHp;
+        const maxMp = getLv80MaxMp(assignedClass, assignedRole);
 
         party.push({
           id: isPlayer ? 'p1_player' : `ai_raid_${idx + 1}`,
@@ -722,37 +997,38 @@ export function App() {
           isPlayer,
           isAlive: true,
           alive: true,
-          hp: isTankMember ? 145000 : 105000,
-          maxHp: isTankMember ? 145000 : 105000,
-          mp: isHealerMember || assignedClass === 'MAGE' || assignedClass === 'SHAMAN' || (assignedClass === 'DRUID' && assignedRole === 'DPS') ? 95000 : 0,
-          maxMp: isHealerMember || assignedClass === 'MAGE' || assignedClass === 'SHAMAN' || (assignedClass === 'DRUID' && assignedRole === 'DPS') ? 95000 : 0,
+          hp: maxHp,
+          maxHp,
+          mp: maxMp,
+          maxMp,
           energy: assignedClass === 'ROGUE' ? 100 : 0,
+          rage: assignedClass === 'WARRIOR' || (assignedClass === 'DRUID' && isTankMember) ? 40 : 0,
+          focus: assignedClass === 'HUNTER' ? 100 : 0,
+          runicPower: assignedClass === 'DK' ? 20 : 0,
+          holyPower: assignedClass === 'PALADIN' ? 1 : 0,
           absorb: 0,
           resources: [],
           buffs: [],
           threatTable: [],
           position: { x: member.posX, y: member.posY },
           stats: {
-            attackPower: Math.round((isTankMember ? 8000 : 8500) + apJitter),
-            spellPower: Math.round((isHealerMember ? 9000 : 8500) + spJitter),
-            critChance: Math.round((0.25 + critJitter) * 100) / 100,
-            haste: Math.round((0.16 + hasteJitter) * 100) / 100,
-            armor: isTankMember ? 24000 : 12000,
-            spellResist: 0,
-            block: isTankMember ? 0.16 : 0,
-            parry: isTankMember ? 0.14 : 0,
-            dodge: isTankMember ? 0.12 : 0,
-            mastery: 0.18,
-            versatility: 0.05,
-            speed: 1,
+            ...baseStats,
+            attackPower: Math.round(baseStats.attackPower + apJitter),
+            spellPower: Math.round(baseStats.spellPower + spJitter),
+            critChance: Math.round((baseStats.critChance + critJitter) * 100) / 100,
+            haste: LEVEL_80_MAX_HASTE,
           },
         });
       });
 
-      if (pClass === 'DK' || pClass === 'MAGE') {
+      if (pClass === 'DK' || pClass === 'MAGE' || pClass === 'HUNTER' || pClass === 'WARLOCK') {
+        const petName =
+          pClass === 'DK' ? '食尸鬼' :
+          pClass === 'MAGE' ? '水元素' :
+          pClass === 'HUNTER' ? '幽灵狼' : '恶魔卫士';
         party.push({
           id: 'player_pet',
-          name: pClass === 'DK' ? '食尸鬼' : '水元素',
+          name: petName,
           classId: 'NPC',
           role: 'DPS',
           isPlayer: false,
@@ -760,26 +1036,18 @@ export function App() {
           ownerId: 'p1_player',
           isAlive: true,
           alive: true,
-          hp: 45000,
-          maxHp: 45000,
+          hp: LEVEL_80_STATS.petBaseHp,
+          maxHp: LEVEL_80_STATS.petBaseHp,
           absorb: 0,
           resources: [],
           buffs: [],
           threatTable: [],
           position: { x: 220, y: 160 },
           stats: {
-            attackPower: 5000,
-            spellPower: 5000,
-            critChance: 0.2,
-            haste: 0.1,
-            armor: 10000,
-            spellResist: 0,
-            block: 0,
-            parry: 0,
-            dodge: 0.05,
-            mastery: 0.1,
-            versatility: 0.05,
-            speed: 1,
+            ...createLevel80BaseStats('DPS'),
+            attackPower: 2600,
+            spellPower: 2400,
+            haste: LEVEL_80_MAX_HASTE,
           },
         });
       }
@@ -792,7 +1060,11 @@ export function App() {
       return;
     }
 
-    // ── 5-man heroic squad (Default) ──────────────────────────────────
+    // ── 5-man heroic squad (Lv.80 Max-Level Max-Haste, supports ALL 10 Cataclysm classes) ──
+    const playerBaseStats = createLevel80BaseStats(pRole);
+    const playerMaxHp = pRole === 'TANK' ? LEVEL_80_STATS.tankBaseHp : LEVEL_80_STATS.dpsHealerBaseHp;
+    const playerMaxMp = getLv80MaxMp(pClass, pRole);
+
     const party: Unit[] = [
       {
         id: 'p1_player',
@@ -802,113 +1074,67 @@ export function App() {
         isPlayer: true,
         isAlive: true,
         alive: true,
-        hp: pRole === 'TANK' ? 145000 : 105000,
-        maxHp: pRole === 'TANK' ? 145000 : 105000,
-        mp: pRole === 'HEALER' || pClass === 'MAGE' || pClass === 'SHAMAN' ? 95000 : 0,
-        maxMp: pRole === 'HEALER' || pClass === 'MAGE' || pClass === 'SHAMAN' ? 95000 : 0,
+        hp: playerMaxHp,
+        maxHp: playerMaxHp,
+        mp: playerMaxMp,
+        maxMp: playerMaxMp,
         energy: pClass === 'ROGUE' ? 100 : 0,
+        rage: pClass === 'WARRIOR' || (pClass === 'DRUID' && pRole === 'TANK') ? 40 : 0,
+        focus: pClass === 'HUNTER' ? 100 : 0,
+        runicPower: pClass === 'DK' ? 20 : 0,
+        holyPower: pClass === 'PALADIN' ? 1 : 0,
         absorb: 0,
         resources: [],
         buffs: [],
         threatTable: [],
         position: { x: pRole === 'TANK' ? 440 : 220, y: 180 },
         stats: {
-          attackPower: 8000,
-          spellPower: 8000,
-          critChance: 0.25,
-          haste: 0.15,
-          armor: pRole === 'TANK' ? 24000 : 12000,
-          spellResist: 0,
-          block: 0.15,
-          parry: 0.12,
-          dodge: 0.10,
-          mastery: 0.18,
-          versatility: 0.05,
-          speed: 1,
+          ...playerBaseStats,
+          haste: LEVEL_80_MAX_HASTE,
         },
       },
     ];
 
-    // Determine the 4 AI members with 100% class differentiation (DK, DRUID, SHAMAN, MAGE, ROGUE)
-    let aiTank: { name: string; classId: ClassId } | null = null;
-    let aiHealer: { name: string; classId: ClassId } | null = null;
-    let aiDpsList: Array<{ name: string; classId: ClassId }> = [];
+    // Pick balanced, class-diverse AI party from all 10 classes (always featuring Resto Shaman when player is not Shaman/Healer)
+    const TANK_POOL: Array<{ name: string; classId: ClassId }> = [
+      { name: '瓦里安', classId: 'WARRIOR' },
+      { name: '乌瑟尔', classId: 'PALADIN' },
+      { name: '莫格莱尼', classId: 'DK' },
+      { name: '布罗尔·熊皮', classId: 'DRUID' },
+    ];
+    const HEALER_POOL: Array<{ name: string; classId: ClassId }> = [
+      { name: '先知努波顿', classId: 'SHAMAN' },
+      { name: '安度因', classId: 'PRIEST' },
+      { name: '玛法里奥', classId: 'DRUID' },
+      { name: '莉亚德琳', classId: 'PALADIN' },
+    ];
+    const DPS_POOL: Array<{ name: string; classId: ClassId }> = [
+      { name: '吉安娜', classId: 'MAGE' },
+      { name: '希尔瓦娜斯', classId: 'HUNTER' },
+      { name: '古尔丹之影', classId: 'WARLOCK' },
+      { name: '瓦莉拉', classId: 'ROGUE' },
+      { name: '萨尔', classId: 'SHAMAN' },
+      { name: '萨鲁法尔', classId: 'WARRIOR' },
+      { name: '本尼迪塔斯', classId: 'PRIEST' },
+    ];
 
-    if (pRole === 'TANK') {
-      if (pClass === 'DK') {
-        aiHealer = { name: '玛法里奥', classId: 'DRUID' };
-        aiDpsList = [
-          { name: '吉安娜', classId: 'MAGE' },
-          { name: '瓦莉拉', classId: 'ROGUE' },
-          { name: '萨尔', classId: 'SHAMAN' },
-        ];
-      } else {
-        // Player is Druid Bear Tank
-        aiHealer = { name: '先知努波顿', classId: 'SHAMAN' };
-        aiDpsList = [
-          { name: '萨萨里安', classId: 'DK' },
-          { name: '吉安娜', classId: 'MAGE' },
-          { name: '瓦莉拉', classId: 'ROGUE' },
-        ];
-      }
-    } else if (pRole === 'HEALER') {
-      aiTank = { name: '莫格莱尼', classId: 'DK' };
-      if (pClass === 'DRUID') {
-        aiDpsList = [
-          { name: '吉安娜', classId: 'MAGE' },
-          { name: '瓦莉拉', classId: 'ROGUE' },
-          { name: '萨尔', classId: 'SHAMAN' },
-        ];
-      } else {
-        // Player is Shaman Healer
-        aiDpsList = [
-          { name: '哈缪尔·符文图腾', classId: 'DRUID' },
-          { name: '吉安娜', classId: 'MAGE' },
-          { name: '瓦莉拉', classId: 'ROGUE' },
-        ];
-      }
-    } else {
-      // Player is DPS
-      if (pClass === 'DK') {
-        aiTank = { name: '布罗尔·熊皮', classId: 'DRUID' };
-        aiHealer = { name: '先知努波顿', classId: 'SHAMAN' };
-        aiDpsList = [
-          { name: '吉安娜', classId: 'MAGE' },
-          { name: '瓦莉拉', classId: 'ROGUE' },
-        ];
-      } else if (pClass === 'DRUID') {
-        aiTank = { name: '莫格莱尼', classId: 'DK' };
-        aiHealer = { name: '先知努波顿', classId: 'SHAMAN' };
-        aiDpsList = [
-          { name: '吉安娜', classId: 'MAGE' },
-          { name: '瓦莉拉', classId: 'ROGUE' },
-        ];
-      } else if (pClass === 'MAGE') {
-        aiTank = { name: '莫格莱尼', classId: 'DK' };
-        aiHealer = { name: '玛法里奥', classId: 'DRUID' };
-        aiDpsList = [
-          { name: '瓦莉拉', classId: 'ROGUE' },
-          { name: '萨尔', classId: 'SHAMAN' },
-        ];
-      } else if (pClass === 'ROGUE') {
-        aiTank = { name: '莫格莱尼', classId: 'DK' };
-        aiHealer = { name: '玛法里奥', classId: 'DRUID' };
-        aiDpsList = [
-          { name: '吉安娜', classId: 'MAGE' },
-          { name: '萨尔', classId: 'SHAMAN' },
-        ];
-      } else {
-        // Player is Shaman DPS
-        aiTank = { name: '莫格莱尼', classId: 'DK' };
-        aiHealer = { name: '玛法里奥', classId: 'DRUID' };
-        aiDpsList = [
-          { name: '吉安娜', classId: 'MAGE' },
-          { name: '瓦莉拉', classId: 'ROGUE' },
-        ];
-      }
+    const usedClasses = new Set<ClassId>([pClass]);
+    const pickDistinct = (pool: Array<{ name: string; classId: ClassId }>) => {
+      const found = pool.find(m => !usedClasses.has(m.classId)) || pool[0];
+      usedClasses.add(found.classId);
+      return found;
+    };
+
+    const aiTank = pRole === 'TANK' ? null : pickDistinct(TANK_POOL);
+    const aiHealer = pRole === 'HEALER' ? null : pickDistinct(HEALER_POOL);
+    const neededDps = pRole === 'DPS' ? 2 : 3;
+    const aiDpsList: Array<{ name: string; classId: ClassId }> = [];
+    for (let i = 0; i < neededDps; i++) {
+      aiDpsList.push(pickDistinct(DPS_POOL));
     }
 
     if (aiTank) {
+      const tMaxMp = getLv80MaxMp(aiTank.classId, 'TANK');
       party.push({
         id: 'ai_tank',
         name: aiTank.name,
@@ -917,14 +1143,22 @@ export function App() {
         isPlayer: false,
         isAlive: true,
         alive: true,
-        hp: 145000,
-        maxHp: 145000,
+        hp: LEVEL_80_STATS.tankBaseHp,
+        maxHp: LEVEL_80_STATS.tankBaseHp,
+        mp: tMaxMp,
+        maxMp: tMaxMp,
+        rage: aiTank.classId === 'WARRIOR' || aiTank.classId === 'DRUID' ? 40 : 0,
+        runicPower: aiTank.classId === 'DK' ? 20 : 0,
+        holyPower: aiTank.classId === 'PALADIN' ? 1 : 0,
         absorb: 0,
         resources: [],
         buffs: [],
         threatTable: [],
         position: { x: 440, y: 180 },
-        stats: { attackPower: 7000, spellPower: 0, critChance: 0.15, haste: 0.1, armor: 24000, spellResist: 0, block: 0.18, parry: 0.14, dodge: 0.12, mastery: 0.2, versatility: 0.05, speed: 1 },
+        stats: {
+          ...createLevel80BaseStats('TANK'),
+          haste: LEVEL_80_MAX_HASTE,
+        },
       });
     }
 
@@ -937,25 +1171,30 @@ export function App() {
         isPlayer: false,
         isAlive: true,
         alive: true,
-        hp: 105000,
-        maxHp: 105000,
-        mp: 110000,
-        maxMp: 110000,
+        hp: LEVEL_80_STATS.dpsHealerBaseHp,
+        maxHp: LEVEL_80_STATS.dpsHealerBaseHp,
+        mp: LEVEL_80_STATS.healerBaseMp,
+        maxMp: LEVEL_80_STATS.healerBaseMp,
+        holyPower: aiHealer.classId === 'PALADIN' ? 1 : 0,
         absorb: 0,
         resources: [],
         buffs: [],
         threatTable: [],
         position: { x: 200, y: 200 },
-        stats: { attackPower: 0, spellPower: 9000, critChance: 0.22, haste: 0.2, armor: 12000, spellResist: 0, block: 0, parry: 0, dodge: 0, mastery: 0.15, versatility: 0.05, speed: 1 },
+        stats: {
+          ...createLevel80BaseStats('HEALER'),
+          haste: LEVEL_80_MAX_HASTE,
+        },
       });
     }
 
     aiDpsList.forEach((dps, idx) => {
       const nameSeed = dps.name.split('').reduce((acc, c) => acc + c.charCodeAt(0), idx * 41);
-      const apJitter = ((nameSeed % 9) - 4) * 90;
-      const spJitter = (((nameSeed >> 2) % 9) - 4) * 90;
+      const apJitter = ((nameSeed % 9) - 4) * 45;
+      const spJitter = (((nameSeed >> 2) % 9) - 4) * 45;
       const critJitter = (((nameSeed >> 4) % 7) - 3) * 0.01;
-      const hasteJitter = (((nameSeed >> 1) % 5) - 2) * 0.01;
+      const baseStats = createLevel80BaseStats('DPS');
+      const dMaxMp = getLv80MaxMp(dps.classId, 'DPS');
 
       party.push({
         id: `ai_dps_${idx + 1}`,
@@ -965,37 +1204,38 @@ export function App() {
         isPlayer: false,
         isAlive: true,
         alive: true,
-        hp: 105000,
-        maxHp: 105000,
-        mp: dps.classId === 'MAGE' || dps.classId === 'SHAMAN' || dps.classId === 'DRUID' ? 90000 : 0,
-        maxMp: dps.classId === 'MAGE' || dps.classId === 'SHAMAN' || dps.classId === 'DRUID' ? 90000 : 0,
+        hp: LEVEL_80_STATS.dpsHealerBaseHp,
+        maxHp: LEVEL_80_STATS.dpsHealerBaseHp,
+        mp: dMaxMp,
+        maxMp: dMaxMp,
         energy: dps.classId === 'ROGUE' ? 100 : 0,
+        rage: dps.classId === 'WARRIOR' ? 40 : 0,
+        focus: dps.classId === 'HUNTER' ? 100 : 0,
+        runicPower: dps.classId === 'DK' ? 20 : 0,
+        holyPower: dps.classId === 'PALADIN' ? 1 : 0,
         absorb: 0,
         resources: [],
         buffs: [],
         threatTable: [],
         position: { x: 230 + idx * 30, y: 140 + idx * 30 },
         stats: {
-          attackPower: Math.round(8500 + apJitter),
-          spellPower: Math.round(8500 + spJitter),
-          critChance: Math.round((0.28 + critJitter) * 100) / 100,
-          haste: Math.round((0.16 + hasteJitter) * 100) / 100,
-          armor: 14000,
-          spellResist: 0,
-          block: 0,
-          parry: 0,
-          dodge: 0,
-          mastery: 0.16,
-          versatility: 0.05,
-          speed: 1,
+          ...baseStats,
+          attackPower: Math.round(baseStats.attackPower + apJitter),
+          spellPower: Math.round(baseStats.spellPower + spJitter),
+          critChance: Math.round((baseStats.critChance + critJitter) * 100) / 100,
+          haste: LEVEL_80_MAX_HASTE,
         },
       });
     });
 
-    if (pClass === 'DK' || pClass === 'MAGE') {
+    if (pClass === 'DK' || pClass === 'MAGE' || pClass === 'HUNTER' || pClass === 'WARLOCK') {
+      const petName =
+        pClass === 'DK' ? '食尸鬼' :
+        pClass === 'MAGE' ? '水元素' :
+        pClass === 'HUNTER' ? '幽灵狼' : '恶魔卫士';
       party.push({
         id: 'player_pet',
-        name: pClass === 'DK' ? '食尸鬼' : '水元素',
+        name: petName,
         classId: 'NPC',
         role: 'DPS',
         isPlayer: false,
@@ -1003,26 +1243,18 @@ export function App() {
         ownerId: 'p1_player',
         isAlive: true,
         alive: true,
-        hp: 45000,
-        maxHp: 45000,
+        hp: LEVEL_80_STATS.petBaseHp,
+        maxHp: LEVEL_80_STATS.petBaseHp,
         absorb: 0,
         resources: [],
         buffs: [],
         threatTable: [],
         position: { x: (pRole === 'TANK' ? 440 : 180) - 20, y: 180 },
         stats: {
-          attackPower: 5000,
-          spellPower: 5000,
-          critChance: 0.2,
-          haste: 0.1,
-          armor: 10000,
-          spellResist: 0,
-          block: 0,
-          parry: 0,
-          dodge: 0.05,
-          mastery: 0.1,
-          versatility: 0.05,
-          speed: 1,
+          ...createLevel80BaseStats('DPS'),
+          attackPower: 2600,
+          spellPower: 2400,
+          haste: LEVEL_80_MAX_HASTE,
         },
       });
     }
@@ -1032,34 +1264,6 @@ export function App() {
       engine.addUnit(u);
     }
     setFriendlyUnits(party);
-  };
-
-  const handleSelectDungeonTier = (tier: '5man' | '20man') => {
-    setDungeonTier(tier);
-    try {
-      localStorage.setItem('cata_dungeon_tier', tier);
-    } catch {}
-    if (currentChar) {
-      accountMgrRef.current.saveDungeonPreferences(currentChar.id, tier, dungeonDifficulty, customDifficulty);
-      setAccount({ ...accountMgrRef.current.getCurrentAccount()! });
-      if (runPhase === 'LOBBY') {
-        setupRaidUnits(currentChar, tier, dungeonDifficulty, customDifficulty);
-      }
-    }
-  };
-
-  const handleSelectDungeonDifficulty = (diff: DungeonDifficulty) => {
-    setDungeonDifficulty(diff);
-    try {
-      localStorage.setItem('cata_dungeon_difficulty', diff);
-    } catch {}
-    if (currentChar) {
-      accountMgrRef.current.saveDungeonPreferences(currentChar.id, dungeonTier, diff, customDifficulty);
-      setAccount({ ...accountMgrRef.current.getCurrentAccount()! });
-      if (runPhase === 'LOBBY') {
-        setupRaidUnits(currentChar, dungeonTier, diff, customDifficulty);
-      }
-    }
   };
 
   const handleCustomDifficultyChange = (settings: CustomDifficultySettings) => {
@@ -1101,10 +1305,54 @@ export function App() {
       const engine = engineRef.current;
       if (!rsm || runPhase === 'LOBBY' || runPhase === 'SUMMARY') return;
 
+      // Network guests: host computes combat; local tick only keeps HUD clocks if needed
+      if (isNetworkGuestRef.current) {
+        return;
+      }
+
       const deltaMs = 50;
       tickCount++;
+
+      // Apply remote player inputs on host before simulating
+      if (isNetworkHostRef.current && pendingGuestInputsRef.current.length > 0) {
+        const inputs = pendingGuestInputsRef.current.splice(0, pendingGuestInputsRef.current.length);
+        for (const input of inputs) {
+          if (input.kind === 'TARGET' && input.targetId) {
+            // Guests' focus/target is host-side only for now; ignore visual target
+            continue;
+          }
+          if (input.kind === 'CAST' && input.spellId && input.playerId) {
+            const spell = engine.getSpell(input.spellId);
+            const caster = engine.getUnit(input.playerId);
+            if (spell && caster && caster.isAlive) {
+              const targetId = input.targetId || engine.bossUnit?.id || caster.id;
+              try {
+                engine.castSpell(caster.id, spell.id, targetId);
+              } catch {}
+            }
+          }
+        }
+      }
+
       rsm.tick(deltaMs);
       engine.tick(deltaMs);
+
+      // Host broadcasts compact combat state to room guests (~10Hz)
+      if (isNetworkHostRef.current && activeRoomIdRef.current && netClient.connected) {
+        const now = Date.now();
+        if (now - lastCombatBroadcastMsRef.current >= 100) {
+          lastCombatBroadcastMsRef.current = now;
+          netClient.sendCombatState({
+            roomId: activeRoomIdRef.current,
+            timeMs: now,
+            runPhase: rsm.phase,
+            bossTargetId: engine.bossUnit
+              ? engine.threatManager.getCurrentTarget?.(engine.bossUnit.id) ?? null
+              : null,
+            units: engine.buildNetworkUnitSnapshots(),
+          });
+        }
+      }
 
       // Detect wipe vote retry transition (manual vote or auto-timeout after 15s)
       if (prevRunPhaseRef.current === 'WIPE_VOTE' && rsm.phase === 'TRAVEL_RECOVERY') {
@@ -1265,32 +1513,13 @@ export function App() {
         const newElapsed = prev.elapsedMs + deltaMs;
         const progress = Math.min(1, newElapsed / prev.totalMs);
 
-        // If channeling (e.g. 宁静 Tranquility, 奥术飞弹 Arcane Missiles), tick periodic effect
+        // If channeling (e.g. 宁静, 奥术飞弹, 神圣赞美诗, 苦修, 精神鞭笞, 吸取灵魂, 唤醒等), tick periodic effect
+        // 注意：引导技能的资源与冷却均在起手瞬间已触发，中断后依然保持冷却；自然结束绝不重复触发冷却。
         if (prev.isChannel) {
-          if (prev.spellId === 'tranquility') {
-            if (Math.floor(newElapsed / 2000) > Math.floor(prev.elapsedMs / 2000)) {
-              if (player && (player.isAlive || player.alive)) {
-                for (const u of engine.friendlyUnits) {
-                  if (u.alive && u.isAlive) {
-                    engine.healUnit(player, u, 12000, Math.random() < 0.25, '宁静');
-                  }
-                }
-              }
-            }
-          } else if (prev.spellId === 'arcane_missiles') {
-            if (Math.floor(newElapsed / 500) > Math.floor(prev.elapsedMs / 500)) {
-              const boss = engine.bossUnit;
-              if (boss && (boss.isAlive || boss.alive) && boss.hp > 0) {
-                engine.dealDamage(player, boss, 5500, 'ARCANE', Math.random() < 0.3, '奥术飞弹');
-                engine.threatManager.addThreat(boss.id, player.id, 5500);
-              }
-            }
+          if (player) {
+            processPlayerChannelTick(prev, newElapsed, engine, player, syncUnitResources);
           }
           if (progress >= 1) {
-            // 引导成功结束，此时才触发引导技能的冷却（如宁静 180s）
-            if (prev.totalCdMs && prev.totalCdMs > 0) {
-              triggerCooldown(prev.spellId, prev.totalCdMs);
-            }
             const pending = pendingCastSlotRef.current;
             pendingCastSlotRef.current = null;
             if (pending !== null) {
@@ -1305,12 +1534,26 @@ export function App() {
           return next;
         }
 
-        // Standard read-bar cast completes
+        // Standard read-bar cast completes (读条技能完成时才校验/扣除资源并进入冷却)
         if (progress >= 1) {
-          // 只有读条完成且成功出手时，才触发该技能可能存在的冷却！
-          const castSuccess = resolvePlayerCast(prev.spellId, prev.totalCdMs);
-          if (castSuccess && prev.totalCdMs && prev.totalCdMs > 0) {
-            triggerCooldown(prev.spellId, prev.totalCdMs);
+          let castSuccess = false;
+          if (player) {
+            const resCheck = prev.deferredCosts
+              ? hasSufficientPlayerResources(player, prev.deferredCosts)
+              : { ok: true };
+            if (resCheck.ok) {
+              castSuccess = resolvePlayerCast(prev.spellId, prev.totalCdMs);
+              if (castSuccess) {
+                if (prev.deferredCosts) {
+                  deductPlayerResources(player, prev.deferredCosts, syncUnitResources);
+                }
+                if (prev.totalCdMs && prev.totalCdMs > 0) {
+                  triggerCooldown(prev.spellId, prev.totalCdMs);
+                }
+              }
+            } else if (resCheck.errorText) {
+              window.dispatchEvent(new CustomEvent('cata_ui_error', { detail: { text: resCheck.errorText } }));
+            }
           }
           const pending = pendingCastSlotRef.current;
           pendingCastSlotRef.current = null;
@@ -1396,33 +1639,42 @@ export function App() {
 
       // 2. Combat phase logic: Threat Table, BossAI, Mana Regen & AI Rotations
       if (rsm.phase === 'BOSS_COMBAT' && !isApproaching) {
-        // ── Spirit Combat Mana & Energy Regen (Tuned for 1.2x~2.0x Encounter Budget) ──
+        // ── Lv.80 Max-Haste In-Combat Resource Regen (All 10 Classes) ──
         const is20ManRaid = engine.friendlyUnits.length > 5;
         for (const u of engine.friendlyUnits) {
           if (u.alive || u.isAlive) {
+            const haste = u.stats?.haste ?? LEVEL_80_MAX_HASTE;
             if (u.maxMp && u.maxMp > 0) {
               const hasInnervate = u.buffs?.some(b => b.spellId === 'innervate');
-              const hasManaTide = u.buffs?.some(b => b.spellId === 'mana_tide');
-              const baseRegenRate = is20ManRaid ? 0.0065 : 0.0070; // 0.70%/s in 5-man, 0.65%/s in 20-man
+              const hasManaTide = u.buffs?.some(b => b.spellId === 'mana_tide' || b.spellId === 'mana_tide_totem');
+              const hasDivinePlea = u.buffs?.some(b => b.spellId === 'divine_plea' || b.spellId === 'shadowfiend');
+              const baseRegenRate = is20ManRaid ? 0.0085 : 0.0095;
               let regenPctPerSec = baseRegenRate;
-              if (hasInnervate) regenPctPerSec += 0.05; // +5%/sec during Innervate
-              if (hasManaTide) regenPctPerSec += 0.03; // +3%/sec during Mana Tide
+              if (hasInnervate) regenPctPerSec += 0.05;
+              if (hasManaTide) regenPctPerSec += 0.035;
+              if (hasDivinePlea) regenPctPerSec += 0.035;
               const regenAmt = (u.maxMp * regenPctPerSec * deltaMs) / 1000;
               u.mp = Math.min(u.maxMp, (u.mp ?? 0) + regenAmt);
-              syncUnitResources(u);
-            } else if (u.classId === 'ROGUE') {
-              const hasAdrenaline = u.buffs?.some(b => b.spellId === 'adrenaline_rush');
-              const haste = u.stats?.haste || 0;
-              const baseRate = 10 * (1 + haste); // 10 energy/s base + haste
-              const regenRate = hasAdrenaline ? baseRate * 2 : baseRate;
-              const regenAmt = (regenRate * deltaMs) / 1000;
-              u.energy = Math.min(100, (u.energy ?? 100) + regenAmt);
-              syncUnitResources(u);
             }
+            if (u.classId === 'ROGUE') {
+              const hasAdrenaline = u.buffs?.some(b => b.spellId === 'adrenaline_rush');
+              const baseRate = 10 * (1 + haste);
+              const regenRate = hasAdrenaline ? baseRate * 2 : baseRate;
+              u.energy = Math.min(100, (u.energy ?? 100) + (regenRate * deltaMs) / 1000);
+            } else if (u.classId === 'WARRIOR' || (u.classId === 'DRUID' && u.role === 'TANK')) {
+              u.rage = Math.min(100, (u.rage ?? 30) + (7 * deltaMs) / 1000);
+            } else if (u.classId === 'HUNTER') {
+              const focusRate = 6.5 * (1 + haste);
+              u.focus = Math.min(100, (u.focus ?? 100) + (focusRate * deltaMs) / 1000);
+            } else if (u.classId === 'DK') {
+              u.runicPower = Math.min(100, (u.runicPower ?? 20) + (5.5 * deltaMs) / 1000);
+            }
+            syncUnitResources(u);
           }
         }
 
         const boss = engine.bossUnit;
+        const livingEnemies = engine.enemyUnits.filter(e => (e.isAlive ?? e.alive) && e.hp > 0);
         if (boss && (boss.isAlive || boss.alive) && boss.hp > 0) {
           // Sync stationary-casting info to boss unit so CombatCanvas can freeze movement during casts
           (boss as any).isCasting = Boolean(
@@ -1442,158 +1694,553 @@ export function App() {
           const targetId = engine.getBossTargetId();
           setBossTargetId(targetId || null);
 
+          // Shared helper: deduct resource from an AI unit based on resource kind
+          const deductAiResource = (unit: Unit, kind: string | undefined, amount: number): boolean => {
+            if (!amount || amount <= 0 || !kind || kind === 'NONE' || kind === 'RUNE' || kind === 'COMBO_POINTS') {
+              return true;
+            }
+            if (kind === 'MANA') {
+              if ((unit.mp ?? 0) < amount) return false;
+              unit.mp = Math.max(0, (unit.mp ?? 0) - amount);
+            } else if (kind === 'ENERGY') {
+              if ((unit.energy ?? 100) < amount) return false;
+              unit.energy = Math.max(0, (unit.energy ?? 100) - amount);
+            } else if (kind === 'RAGE') {
+              if ((unit.rage ?? 0) < amount) return false;
+              unit.rage = Math.max(0, (unit.rage ?? 0) - amount);
+            } else if (kind === 'FOCUS') {
+              if ((unit.focus ?? 100) < amount) return false;
+              unit.focus = Math.max(0, (unit.focus ?? 100) - amount);
+            } else if (kind === 'RUNIC_POWER') {
+              if ((unit.runicPower ?? 0) < amount) return false;
+              unit.runicPower = Math.max(0, (unit.runicPower ?? 0) - amount);
+            } else if (kind === 'HOLY_POWER') {
+              if ((unit.holyPower ?? 0) < amount) return false;
+              unit.holyPower = Math.max(0, (unit.holyPower ?? 0) - amount);
+            }
+            syncUnitResources(unit);
+            return true;
+          };
+
+          // Shared helper: execute any NormalizedSpell generically for an AI unit (ZERO per-class branching!)
+          const executeAiNormalizedSpell = (
+            u: Unit,
+            sp: NormalizedSpell,
+            targetUnit: Unit | null,
+            individualMod: number,
+            critMod: number,
+            pauseThreat: boolean = false
+          ) => {
+            const isCrit = Math.random() < ((u.stats.critChance || 0.25) + critMod);
+            const livingAllies = engine.friendlyUnits.filter(a => (a.alive || a.isAlive) && a.hp > 0);
+            const activeEnemies = livingEnemies.length > 0 ? livingEnemies : [boss];
+
+            // Resource builders (Paladin Holy Power / Warrior Rage / DK Runic Power)
+            if (u.classId === 'PALADIN' && sp.resourceKind !== 'HOLY_POWER' && !sp.isDefensive && !sp.isTaunt && !sp.isInterrupt) {
+              u.holyPower = Math.min(3, (u.holyPower ?? 0) + 1);
+            } else if (u.classId === 'WARRIOR' && sp.resourceCostAmount === 0) {
+              u.rage = Math.min(100, (u.rage ?? 0) + 15);
+            } else if (u.classId === 'DK' && sp.resourceKind !== 'RUNIC_POWER') {
+              u.runicPower = Math.min(100, (u.runicPower ?? 0) + 15);
+            }
+            syncUnitResources(u);
+
+            // 通用 Buff / Buff+Heal（数据驱动：大地之盾、生命释放、升腾、先祖指引、圣光道标等）
+            // 新技能只要在 ClassRegistry 标 isBuff/targetType/maxStacks/directHeal，即可自动执行，无需再写 spellId 分支
+            if (sp.isBuff && !sp.isDamage) {
+              const isSelfBuff = sp.targetType === 'SELF';
+              const isEnemyBuff = sp.targetType === 'SINGLE_ENEMY' || sp.targetType === 'AOE_ENEMY';
+              const allyTarget = targetUnit && (targetUnit.alive || targetUnit.isAlive) && targetUnit.hp > 0
+                ? targetUnit
+                : livingAllies.sort((a, b) => (a.hp / a.maxHp) - (b.hp / b.maxHp))[0] || u;
+              const enemyTarget = targetUnit && engine.enemyUnits.some(e => e.id === targetUnit.id)
+                ? targetUnit
+                : activeEnemies[0] || boss;
+              const buffTarget = isSelfBuff ? u : isEnemyBuff ? enemyTarget : allyTarget;
+              const auraSpellId = sp.auraId || sp.shortId;
+              const stacks = Math.max(1, sp.maxStacks || 1);
+              const isStackedShield = stacks > 1 && (sp.targetType === 'SINGLE_ALLY' || sp.targetType === 'SMART_ALLY');
+
+              // Buff+直疗（如生命释放）：先结算治疗
+              if (sp.isHeal && sp.directHeal > 0 && !isSelfBuff && !isEnemyBuff) {
+                const healAmt = rollAiHeal(u, sp.directHeal, isCrit);
+                engine.healUnit(u, allyTarget, healAmt, isCrit, sp.name);
+              }
+
+              // 「友方直疗 + 自身下一口增效」类 Buff 挂在施法者；叠层护盾/道标挂在友方；自身大招挂自己
+              const nextHealAmpOnCaster =
+                sp.isHeal &&
+                sp.directHeal > 0 &&
+                !isSelfBuff &&
+                !isEnemyBuff &&
+                stacks === 1 &&
+                Boolean(sp.auraId);
+              const finalAuraTarget = nextHealAmpOnCaster ? u : buffTarget;
+
+              engine.applyBuff(finalAuraTarget, {
+                id: `${auraSpellId}_ai_${Date.now()}_${finalAuraTarget.id}`,
+                spellId: auraSpellId,
+                name: isStackedShield ? `${sp.name} (${stacks}层)` : sp.name,
+                kind: isEnemyBuff ? 'DEBUFF' : 'BUFF',
+                tags: isStackedShield ? ['SHIELD'] : ['STAT'],
+                sourceUnitId: u.id,
+                targetUnitId: finalAuraTarget.id,
+                stacks,
+                maxStacks: stacks,
+                durationMs: Math.max(8000, sp.durationMs || 15000),
+                remainingMs: Math.max(8000, sp.durationMs || 15000),
+                school: sp.school,
+              });
+              return;
+            }
+
+            if (sp.isHeal || sp.isShield) {
+              const primaryTarget = targetUnit && (targetUnit.alive || targetUnit.isAlive) && targetUnit.hp > 0
+                ? targetUnit
+                : livingAllies.sort((a, b) => (a.hp / a.maxHp) - (b.hp / b.maxHp))[0] || u;
+
+              // Ground heal zone (Healing Rain / Healing Tide / Mana Tide / Spirit Link / PW:Barrier)
+              if (
+                sp.shortId === 'healing_rain' ||
+                sp.shortId === 'spirit_link_totem' ||
+                sp.shortId === 'spirit_link' ||
+                sp.shortId === 'healing_tide' ||
+                sp.shortId === 'healing_tide_totem' ||
+                sp.shortId === 'mana_tide' ||
+                sp.shortId === 'mana_tide_totem' ||
+                sp.shortId === 'power_word_barrier'
+              ) {
+                const centroid = findOptimalGroundAuraCentroid(u, livingAllies, 55, 360);
+                const isHealingTide = sp.shortId.includes('healing_tide');
+                const isManaTide = sp.shortId.includes('mana_tide');
+                const isSpiritLink = sp.shortId.includes('spirit_link') || sp.shortId === 'power_word_barrier';
+                const isTotem = isHealingTide || isManaTide || isSpiritLink;
+                engine.effectsManager?.addGroundEffect({
+                  id: `${sp.shortId}_ai_${Date.now()}_${u.id}`,
+                  kind: isHealingTide ? 'TOTEM' : isTotem ? 'TOTEM' : 'HEAL_ZONE',
+                  spellId: sp.shortId === 'spirit_link_totem' ? 'spirit_link' : (isHealingTide ? 'healing_tide' : sp.shortId),
+                  ownerId: u.id,
+                  x: centroid.x,
+                  y: centroid.y,
+                  radius: isTotem ? 70 : 58,
+                  colorHex: sp.shortId === 'power_word_barrier'
+                    ? '#FACC15'
+                    : isHealingTide
+                    ? '#0EA5E9'
+                    : isManaTide
+                    ? '#56CCF2'
+                    : isTotem
+                    ? '#00CED1'
+                    : '#4169E1',
+                  remainingMs: isHealingTide ? 10000 : isManaTide ? 12000 : isSpiritLink ? 6000 : 10000,
+                  tickIntervalMs: isHealingTide ? 2000 : isManaTide ? 5000 : 1000,
+                  tickElapsedMs: 0,
+                  tickValue: Math.round(
+                    (isHealingTide
+                      ? Math.max(5200, (sp.hotTotalHeal || 26000) / 5)
+                      : Math.max(1600, (sp.directHeal || sp.hotTotalHeal * 0.25) * 0.4)) * individualMod
+                  ),
+                });
+                if (isManaTide) {
+                  for (const a of livingAllies) {
+                    engine.applyBuff(a, {
+                      id: `mana_tide_ai_${Date.now()}_${a.id}`,
+                      spellId: 'mana_tide',
+                      name: '法力之潮',
+                      kind: 'BUFF',
+                      tags: ['STAT'],
+                      sourceUnitId: u.id,
+                      targetUnitId: a.id,
+                      stacks: 1,
+                      maxStacks: 1,
+                      durationMs: 12000,
+                      remainingMs: 12000,
+                      school: 'NATURE',
+                    });
+                  }
+                }
+                if (isSpiritLink && livingAllies.length > 1) {
+                  // Spirit Link / Barrier immediately stabilizes raid HP toward average + small heal
+                  const avgPct = livingAllies.reduce((sum, a) => sum + a.hp / a.maxHp, 0) / livingAllies.length;
+                  for (const a of livingAllies) {
+                    const desiredHp = Math.round(a.maxHp * Math.min(1, avgPct + 0.08));
+                    if (desiredHp > a.hp) {
+                      engine.healUnit(u, a, desiredHp - a.hp, false, sp.name);
+                    }
+                  }
+                }
+                return;
+              }
+
+              // AoE Heals (Chain Heal smart bounce, Wild Growth HoT, Circle/Prayer of Healing, Light of Dawn, Tranquility, Divine Hymn)
+              if (sp.isAOE) {
+                const maxTargets = Math.max(3, sp.maxAoeTargets || 4);
+                const woundedAllies = [...livingAllies]
+                  .sort((a, b) => (a.hp / a.maxHp) - (b.hp / b.maxHp))
+                  .slice(0, maxTargets);
+
+                if (sp.shortId === 'chain_heal') {
+                  let jumpAmt = rollAiHeal(u, Math.max(4800, sp.directHeal), isCrit);
+                  woundedAllies.forEach((ally, idx) => {
+                    const bCrit = idx === 0 ? isCrit : Math.random() < ((u.stats.critChance || 0.22) + critMod);
+                    const amt = Math.round(jumpAmt * (idx === 0 ? 1 : (bCrit ? 1.5 : 1)));
+                    engine.healUnit(u, ally, amt, bCrit, idx === 0 ? sp.name : `${sp.name}(第${idx + 1}跳)`);
+                    jumpAmt *= 0.85;
+                  });
+                  return;
+                }
+
+                for (const ally of woundedAllies) {
+                  const allyCrit = Math.random() < ((u.stats.critChance || 0.22) + critMod);
+                  const perTargetBase = Math.max(2400, sp.directHeal || sp.hotTotalHeal * 0.45);
+                  const healAmt = rollAiHeal(u, perTargetBase, allyCrit);
+                  engine.healUnit(u, ally, healAmt, allyCrit, sp.name);
+                  if (sp.isHot && sp.hotTotalHeal > 0) {
+                    engine.applyBuff(ally, {
+                      id: `${sp.shortId}_ai_${Date.now()}_${ally.id}_${u.id}`,
+                      spellId: sp.shortId,
+                      name: `${sp.name} (HoT)`,
+                      kind: 'BUFF',
+                      tags: ['HOT'],
+                      sourceUnitId: u.id,
+                      targetUnitId: ally.id,
+                      stacks: 1,
+                      maxStacks: 1,
+                      durationMs: 8000,
+                      remainingMs: 8000,
+                      school: sp.school,
+                      tickIntervalMs: 2000,
+                      tickValue: Math.round((sp.hotTotalHeal / 4) * individualMod),
+                    });
+                  }
+                }
+                return;
+              }
+
+              // Shield spells (Power Word: Shield)
+              if (sp.isShield) {
+                const shieldAmt = Math.round(Math.max(6500, sp.shieldValue || sp.directHeal) * individualMod);
+                primaryTarget.absorb = Math.min(primaryTarget.maxHp * 0.5, (primaryTarget.absorb || 0) + shieldAmt);
+                engine.applyBuff(primaryTarget, {
+                  id: `${sp.shortId}_ai_${Date.now()}_${primaryTarget.id}`,
+                  spellId: sp.shortId,
+                  name: sp.name,
+                  kind: 'BUFF',
+                  tags: ['SHIELD'],
+                  sourceUnitId: u.id,
+                  targetUnitId: primaryTarget.id,
+                  stacks: 1,
+                  maxStacks: 1,
+                  durationMs: 15000,
+                  remainingMs: 15000,
+                  school: sp.school,
+                });
+                engine.effectsManager?.addFloatingText({
+                  targetId: primaryTarget.id,
+                  text: `🛡️ ${sp.name} (+${shieldAmt})`,
+                  category: 'HEAL',
+                  isCrit: false,
+                });
+                return;
+              }
+
+              // Single-target direct heal and/or HoT
+              if (sp.directHeal > 0) {
+                const healAmt = rollAiHeal(u, sp.directHeal, isCrit);
+                engine.healUnit(u, primaryTarget, healAmt, isCrit, sp.name);
+                if (u.classId === 'DRUID' && ['nourish', 'healing_touch', 'regrowth'].includes(sp.shortId)) {
+                  engine.refreshLifebloom(primaryTarget, u.id);
+                }
+              }
+              if (sp.isHot && sp.hotTotalHeal > 0) {
+                const existingLb = sp.shortId === 'lifebloom'
+                  ? primaryTarget.buffs.find(b => b.spellId === 'lifebloom' && b.sourceUnitId === u.id)
+                  : undefined;
+                const stacks = sp.shortId === 'lifebloom' ? Math.min(3, (existingLb?.stacks || 0) + 1) : 1;
+                engine.applyBuff(primaryTarget, {
+                  id: `${sp.shortId}_ai_${Date.now()}_${primaryTarget.id}_${u.id}`,
+                  spellId: sp.shortId,
+                  name: stacks > 1 ? `${sp.name} (${stacks}层)` : `${sp.name} (HoT)`,
+                  kind: 'BUFF',
+                  tags: ['HOT'],
+                  sourceUnitId: u.id,
+                  targetUnitId: primaryTarget.id,
+                  stacks,
+                  maxStacks: sp.shortId === 'lifebloom' ? 3 : 1,
+                  durationMs: 12000,
+                  remainingMs: 12000,
+                  school: sp.school,
+                  tickIntervalMs: 3000,
+                  tickValue: Math.round((sp.hotTotalHeal / 4) * individualMod),
+                });
+              }
+              return;
+            }
+
+            // Damage / Tank attack spells (AoE or ST)
+            if (sp.isAOE) {
+              const targets = activeEnemies.slice(0, Math.max(3, sp.maxAoeTargets || 5));
+              for (const enemy of targets) {
+                const tCrit = Math.random() < ((u.stats.critChance || 0.25) + critMod);
+                const baseD = Math.max(2600, sp.directDamage || sp.dotTotalDamage * 0.5);
+                const dmg = rollAiDamage(u, baseD, sp.school, tCrit);
+                engine.dealDamage(u, enemy, dmg, sp.school, tCrit, sp.name);
+                if (u.role === 'TANK') {
+                  engine.threatManager.addThreat(enemy.id, u.id, pauseThreat ? 500 : Math.round(dmg * 3.5));
+                }
+              }
+              return;
+            }
+
+            const enemyTarget = targetUnit && (targetUnit.alive || targetUnit.isAlive) && targetUnit.hp > 0 && engine.enemyUnits.some(e => e.id === targetUnit.id)
+              ? targetUnit
+              : boss;
+
+            const baseD = Math.max(2800, sp.directDamage || sp.dotTotalDamage * 0.35);
+            const dmg = rollAiDamage(u, baseD, sp.school, isCrit);
+            engine.dealDamage(u, enemyTarget, dmg, sp.school, isCrit, sp.name);
+
+            if (u.role === 'TANK') {
+              engine.threatManager.addThreat(enemyTarget.id, u.id, pauseThreat ? 500 : Math.round(dmg * 3.8));
+              // Self-sustain tank skills (e.g., Death Strike / Victory Rush / Word of Glory)
+              if (sp.shortId === 'death_strike') {
+                const selfHeal = Math.round(4200 * individualMod);
+                engine.healUnit(u, u, selfHeal, false, sp.name);
+                u.absorb = Math.min(u.maxHp * 0.35, (u.absorb || 0) + Math.round(selfHeal * 0.6));
+              }
+            }
+
+            if (sp.isDot && sp.dotTotalDamage > 0) {
+              engine.applyBuff(enemyTarget, {
+                id: `${sp.shortId}_ai_${Date.now()}_${u.id}`,
+                spellId: sp.shortId,
+                name: `${sp.name} (DoT)`,
+                kind: 'DEBUFF',
+                tags: ['DOT'],
+                sourceUnitId: u.id,
+                targetUnitId: enemyTarget.id,
+                stacks: 1,
+                maxStacks: 1,
+                durationMs: 15000,
+                remainingMs: 15000,
+                school: sp.school,
+                tickIntervalMs: 3000,
+                tickValue: Math.round((sp.dotTotalDamage / 5) * individualMod),
+              });
+            }
+          };
+
+          // ── Universal AI Loop across ALL Friendly AI Units (All 10 Classes & 30 Specs) ──
+          const nowMs = Date.now();
           for (const u of engine.friendlyUnits) {
-            if ((!u.isAlive && !u.alive) || u.isPlayer) continue;
+            if ((!u.isAlive && !u.alive) || u.isPlayer || u.isPet) continue;
 
             const { tickOffset, individualMod, critMod } = getUnitPersonality(u);
             const aiPersonality = getUnitAIPersonality(u);
+            const specId = inferAiSpecForUnit(u);
+            const ownedSpells = getSpellsForClassSpec(u.classId, specId);
 
-            if (u.role === 'TANK') {
-              // ── 坦克仇恨顺位与健康线决策 ──
-              // 排名靠后的坦克只有在自己血量健康，排名靠前坦克血量都不健康时主动拉仇恨，此时其他坦克要暂停拉仇恨直到自己过健康线
-              const allTanks = engine.friendlyUnits.filter(t => t.role === 'TANK' && (t.isAlive ?? t.alive));
-              const threatDecision = evaluateTankThreatDecision(
-                u,
-                allTanks,
-                targetId,
-                targetId === u.id
+            // 1. CC / Stun / Movement cast-interruption check
+            const isCcOrInterrupted = u.buffs?.some(b =>
+              b.tags?.includes('CC') || (b.tags as any)?.includes('STUN') || (b.tags as any)?.includes('SILENCE')
+            );
+            if (isCcOrInterrupted || (u as any).isMoving) {
+              if (aiHealerCastsRef.current[u.id]) {
+                delete aiHealerCastsRef.current[u.id];
+                engine.effectsManager?.addFloatingText({
+                  targetId: u.id,
+                  text: (u as any).isMoving ? `${u.name} 移动打断施法` : `${u.name} 施法被中断`,
+                  category: 'STATUS',
+                  isCrit: false,
+                });
+              }
+              continue;
+            }
+
+            // 2. Universal Interrupt Check (any AI owning an off-CD interrupt stops Boss interruptible casts)
+            const bossCasting = bossAiRef.current?.currentCasting;
+            const shouldInterruptBoss = bossCasting?.skill.interruptible && (
+              bossCasting.skill.id !== 'stay_of_execution' || bossCasting.elapsedMs >= 3000
+            );
+            if (shouldInterruptBoss && (tickCount + tickOffset) % 16 === 0) {
+              const interruptSp = ownedSpells.find(
+                sp => sp.isInterrupt && isAiCdReady(u.id, sp.shortId, sp.cooldownMs || 10000)
               );
-
-              // ── Tank Rotation (DK or Bear Druid) ──
-              if ((tickCount + tickOffset) % 20 === 0) {
-                const isCrit = Math.random() < ((u.stats.critChance || 0.18) + critMod);
-                if (u.classId === 'DK') {
-                  // Death Strike: tuned for authentic Cata sustain (5,500 heal + 3,500 absorb shield) + Heart Strike
-                  const dmg = rollAiDamage(u, 5800, 'PHYSICAL', isCrit);
-                  const healAmt = Math.round((5500 + (Math.random() * 2 - 1) * 450) * individualMod);
-                  const absorbAmt = Math.round((3500 + (Math.random() * 2 - 1) * 300) * individualMod);
-                  engine.dealDamage(u, boss, dmg, 'PHYSICAL', isCrit, '灵界打击');
-                  engine.healUnit(u, u, healAmt, false, '灵界打击');
-                  u.absorb = Math.min(u.maxHp * 0.4, (u.absorb || 0) + absorbAmt);
-                  // Ensure Bone Shield is maintained
-                  if (!u.buffs.some(b => b.spellId === 'bone_shield')) {
-                    engine.applyBuff(u, {
-                      id: `bone_shield_ai_${Date.now()}_${u.id}`,
-                      spellId: 'bone_shield',
-                      name: '白骨之盾',
-                      kind: 'BUFF',
-                      tags: ['SHIELD'],
-                      sourceUnitId: u.id,
-                      targetUnitId: u.id,
-                      stacks: 6,
-                      maxStacks: 6,
-                      durationMs: 300000,
-                      remainingMs: 300000,
-                      school: 'SHADOW',
-                    });
-                  }
-                } else {
-                  // Druid Bear Tank: Mangle + Lacerate bleed
-                  const dmg = rollAiDamage(u, 6200, 'PHYSICAL', isCrit);
-                  engine.dealDamage(u, boss, dmg, 'PHYSICAL', isCrit, '裂伤');
-                  engine.applyBuff(boss, {
-                    id: `lacerate_${u.id}`,
-                    spellId: 'lacerate',
-                    name: '割伤 (流血)',
-                    kind: 'DEBUFF',
-                    tags: ['DOT'],
-                    sourceUnitId: u.id,
-                    targetUnitId: boss.id,
-                    stacks: 3,
-                    maxStacks: 3,
-                    durationMs: 15000,
-                    remainingMs: 15000,
-                    school: 'PHYSICAL',
-                    tickIntervalMs: 3000,
-                    tickValue: Math.round((2400 + (Math.random() * 2 - 1) * 200) * individualMod),
+              if (interruptSp && deductAiResource(u, interruptSp.resourceKind, interruptSp.resourceCostAmount)) {
+                const success = bossAiRef.current!.interruptCurrentCast();
+                if (success) {
+                  markAiCdUsed(u.id, interruptSp.shortId);
+                  if (u.combatStats) u.combatStats.interruptCount++;
+                  engine.effectsManager?.addFloatingText({
+                    targetId: boss.id,
+                    text: `${u.name} ${interruptSp.name}打断！`,
+                    category: 'INTERRUPT',
+                    isCrit: true,
                   });
                 }
-                // Extra high threat modifier only when NOT pausing threat
-                if (!threatDecision.pauseThreat) {
-                  engine.threatManager.addThreat(boss.id, u.id, 18000);
-                } else {
-                  engine.threatManager.addThreat(boss.id, u.id, 1000);
+              }
+            }
+
+            // 3. Universal Resource Restore CD Check (Innervate, Mana Tide, Divine Plea, Shadowfiend, Evocation, Life Tap, Adrenaline Rush)
+            if ((tickCount + tickOffset) % 20 === 0) {
+              const primaryRes = getClassPrimaryResource(u.classId, specId);
+              const curRes = getUnitResourceAmount(u, primaryRes);
+              const maxRes = primaryRes === 'MANA' ? (u.maxMp || LEVEL_80_STATS.casterBaseMp) : 100;
+              const resRatio = maxRes > 0 ? curRes / maxRes : 1;
+              const threshold = primaryRes === 'ENERGY' ? (aiPersonality.energyReserveThreshold / 100) : aiPersonality.resourceHealthyThreshold;
+              if (resRatio < threshold) {
+                const restoreSp = ownedSpells.find(
+                  sp => sp.isResourceRestore && isAiCdReady(u.id, sp.shortId, sp.cooldownMs || 60000)
+                );
+                if (restoreSp) {
+                  markAiCdUsed(u.id, restoreSp.shortId);
+                  if (primaryRes === 'MANA' && u.maxMp) {
+                    const instantRestore = Math.round(u.maxMp * 0.25);
+                    u.mp = Math.min(u.maxMp, (u.mp ?? 0) + instantRestore);
+                    syncUnitResources(u);
+                    const buffTargets = restoreSp.isAOE ? engine.friendlyUnits.filter(a => a.alive || a.isAlive) : [u];
+                    for (const bt of buffTargets) {
+                      engine.applyBuff(bt, {
+                        id: `${restoreSp.shortId}_ai_${Date.now()}_${bt.id}`,
+                        spellId: restoreSp.shortId,
+                        name: `${restoreSp.name} (+回蓝)`,
+                        kind: 'BUFF',
+                        tags: ['STAT'],
+                        sourceUnitId: u.id,
+                        targetUnitId: bt.id,
+                        stacks: 1,
+                        maxStacks: 1,
+                        durationMs: 10000,
+                        remainingMs: 10000,
+                        school: restoreSp.school,
+                      });
+                    }
+                  } else if (primaryRes === 'ENERGY') {
+                    engine.applyBuff(u, {
+                      id: `${restoreSp.shortId}_ai_${Date.now()}_${u.id}`,
+                      spellId: restoreSp.shortId,
+                      name: `${restoreSp.name} (回能+100%)`,
+                      kind: 'BUFF',
+                      tags: ['STAT'],
+                      sourceUnitId: u.id,
+                      targetUnitId: u.id,
+                      stacks: 1,
+                      maxStacks: 1,
+                      durationMs: 15000,
+                      remainingMs: 15000,
+                      school: restoreSp.school,
+                    });
+                  }
+                  engine.effectsManager?.addFloatingText({
+                    targetId: u.id,
+                    text: `${u.name} 施放【${restoreSp.name}】恢复资源！`,
+                    category: 'HEAL',
+                    isCrit: true,
+                  });
                 }
               }
+            }
 
-              // Active taunt: only when threatDecision allows shouldTaunt
-              if (threatDecision.shouldTaunt && (tickCount + tickOffset) % 12 === 0) {
-                engine.threatManager.applyTaunt(boss.id, u.id);
+            // 4. Universal Battle-Rez Check (any AI owning an off-CD combat rez revives fallen allies)
+            const deadAlly = engine.friendlyUnits.find(a => (!a.alive || !a.isAlive) || a.hp <= 0);
+            if (deadAlly && (tickCount + tickOffset) % 30 === 0) {
+              const bRezSp = ownedSpells.find(
+                sp => sp.isResurrect && !sp.isOutOfCombatOnly && isAiCdReady(u.id, sp.shortId, sp.cooldownMs || 600000)
+              );
+              if (bRezSp && deductAiResource(u, bRezSp.resourceKind, bRezSp.resourceCostAmount)) {
+                markAiCdUsed(u.id, bRezSp.shortId);
+                engine.resurrectUnit(deadAlly.id, 0.6, 0.6);
                 engine.effectsManager?.addFloatingText({
-                  targetId: boss.id,
-                  text: `${u.name} 嘲讽接怪！`,
-                  category: 'CRIT',
+                  targetId: deadAlly.id,
+                  text: `⚡ ${u.name} 施放【${bRezSp.name}】战复了 ${deadAlly.name}！`,
+                  category: 'HEAL',
                   isCrit: true,
                 });
               }
-            } else if (u.role === 'HEALER') {
-              // ── Healer Rotation with Live Cast State Machine (Druid or Shaman) ──
-              // 1. Check CC, stun, silence or movement (interruption check)
-              const isCcOrInterrupted = u.buffs?.some(b =>
-                b.tags?.includes('CC') || (b.tags as any)?.includes('STUN') || (b.tags as any)?.includes('SILENCE')
-              );
-              if (isCcOrInterrupted || (u as any).isMoving) {
-                if (aiHealerCastsRef.current[u.id]) {
-                  delete aiHealerCastsRef.current[u.id];
+            }
+
+            // 5. Tank Threat, Taunt & Defensive Cooldown Checks (Universal across Warrior/Paladin/DK/Druid Tanks)
+            let tankPauseThreat = false;
+            if (u.role === 'TANK') {
+              const allTanks = engine.friendlyUnits.filter(t => t.role === 'TANK' && (t.isAlive ?? t.alive));
+              const threatDecision = evaluateTankThreatDecision(u, allTanks, targetId, targetId === u.id);
+              tankPauseThreat = threatDecision.pauseThreat;
+
+              if (threatDecision.shouldTaunt && (tickCount + tickOffset) % 12 === 0) {
+                const tauntSp = ownedSpells.find(sp => sp.isTaunt && isAiCdReady(u.id, sp.shortId, sp.cooldownMs || 8000));
+                if (tauntSp) {
+                  markAiCdUsed(u.id, tauntSp.shortId);
+                  engine.threatManager.applyTaunt(boss.id, u.id);
                   engine.effectsManager?.addFloatingText({
-                    targetId: u.id,
-                    text: (u as any).isMoving ? `${u.name} 移动打断施法` : `${u.name} 施法被中断`,
-                    category: 'STATUS',
-                    isCrit: false,
+                    targetId: boss.id,
+                    text: `${u.name} ${tauntSp.name}嘲讽接怪！`,
+                    category: 'CRIT',
+                    isCrit: true,
                   });
                 }
-                continue;
               }
 
-              // 2. Check and advance active ongoing read-bar cast
-              let activeAiCast = aiHealerCastsRef.current[u.id];
-              if (activeAiCast) {
-                const targetUnit = engine.friendlyUnits.find(a => a.id === activeAiCast.targetId);
-                if (!targetUnit || (!targetUnit.alive && !targetUnit.isAlive) || targetUnit.hp <= 0) {
-                  // Target died mid-cast! Cast interrupted immediately
-                  delete aiHealerCastsRef.current[u.id];
-                  activeAiCast = undefined as any;
+              if (u.hp / u.maxHp < 0.52 && (tickCount + tickOffset) % 15 === 0) {
+                const defSp = ownedSpells.find(
+                  sp => sp.isDefensive && isAiCdReady(u.id, sp.shortId, sp.cooldownMs || 60000)
+                );
+                if (defSp) {
+                  markAiCdUsed(u.id, defSp.shortId);
+                  u.absorb = Math.min(u.maxHp * 0.4, (u.absorb || 0) + Math.round(u.maxHp * 0.14));
+                  engine.applyBuff(u, {
+                    id: `${defSp.shortId}_ai_${Date.now()}_${u.id}`,
+                    spellId: defSp.shortId,
+                    name: `${defSp.name} (减伤)`,
+                    kind: 'BUFF',
+                    tags: ['SHIELD'],
+                    sourceUnitId: u.id,
+                    targetUnitId: u.id,
+                    stacks: 1,
+                    maxStacks: 1,
+                    durationMs: 10000,
+                    remainingMs: 10000,
+                    school: defSp.school,
+                  });
+                  engine.effectsManager?.addFloatingText({
+                    targetId: u.id,
+                    text: `🛡️ ${u.name} 开启【${defSp.name}】！`,
+                    category: 'HEAL',
+                    isCrit: true,
+                  });
                 }
               }
+            }
 
-              if (activeAiCast) {
-                activeAiCast.elapsedMs += deltaMs;
-                const progress = Math.min(1, activeAiCast.elapsedMs / activeAiCast.totalMs);
-                if (progress >= 1) {
-                  // Cast successfully completed!
-                  delete aiHealerCastsRef.current[u.id];
-                  const targetUnit = engine.friendlyUnits.find(a => a.id === activeAiCast.targetId);
-                  if (targetUnit && (targetUnit.alive || targetUnit.isAlive) && targetUnit.hp > 0) {
-                    if ((u.mp ?? 0) >= activeAiCast.manaCost) {
-                      u.mp = Math.max(0, (u.mp ?? 0) - activeAiCast.manaCost);
-                      syncUnitResources(u);
-                      const isCrit = Math.random() < ((u.stats.critChance || 0.22) + critMod);
-                      const healAmt = rollAiHeal(u, activeAiCast.baseAmt, isCrit);
-                      engine.healUnit(u, targetUnit, healAmt, isCrit, activeAiCast.spellName);
-                      if (u.classId === 'DRUID' && ['nourish', 'healing_touch', 'regrowth'].includes(activeAiCast.spellId)) {
-                        engine.refreshLifebloom(targetUnit, u.id);
-                      }
-                      if (activeAiCast.spellId === 'chain_heal') {
-                        // 治疗链多目标智能弹跳：优先弹向生命值百分比最低的其余受伤队友，每跳衰减30%
-                        let jumpAmt = healAmt * 0.70;
-                        const hitTargets = new Set([targetUnit.id]);
-                        for (let j = 0; j < 3; j++) {
-                          const nextTarget = engine.friendlyUnits
-                            .filter(a => (a.alive || a.isAlive) && a.hp > 0 && !hitTargets.has(a.id) && a.hp < a.maxHp)
-                            .sort((a, b) => (a.hp / a.maxHp) - (b.hp / b.maxHp))[0];
-                          if (!nextTarget) break;
-                          hitTargets.add(nextTarget.id);
-                          const bounceCrit = Math.random() < ((u.stats.critChance || 0.22) + critMod);
-                          const actualBounceAmt = Math.round(jumpAmt * (bounceCrit ? 2.0 : 1.0));
-                          engine.healUnit(u, nextTarget, actualBounceAmt, bounceCrit, `治疗链(第${j + 2}跳)`);
-                          jumpAmt *= 0.70;
-                        }
-                      }
-                    }
+            // 6. Advance Ongoing Read-Bar Cast (for BOTH Healer AND Caster DPS)
+            let activeAiCast = aiHealerCastsRef.current[u.id];
+            if (activeAiCast) {
+              const targetUnit = activeAiCast.isHarmful
+                ? engine.enemyUnits.find(e => e.id === activeAiCast.targetId) || boss
+                : engine.friendlyUnits.find(a => a.id === activeAiCast.targetId);
+              if (!targetUnit || (!targetUnit.alive && !targetUnit.isAlive) || targetUnit.hp <= 0) {
+                delete aiHealerCastsRef.current[u.id];
+                activeAiCast = undefined as any;
+              }
+            }
+
+            if (activeAiCast) {
+              activeAiCast.elapsedMs += deltaMs;
+              const progress = Math.min(1, activeAiCast.elapsedMs / Math.max(100, activeAiCast.totalMs));
+              if (progress >= 1) {
+                delete aiHealerCastsRef.current[u.id];
+                const sp = activeAiCast.normalizedSpell || getSpellByAnyId(activeAiCast.spellId, u.classId);
+                const targetUnit = activeAiCast.isHarmful
+                  ? engine.enemyUnits.find(e => e.id === activeAiCast.targetId) || boss
+                  : engine.friendlyUnits.find(a => a.id === activeAiCast.targetId);
+                if (sp && targetUnit && (targetUnit.alive || targetUnit.isAlive) && targetUnit.hp > 0) {
+                  if (deductAiResource(u, activeAiCast.resourceKind || sp.resourceKind, activeAiCast.manaCost)) {
+                    if (sp.cooldownMs > 0) markAiCdUsed(u.id, sp.shortId);
+                    executeAiNormalizedSpell(u, sp, targetUnit, individualMod, critMod, tankPauseThreat);
                   }
-                } else {
-                  // Ongoing cast: broadcast incoming heal to target unit frame
-                  currentCasts[u.id] = { spellName: activeAiCast.spellName, progress };
+                }
+              } else {
+                currentCasts[u.id] = { spellName: activeAiCast.spellName, progress };
+                if (!activeAiCast.isHarmful) {
                   addIncomingCast(activeAiCast.targetId, {
                     casterId: u.id,
                     casterName: u.name,
@@ -1603,733 +2250,85 @@ export function App() {
                     classId: u.classId,
                   });
                 }
+              }
+              continue;
+            }
+
+            // 7. Per-Unit Effective GCD Check (Lv.80 max haste: >= 1000ms NORMAL / 1000ms ROGUE)
+            const unitGcdMs = getEffectiveGcdMs(u.classId === 'ROGUE' || u.classId === 'HUNTER' ? 'ROGUE' : 'NORMAL', u.stats.haste ?? LEVEL_80_MAX_HASTE);
+            const lastGcdTime = aiCooldownsRef.current[`${u.id}_gcd`] || 0;
+            if (nowMs - lastGcdTime < unitGcdMs) continue;
+
+            // 8. Build Usable Candidates Dynamically from Unit's Owned Available Skills & Evaluate Universal Rules
+            const roleFilter: 'HEAL' | 'DAMAGE' = u.role === 'HEALER' ? 'HEAL' : 'DAMAGE';
+            const usableCandidates = buildUsableCandidatesForUnit(
+              u,
+              specId,
+              (sp) => isAiCdReady(u.id, sp.shortId, sp.cooldownMs),
+              { roleFilter, useShortId: true }
+            );
+
+            const decision = evaluateUniversalAIDecision({
+              caster: u,
+              personality: aiPersonality,
+              allies: engine.friendlyUnits,
+              enemies: livingEnemies.length > 0 ? livingEnemies : [boss],
+              usableSkills: usableCandidates,
+              tickCount,
+            });
+
+            if (decision.chosenCandidate) {
+              const chosen = decision.chosenCandidate;
+              const normSp = getSpellByAnyId(chosen.spellId, u.classId);
+              if (!normSp) continue;
+
+              const targetUnit = decision.targetUnit || (roleFilter === 'HEAL'
+                ? [...engine.friendlyUnits].filter(a => (a.alive || a.isAlive) && a.hp > 0).sort((a, b) => (a.hp / a.maxHp) - (b.hp / b.maxHp))[0] || u
+                : boss);
+
+              const hastedCastMs = chosen.castMs > 0 ? chosen.castMs : 0;
+
+              // Commit AI GCD start timestamp
+              aiCooldownsRef.current[`${u.id}_gcd`] = nowMs;
+
+              if (hastedCastMs <= 0) {
+                if (deductAiResource(u, normSp.resourceKind, chosen.cost)) {
+                  if (normSp.cooldownMs > 0) markAiCdUsed(u.id, normSp.shortId);
+                  executeAiNormalizedSpell(u, normSp, targetUnit, individualMod, critMod, tankPauseThreat);
+                }
               } else {
-                // 3. Not casting: evaluate instant utilities / HoTs / AOE / Emergency / Sustained casts via Universal AI Decision Engine
-                const lowestAlly = [...engine.friendlyUnits]
-                  .filter(a => (a.alive || a.isAlive) && a.hp > 0)
-                  .sort((a, b) => (a.hp / a.maxHp) - (b.hp / b.maxHp))[0];
-                const tankUnit = engine.friendlyUnits.find(a => a.role === 'TANK' && (a.alive || a.isAlive));
-
-                // 3.1 法力急救图腾/大招 (Innervate / Mana Tide)
-                const mpRatio = (u.mp ?? 0) / (u.maxMp || 100000);
-                if (mpRatio < aiPersonality.resourceHealthyThreshold) {
-                  if (u.classId === 'DRUID' && canAiUseCd(u.id, 'innervate', 180000)) {
-                    engine.applyBuff(u, {
-                      id: `innervate_${u.id}`,
-                      spellId: 'innervate',
-                      name: '激活 (+回蓝)',
-                      kind: 'BUFF',
-                      tags: ['STAT'],
-                      sourceUnitId: u.id,
-                      targetUnitId: u.id,
-                      stacks: 1,
-                      maxStacks: 1,
-                      durationMs: 10000,
-                      remainingMs: 10000,
-                      school: 'NATURE',
-                    });
-                    engine.effectsManager?.addFloatingText({
-                      targetId: u.id,
-                      text: `${u.name} 激活！快速恢复法力值！`,
-                      category: 'HEAL',
-                      isCrit: true,
-                    });
-                  } else if (u.classId === 'SHAMAN' && canAiUseCd(u.id, 'mana_tide', 180000)) {
-                    for (const ally of engine.friendlyUnits) {
-                      if (ally.alive || ally.isAlive) {
-                        engine.applyBuff(ally, {
-                          id: `mana_tide_${ally.id}`,
-                          spellId: 'mana_tide',
-                          name: '法力之潮 (+3%/s回蓝)',
-                          kind: 'BUFF',
-                          tags: ['STAT'],
-                          sourceUnitId: u.id,
-                          targetUnitId: ally.id,
-                          stacks: 1,
-                          maxStacks: 1,
-                          durationMs: 12000,
-                          remainingMs: 12000,
-                          school: 'NATURE',
-                        });
-                      }
-                    }
-                    engine.effectsManager?.addFloatingText({
-                      targetId: u.id,
-                      text: `${u.name} 插下法力之潮图腾！全团加速回蓝！`,
-                      category: 'HEAL',
-                      isCrit: true,
-                    });
-                  }
-                }
-
-                // 3.2 战复 (Druid Rebirth)
-                const deadAlly = engine.friendlyUnits.find(a => (!a.alive || !a.isAlive) || a.hp <= 0);
-                const uAny = u as any;
-                if (deadAlly && u.classId === 'DRUID' && (!uAny.lastRebirthTick || (tickCount - uAny.lastRebirthTick) > 12000)) {
-                  if ((u.mp ?? 0) >= 6800) {
-                    u.mp = Math.max(0, (u.mp ?? 0) - 6800);
-                    uAny.lastRebirthTick = tickCount;
-                    engine.resurrectUnit(deadAlly.id, 0.6, 0.6);
-                    engine.effectsManager?.addFloatingText({
-                      targetId: deadAlly.id,
-                      text: `⚡ ${u.name} 施放【复生】战复了 ${deadAlly.name}！`,
-                      category: 'HEAL',
-                      isCrit: true,
-                    });
-                  }
-                }
-
-                // 3.3 组装该治疗角色当前可用的技能池 (Usable Skills Catalog)
-                const usableCandidates: UsableSkillCandidate[] = [];
-
-                if (u.classId === 'DRUID') {
-                  // 群体治疗 (AOE)
-                  usableCandidates.push({
-                    spellId: 'wild_growth',
-                    spellName: '野性成长',
-                    metrics: COMPUTED_SKILL_METRICS['druid_wild_growth'],
-                    baseAmt: 16800,
-                    castMs: 0,
-                    cost: SPELL_MANA_COSTS['wild_growth'] || 4800,
-                    resourceType: 'MANA',
-                    isAOE: true,
-                    maxTargets: 5,
-                    isOnCooldown: !canAiUseCd(u.id, 'wild_growth', 8000),
-                  });
-                  const hasHotTarget = lowestAlly && lowestAlly.buffs.some(b => b.spellId === 'rejuvenation' || b.spellId === 'regrowth');
-                  usableCandidates.push({
-                    spellId: 'swiftmend',
-                    spellName: '迅捷治愈',
-                    metrics: COMPUTED_SKILL_METRICS['druid_swiftmend'],
-                    baseAmt: 28000,
-                    castMs: 0,
-                    cost: SPELL_MANA_COSTS['swiftmend'] || 1600,
-                    resourceType: 'MANA',
-                    isAOE: true,
-                    maxTargets: 5,
-                    isOnCooldown: !canAiUseCd(u.id, 'swiftmend', 15000) || !hasHotTarget,
-                  });
-                  usableCandidates.push({
-                    spellId: 'tranquility',
-                    spellName: '宁静',
-                    metrics: COMPUTED_SKILL_METRICS['druid_tranquility'],
-                    baseAmt: 48000,
-                    castMs: 8000,
-                    cost: SPELL_MANA_COSTS['tranquility'] || 6800,
-                    resourceType: 'MANA',
-                    isAOE: true,
-                    maxTargets: 10,
-                    isOnCooldown: !canAiUseCd(u.id, 'tranquility', 180000),
-                  });
-                  // 单体救急/高吞吐
-                  usableCandidates.push({
-                    spellId: 'regrowth',
-                    spellName: '愈合',
-                    metrics: COMPUTED_SKILL_METRICS['druid_regrowth'],
-                    baseAmt: 14000,
-                    castMs: 1500,
-                    cost: SPELL_MANA_COSTS['regrowth'] || 3900,
-                    resourceType: 'MANA',
-                    isAOE: false,
-                    isOnCooldown: false,
-                  });
-                  usableCandidates.push({
-                    spellId: 'healing_touch',
-                    spellName: '治疗之触',
-                    metrics: COMPUTED_SKILL_METRICS['druid_healing_touch'],
-                    baseAmt: 25000,
-                    castMs: 2500,
-                    cost: SPELL_MANA_COSTS['healing_touch'] || 3400,
-                    resourceType: 'MANA',
-                    isAOE: false,
-                    isOnCooldown: false,
-                  });
-                  // 单体高效/填充
-                  usableCandidates.push({
-                    spellId: 'nourish',
-                    spellName: '滋养',
-                    metrics: COMPUTED_SKILL_METRICS['druid_nourish'],
-                    baseAmt: 9500,
-                    castMs: 2500,
-                    cost: SPELL_MANA_COSTS['nourish'] || 1100,
-                    resourceType: 'MANA',
-                    isAOE: false,
-                    isOnCooldown: false,
-                  });
-                } else if (u.classId === 'SHAMAN') {
-                  // 群体治疗 (AOE)：治疗链、大雨
-                  usableCandidates.push({
-                    spellId: 'chain_heal',
-                    spellName: '治疗链',
-                    metrics: COMPUTED_SKILL_METRICS['shaman_chain_heal'],
-                    baseAmt: 28000,
-                    castMs: 2500,
-                    cost: SPELL_MANA_COSTS['chain_heal'] || 3400,
-                    resourceType: 'MANA',
-                    isAOE: true,
-                    maxTargets: 4,
-                    isOnCooldown: false,
-                  });
-                  usableCandidates.push({
-                    spellId: 'healing_rain',
-                    spellName: '治疗之雨',
-                    metrics: COMPUTED_SKILL_METRICS['shaman_healing_rain'],
-                    baseAmt: 32000,
-                    castMs: 0,
-                    cost: SPELL_MANA_COSTS['healing_rain'] || 6500,
-                    resourceType: 'MANA',
-                    isAOE: true,
-                    maxTargets: 6,
-                    isOnCooldown: !canAiUseCd(u.id, 'healing_rain', 10000),
-                  });
-                  // 单体救急/高吞吐：治疗之涌、强效治疗波
-                  usableCandidates.push({
-                    spellId: 'healing_surge',
-                    spellName: '治疗之涌',
-                    metrics: COMPUTED_SKILL_METRICS['shaman_healing_surge'],
-                    baseAmt: 16000,
-                    castMs: 1500,
-                    cost: SPELL_MANA_COSTS['healing_surge'] || 3800,
-                    resourceType: 'MANA',
-                    isAOE: false,
-                    isOnCooldown: false,
-                  });
-                  usableCandidates.push({
-                    spellId: 'greater_healing_wave',
-                    spellName: '强效治疗波',
-                    metrics: COMPUTED_SKILL_METRICS['shaman_greater_healing_wave'],
-                    baseAmt: 32000,
-                    castMs: 2500,
-                    cost: SPELL_MANA_COSTS['greater_healing_wave'] || 4200,
-                    resourceType: 'MANA',
-                    isAOE: false,
-                    isOnCooldown: false,
-                  });
-                  // 单体高效/填充：治疗波
-                  usableCandidates.push({
-                    spellId: 'healing_wave',
-                    spellName: '治疗波',
-                    metrics: COMPUTED_SKILL_METRICS['shaman_healing_wave'],
-                    baseAmt: 9500,
-                    castMs: 2500,
-                    cost: SPELL_MANA_COSTS['healing_wave'] || 1800,
-                    resourceType: 'MANA',
-                    isAOE: false,
-                    isOnCooldown: false,
-                  });
-                }
-
-                // 3.4 基础 HoT 维护检查 (平稳期优先补 HoT)
-                if (u.classId === 'DRUID') {
-                  // 回春术
-                  if ((tickCount + tickOffset) % 60 === 0 && lowestAlly && lowestAlly.hp < lowestAlly.maxHp * 0.90 && !lowestAlly.buffs.some(b => b.spellId === 'rejuvenation')) {
-                    const cost = SPELL_MANA_COSTS['rejuvenation'] || 2400;
-                    if ((u.mp ?? 0) >= cost) {
-                      u.mp = Math.max(0, (u.mp ?? 0) - cost);
-                      syncUnitResources(u);
-                      engine.applyBuff(lowestAlly, {
-                        id: `rejuv_ai_${Date.now()}_${lowestAlly.id}_${u.id}`,
-                        spellId: 'rejuvenation',
-                        name: '回春术 (HoT)',
-                        kind: 'BUFF',
-                        tags: ['HOT'],
-                        sourceUnitId: u.id,
-                        targetUnitId: lowestAlly.id,
-                        stacks: 1,
-                        maxStacks: 1,
-                        durationMs: 12000,
-                        remainingMs: 12000,
-                        school: 'NATURE',
-                        tickIntervalMs: 3000,
-                        tickValue: Math.round((4500 + (Math.random() * 2 - 1) * 350) * individualMod),
-                      });
-                    }
-                  }
-                  // 生命绽放
-                  if ((tickCount + tickOffset) % 80 === 0 && tankUnit) {
-                    const cost = SPELL_MANA_COSTS['lifebloom'] || 1400;
-                    if ((u.mp ?? 0) >= cost) {
-                      u.mp = Math.max(0, (u.mp ?? 0) - cost);
-                      syncUnitResources(u);
-                      const existingLb = tankUnit.buffs.find(b => b.spellId === 'lifebloom' && b.sourceUnitId === u.id);
-                      const stacks = existingLb ? Math.min(3, existingLb.stacks + 1) : 1;
-                      engine.applyBuff(tankUnit, {
-                        id: `lb_ai_${Date.now()}_${u.id}`,
-                        spellId: 'lifebloom',
-                        name: `生命绽放 (${stacks}层)`,
-                        kind: 'BUFF',
-                        tags: ['HOT'],
-                        sourceUnitId: u.id,
-                        targetUnitId: tankUnit.id,
-                        stacks,
-                        maxStacks: 3,
-                        durationMs: 15000,
-                        remainingMs: 15000,
-                        school: 'NATURE',
-                        tickIntervalMs: 2000,
-                        tickValue: Math.round((2400 + (Math.random() * 2 - 1) * 200) * individualMod),
-                      });
-                    }
-                  }
-                } else if (u.classId === 'SHAMAN') {
-                  // 激流 HoT
-                  if ((tickCount + tickOffset) % 60 === 0 && lowestAlly && lowestAlly.hp < lowestAlly.maxHp * 0.90 && !lowestAlly.buffs.some(b => b.spellId === 'riptide')) {
-                    const cost = SPELL_MANA_COSTS['riptide'] || 2200;
-                    if ((u.mp ?? 0) >= cost) {
-                      u.mp = Math.max(0, (u.mp ?? 0) - cost);
-                      syncUnitResources(u);
-                      engine.applyBuff(lowestAlly, {
-                        id: `rip_ai_${Date.now()}_${lowestAlly.id}_${u.id}`,
-                        spellId: 'riptide',
-                        name: '激流 (HoT)',
-                        kind: 'BUFF',
-                        tags: ['HOT'],
-                        sourceUnitId: u.id,
-                        targetUnitId: lowestAlly.id,
-                        stacks: 1,
-                        maxStacks: 1,
-                        durationMs: 15000,
-                        remainingMs: 15000,
-                        school: 'NATURE',
-                        tickIntervalMs: 3000,
-                        tickValue: Math.round((2500 + (Math.random() * 2 - 1) * 200) * individualMod),
-                      });
-                    }
-                  }
-                }
-
-                // 3.5 通用决策引擎打分裁决 (优先 AOE -> 救急高吞吐量 -> 常规性价比/输出)
-                const decision = evaluateUniversalAIDecision({
-                  caster: u,
-                  personality: aiPersonality,
-                  allies: engine.friendlyUnits,
-                  enemies: engine.bossUnit ? [engine.bossUnit] : [],
-                  usableSkills: usableCandidates,
-                  tickCount,
-                });
-
-                if (decision.chosenCandidate) {
-                  const chosen = decision.chosenCandidate;
-                  const targetUnit = decision.targetUnit || lowestAlly;
-
-                  // 瞬发技能立即施放结算
-                  if (chosen.castMs === 0) {
-                    if ((u.mp ?? 0) >= chosen.cost) {
-                      u.mp = Math.max(0, (u.mp ?? 0) - chosen.cost);
-                      syncUnitResources(u);
-
-                      if (chosen.spellId === 'healing_rain') {
-                        const rainPos = findOptimalGroundAuraCentroid(u, engine.friendlyUnits, 55, 360);
-                        engine.effectsManager?.addGroundEffect({
-                          id: `hrain_ai_${Date.now()}_${u.id}`,
-                          kind: 'HEAL_ZONE',
-                          spellId: 'healing_rain',
-                          ownerId: u.id,
-                          x: rainPos.x,
-                          y: rainPos.y,
-                          radius: 55,
-                          colorHex: '#4169E1',
-                          remainingMs: 10000,
-                          tickIntervalMs: 1000,
-                          tickElapsedMs: 0,
-                          tickValue: Math.round((3200 + (Math.random() * 2 - 1) * 250) * individualMod),
-                        });
-                      } else if (chosen.spellId === 'wild_growth') {
-                        const maxTargets = 5;
-                        const cX = targetUnit.position?.x ?? 200;
-                        const cY = targetUnit.position?.y ?? 200;
-                        const wgTargets = engine.friendlyUnits
-                          .filter(a => (a.alive || a.isAlive) && a.hp > 0)
-                          .map(a => ({ unit: a, dist: Math.hypot((a.position?.x ?? cX) - cX, (a.position?.y ?? cY) - cY), hpRatio: a.hp / a.maxHp }))
-                          .filter(c => c.dist <= 270)
-                          .sort((a, b) => a.hpRatio - b.hpRatio)
-                          .slice(0, maxTargets);
-
-                        for (const t of wgTargets) {
-                          engine.applyBuff(t.unit, {
-                            id: `wg_ai_${Date.now()}_${t.unit.id}`,
-                            spellId: 'wild_growth',
-                            name: '野性成长',
-                            kind: 'BUFF',
-                            tags: ['HOT'],
-                            sourceUnitId: u.id,
-                            targetUnitId: t.unit.id,
-                            stacks: 1,
-                            maxStacks: 1,
-                            durationMs: 7000,
-                            remainingMs: 7000,
-                            school: 'NATURE',
-                            tickIntervalMs: 1000,
-                            tickValue: Math.round((2400 + (Math.random() * 2 - 1) * 200) * individualMod),
-                          });
-                        }
-                      } else if (chosen.spellId === 'swiftmend') {
-                        const hotIdx = targetUnit.buffs.findIndex(b => b.spellId === 'rejuvenation' || b.spellId === 'regrowth');
-                        if (hotIdx !== -1) {
-                          const consumed = targetUnit.buffs.splice(hotIdx, 1)[0];
-                          const swiftAmt = rollAiHeal(u, 28000, true);
-                          engine.healUnit(u, targetUnit, swiftAmt, true, `迅捷治愈(消耗${consumed.name.split(' ')[0]})`);
-                          const efflorPos = findOptimalGroundAuraCentroid(u, engine.friendlyUnits, 50, 360);
-                          engine.effectsManager?.addGroundEffect({
-                            id: `efflor_ai_${Date.now()}_${u.id}`,
-                            kind: 'HEAL_ZONE',
-                            spellId: 'swiftmend',
-                            ownerId: u.id,
-                            x: efflorPos.x,
-                            y: efflorPos.y,
-                            radius: 50,
-                            colorHex: '#6FCF97',
-                            remainingMs: 7000,
-                            tickIntervalMs: 1000,
-                            tickElapsedMs: 0,
-                            tickValue: Math.round((3800 + (Math.random() * 2 - 1) * 300) * individualMod),
-                          });
-                        }
-                      }
-                    }
-                  } else {
-                    // 读条技能：启动读条并展示预治疗
-                    const preHealVal = Math.round(chosen.baseAmt * individualMod);
-                    aiHealerCastsRef.current[u.id] = {
-                      targetId: targetUnit.id,
-                      spellId: chosen.spellId,
-                      spellName: chosen.spellName,
-                      amount: preHealVal,
-                      baseAmt: chosen.baseAmt,
-                      manaCost: chosen.cost,
-                      totalMs: chosen.castMs,
-                      elapsedMs: 0,
-                    };
-                    currentCasts[u.id] = { spellName: chosen.spellName, progress: 0 };
-                    addIncomingCast(targetUnit.id, {
-                      casterId: u.id,
-                      casterName: u.name,
-                      spellName: chosen.spellName,
-                      amount: preHealVal,
-                      progress: 0,
-                      classId: u.classId,
-                    });
-                  }
-                } else if ((tickCount + tickOffset) % 60 === 0 && (u.mp ?? 0) < 1500) {
-                  notifyOom(u, engine);
-                }
-              }
-            } else if (u.classId === 'MAGE') {
-              // ── Fire Mage Rotation ──
-              // Evocation when low mana (< individual threshold)
-              const mageMpRatio = (u.mp ?? 0) / (u.maxMp || 90000);
-              const isLowManaMage = mageMpRatio < aiPersonality.resourceHealthyThreshold;
-              if (isLowManaMage && canAiUseCd(u.id, 'evocation', 120000)) {
-                u.mp = Math.min(u.maxMp || 90000, (u.mp ?? 0) + Math.round((u.maxMp || 90000) * 0.45));
-                syncUnitResources(u);
-                engine.effectsManager?.addFloatingText({
-                  targetId: u.id,
-                  text: `${u.name} 唤醒！法力值恢复+45%！`,
-                  category: 'HEAL',
-                  isCrit: true,
-                });
-              }
-
-              const fbCost = SPELL_MANA_COSTS['fireball'] || 2000;
-              if ((u.mp ?? 0) >= fbCost) {
-                const castProgress = (((tickCount + tickOffset) * 50) % 2200) / 2200;
-                currentCasts[u.id] = { spellName: '火球术', progress: castProgress };
-              } else if ((tickCount + tickOffset) % 60 === 0) {
-                notifyOom(u, engine);
-              }
-
-              // Keep Living Bomb on boss (cost 2600 mana)
-              if ((tickCount + tickOffset) % 80 === 0 && !boss.buffs.some(b => b.spellId === 'living_bomb' && b.sourceUnitId === u.id)) {
-                const lbCost = SPELL_MANA_COSTS['living_bomb'] || 2600;
-                if ((u.mp ?? 0) >= lbCost) {
-                  u.mp = Math.max(0, (u.mp ?? 0) - lbCost);
-                  syncUnitResources(u);
-                  engine.applyBuff(boss, {
-                    id: `lb_ai_${Date.now()}_${u.id}`,
-                    spellId: 'living_bomb',
-                    name: '活动炸弹',
-                    kind: 'DEBUFF',
-                    tags: ['DOT'],
-                    sourceUnitId: u.id,
-                    targetUnitId: boss.id,
-                    stacks: 1,
-                    maxStacks: 1,
-                    durationMs: 12000,
-                    remainingMs: 12000,
-                    school: 'FIRE',
-                    tickIntervalMs: 3000,
-                    tickValue: Math.round((3500 + (Math.random() * 2 - 1) * 300) * individualMod),
+                const preVal = Math.round(chosen.baseAmt * individualMod);
+                const isHarmful = !normSp.isHeal && !normSp.isShield;
+                aiHealerCastsRef.current[u.id] = {
+                  targetId: targetUnit.id,
+                  spellId: chosen.spellId,
+                  spellName: chosen.spellName,
+                  amount: preVal,
+                  baseAmt: chosen.baseAmt,
+                  manaCost: chosen.cost,
+                  resourceKind: normSp.resourceKind,
+                  totalMs: hastedCastMs,
+                  elapsedMs: 0,
+                  isHarmful,
+                  isAOE: chosen.isAOE,
+                  maxTargets: chosen.maxTargets,
+                  school: normSp.school,
+                  normalizedSpell: normSp,
+                };
+                currentCasts[u.id] = { spellName: chosen.spellName, progress: 0 };
+                if (!isHarmful) {
+                  addIncomingCast(targetUnit.id, {
+                    casterId: u.id,
+                    casterName: u.name,
+                    spellName: chosen.spellName,
+                    amount: preVal,
+                    progress: 0,
+                    classId: u.classId,
                   });
                 }
               }
-
-              if ((tickCount + tickOffset) % 44 === 0) {
-                const isPyro = Math.random() < 0.35;
-                if (isPyro) {
-                  // Instant Pyroblast proc! Free mana, infinite DPM
-                  const isCrit = Math.random() < ((u.stats.critChance || 0.25) + critMod + 0.2);
-                  const dmg = rollAiDamage(u, 18500, 'FIRE', isCrit);
-                  engine.dealDamage(u, boss, dmg, 'FIRE', isCrit, '炎爆术');
-                  engine.threatManager.addThreat(boss.id, u.id, dmg);
-                } else if ((u.mp ?? 0) >= fbCost) {
-                  u.mp = Math.max(0, (u.mp ?? 0) - fbCost);
-                  syncUnitResources(u);
-                  const isCrit = Math.random() < ((u.stats.critChance || 0.25) + critMod);
-                  const dmg = rollAiDamage(u, 11000, 'FIRE', isCrit);
-                  engine.dealDamage(u, boss, dmg, 'FIRE', isCrit, '火球术');
-                }
-              }
-
-              // Counterspell boss interruptible cast (对暂缓处决预留3秒治疗回血窗口)
-              const mageCasting = bossAiRef.current?.currentCasting;
-              const shouldMageKick = mageCasting?.skill.interruptible && (
-                mageCasting.skill.id !== 'stay_of_execution' || mageCasting.elapsedMs >= 3000
-              );
-              if (shouldMageKick && (tickCount + tickOffset) % 20 === 0) {
-                const success = bossAiRef.current!.interruptCurrentCast();
-                if (success) {
-                  if (u.combatStats) u.combatStats.interruptCount++;
-                  engine.effectsManager?.addFloatingText({
-                    targetId: boss.id,
-                    text: `${u.name} 法术反制打断！`,
-                    category: 'INTERRUPT',
-                    isCrit: true,
-                  });
-                }
-              }
-            } else if (u.classId === 'ROGUE') {
-              // ── Rogue Rotation & Energy Rules ──
-              // Adrenaline Rush when low energy (< individual reserve line)
-              const curEnergy = u.energy ?? 100;
-              const isLowEnergy = curEnergy < aiPersonality.energyReserveThreshold;
-              if (isLowEnergy && canAiUseCd(u.id, 'adrenaline_rush', 180000)) {
-                engine.applyBuff(u, {
-                  id: `ar_ai_${Date.now()}_${u.id}`,
-                  spellId: 'adrenaline_rush',
-                  name: '冲动 (能量回复+100%)',
-                  kind: 'BUFF',
-                  tags: ['STAT'],
-                  sourceUnitId: u.id,
-                  targetUnitId: u.id,
-                  stacks: 1,
-                  maxStacks: 1,
-                  durationMs: 15000,
-                  remainingMs: 15000,
-                  school: 'PHYSICAL',
-                });
-                engine.effectsManager?.addFloatingText({
-                  targetId: u.id,
-                  text: `${u.name} 冲动！能量恢复加速！`,
-                  category: 'HEAL',
-                  isCrit: true,
-                });
-              }
-
-              // Maintain Slice and Dice (+40% attack speed, cost 25 energy)
-              if (!u.buffs.some(b => b.spellId === 'slice_and_dice' && b.sourceUnitId === u.id)) {
-                const sndCost = SPELL_ENERGY_COSTS['slice_and_dice'] || 25;
-                if ((u.energy ?? 100) >= sndCost) {
-                  u.energy = Math.max(0, (u.energy ?? 100) - sndCost);
-                  syncUnitResources(u);
-                  engine.applyBuff(u, {
-                    id: `snd_ai_${Date.now()}_${u.id}`,
-                    spellId: 'slice_and_dice',
-                    name: '切割 (+40%攻速)',
-                    kind: 'BUFF',
-                    tags: ['STAT'],
-                    sourceUnitId: u.id,
-                    targetUnitId: u.id,
-                    stacks: 1,
-                    maxStacks: 1,
-                    durationMs: 24000,
-                    remainingMs: 24000,
-                    school: 'PHYSICAL',
-                  });
-                }
-              }
-
-              if ((tickCount + tickOffset) % 18 === 0) {
-                const isFinisher = (tickCount + tickOffset) % 72 === 0;
-                if (isFinisher) {
-                  // Finisher: balance between Eviscerate burst and Rupture DoT efficiency based on AI personality
-                  const hasRupture = boss.buffs.some(b => b.spellId === 'rupture' && b.sourceUnitId === u.id);
-                  const preferEfficiency = aiPersonality.throughputVsEfficiencyBias < 0.45;
-                  if (!hasRupture && preferEfficiency) {
-                    const rupCost = SPELL_ENERGY_COSTS['rupture'] || 25;
-                    if ((u.energy ?? 100) >= rupCost) {
-                      u.energy = Math.max(0, (u.energy ?? 100) - rupCost);
-                      syncUnitResources(u);
-                      engine.applyBuff(boss, {
-                        id: `rup_ai_${Date.now()}_${u.id}`,
-                        spellId: 'rupture',
-                        name: '割裂 (DoT)',
-                        kind: 'DEBUFF',
-                        tags: ['DOT'],
-                        sourceUnitId: u.id,
-                        targetUnitId: boss.id,
-                        stacks: 1,
-                        maxStacks: 1,
-                        durationMs: 16000,
-                        remainingMs: 16000,
-                        school: 'PHYSICAL',
-                        tickIntervalMs: 2000,
-                        tickValue: Math.round((2200 + (Math.random() * 2 - 1) * 200) * individualMod),
-                      });
-                    }
-                  } else {
-                    const evisCost = SPELL_ENERGY_COSTS['eviscerate'] || 35;
-                    if ((u.energy ?? 100) >= evisCost) {
-                      u.energy = Math.max(0, (u.energy ?? 100) - evisCost);
-                      syncUnitResources(u);
-                      const isCrit = Math.random() < ((u.stats.critChance || 0.28) + critMod + 0.15);
-                      const dmg = rollAiDamage(u, 19500, 'PHYSICAL', isCrit);
-                      engine.dealDamage(u, boss, dmg, 'PHYSICAL', isCrit, '刺骨');
-                      engine.threatManager.addThreat(boss.id, u.id, dmg);
-                    }
-                  }
-                } else {
-                  const ssCost = SPELL_ENERGY_COSTS['sinister_strike'] || 40;
-                  if ((u.energy ?? 100) >= ssCost) {
-                    u.energy = Math.max(0, (u.energy ?? 100) - ssCost);
-                    syncUnitResources(u);
-                    const isCrit = Math.random() < ((u.stats.critChance || 0.28) + critMod);
-                    const dmg = rollAiDamage(u, 5500, 'PHYSICAL', isCrit);
-                    engine.dealDamage(u, boss, dmg, 'PHYSICAL', isCrit, '影袭');
-                  }
-                }
-              }
-
-              // Kick interrupt (costs 15 energy)
-              const rogueCasting = bossAiRef.current?.currentCasting;
-              const shouldRogueKick = rogueCasting?.skill.interruptible && (
-                rogueCasting.skill.id !== 'stay_of_execution' || rogueCasting.elapsedMs >= 3000
-              );
-              if (shouldRogueKick && (tickCount + tickOffset) % 20 === 0) {
-                const kickCost = SPELL_ENERGY_COSTS['kick'] || 15;
-                if ((u.energy ?? 100) >= kickCost) {
-                  const success = bossAiRef.current!.interruptCurrentCast();
-                  if (success) {
-                    u.energy = Math.max(0, (u.energy ?? 100) - kickCost);
-                    syncUnitResources(u);
-                    if (u.combatStats) u.combatStats.interruptCount++;
-                    engine.effectsManager?.addFloatingText({
-                      targetId: boss.id,
-                      text: `${u.name} 脚踢打断！(-15能量)`,
-                      category: 'INTERRUPT',
-                      isCrit: true,
-                    });
-                  }
-                }
-              }
-            } else if (u.classId === 'SHAMAN') {
-              // ── Elemental Shaman DPS ──
-              const lbCost = SPELL_MANA_COSTS['lightning_bolt'] || 1600;
-              if ((u.mp ?? 0) >= lbCost) {
-                const castProgress = (((tickCount + tickOffset) * 50) % 2000) / 2000;
-                currentCasts[u.id] = { spellName: '闪电箭', progress: castProgress };
-              } else if ((tickCount + tickOffset) % 60 === 0) {
-                notifyOom(u, engine);
-              }
-
-              // Flame Shock DoT on boss (cost 2200 mana)
-              if ((tickCount + tickOffset) % 80 === 0 && !boss.buffs.some(b => b.spellId === 'flame_shock' && b.sourceUnitId === u.id)) {
-                const fsCost = SPELL_MANA_COSTS['flame_shock'] || 2200;
-                if ((u.mp ?? 0) >= fsCost) {
-                  u.mp = Math.max(0, (u.mp ?? 0) - fsCost);
-                  syncUnitResources(u);
-                  engine.applyBuff(boss, {
-                    id: `fs_ai_${Date.now()}_${u.id}`,
-                    spellId: 'flame_shock',
-                    name: '烈焰震击 (DoT)',
-                    kind: 'DEBUFF',
-                    tags: ['DOT'],
-                    sourceUnitId: u.id,
-                    targetUnitId: boss.id,
-                    stacks: 1,
-                    maxStacks: 1,
-                    durationMs: 18000,
-                    remainingMs: 18000,
-                    school: 'FIRE',
-                    tickIntervalMs: 3000,
-                    tickValue: Math.round((2800 + (Math.random() * 2 - 1) * 220) * individualMod),
-                  });
-                }
-              }
-
-              if ((tickCount + tickOffset) % 36 === 0) {
-                const isLava = (tickCount + tickOffset) % 72 === 0;
-                if (isLava) {
-                  const lavaCost = SPELL_MANA_COSTS['lava_burst'] || 2600;
-                  if ((u.mp ?? 0) >= lavaCost) {
-                    u.mp = Math.max(0, (u.mp ?? 0) - lavaCost);
-                    syncUnitResources(u);
-                    const dmg = rollAiDamage(u, 16000, 'FIRE', true);
-                    engine.dealDamage(u, boss, dmg, 'FIRE', true, '熔岩爆裂');
-                  } else if ((u.mp ?? 0) >= lbCost) {
-                    u.mp = Math.max(0, (u.mp ?? 0) - lbCost);
-                    syncUnitResources(u);
-                    const isCrit = Math.random() < ((u.stats.critChance || 0.25) + critMod);
-                    const dmg = rollAiDamage(u, 9000, 'NATURE', isCrit);
-                    engine.dealDamage(u, boss, dmg, 'NATURE', isCrit, '闪电箭');
-                  }
-                } else if ((u.mp ?? 0) >= lbCost) {
-                  u.mp = Math.max(0, (u.mp ?? 0) - lbCost);
-                  syncUnitResources(u);
-                  const isCrit = Math.random() < ((u.stats.critChance || 0.25) + critMod);
-                  const dmg = rollAiDamage(u, 9000, 'NATURE', isCrit);
-                  engine.dealDamage(u, boss, dmg, 'NATURE', isCrit, '闪电箭');
-                }
-              }
-
-              // Wind Shear interrupt (对暂缓处决预留3秒治疗回血窗口)
-              const shamanCasting = bossAiRef.current?.currentCasting;
-              const shouldShamanKick = shamanCasting?.skill.interruptible && (
-                shamanCasting.skill.id !== 'stay_of_execution' || shamanCasting.elapsedMs >= 3000
-              );
-              if (shouldShamanKick && (tickCount + tickOffset) % 20 === 0) {
-                const success = bossAiRef.current!.interruptCurrentCast();
-                if (success) {
-                  if (u.combatStats) u.combatStats.interruptCount++;
-                  engine.effectsManager?.addFloatingText({
-                    targetId: boss.id,
-                    text: `${u.name} 风剪打断！`,
-                    category: 'INTERRUPT',
-                    isCrit: true,
-                  });
-                }
-              }
-            } else {
-              // Other DPS (Druid Balance / DK Frost)
-              if ((tickCount + tickOffset) % 24 === 0) {
-                if (u.classId === 'DRUID') {
-                  const isStarfire = (tickCount + tickOffset) % 48 === 0;
-                  const spellName = isStarfire ? '星火术' : '愤怒';
-                  const school = isStarfire ? 'ARCANE' : 'NATURE';
-                  const baseDmg = isStarfire ? 12000 : 8500;
-                  const cost = isStarfire ? (SPELL_MANA_COSTS['starfire'] || 2800) : (SPELL_MANA_COSTS['wrath'] || 1600);
-                  if ((u.mp ?? 0) >= cost) {
-                    u.mp = Math.max(0, (u.mp ?? 0) - cost);
-                    syncUnitResources(u);
-                    const isCrit = Math.random() < ((u.stats.critChance || 0.25) + critMod);
-                    const dmg = rollAiDamage(u, baseDmg, school, isCrit);
-                    engine.dealDamage(u, boss, dmg, school, isCrit, spellName);
-                  } else if ((tickCount + tickOffset) % 60 === 0) {
-                    notifyOom(u, engine);
-                  }
-                } else if (u.classId === 'DK') {
-                  const isObliterate = (tickCount + tickOffset) % 48 === 0;
-                  const spellName = isObliterate ? '湮灭' : '冰霜打击';
-                  const school = isObliterate ? 'PHYSICAL' : 'FROST';
-                  const baseDmg = isObliterate ? 12500 : 8800;
-                  const isCrit = Math.random() < ((u.stats.critChance || 0.25) + critMod);
-                  const dmg = rollAiDamage(u, baseDmg, school, isCrit);
-                  engine.dealDamage(u, boss, dmg, school, isCrit, spellName);
-                } else {
-                  const isCrit = Math.random() < ((u.stats.critChance || 0.25) + critMod);
-                  const dmg = rollAiDamage(u, 9000, 'PHYSICAL', isCrit);
-                  engine.dealDamage(u, boss, dmg, 'PHYSICAL', isCrit, '技能攻击');
-                }
-              }
+            } else if ((tickCount + tickOffset) % 60 === 0 && u.maxMp && u.maxMp > 0 && (u.mp ?? 0) < 1200) {
+              notifyOom(u, engine);
             }
           }
 
@@ -2534,11 +2533,20 @@ export function App() {
     const boss = engine.bossUnit;
     if (!player || (!player.isAlive && !player.alive)) return false;
 
-    const isRevive = spellId === 'revive' || spellId === 'ancestral_spirit' || spellId === 'rebirth';
-    const isHarmful = [
-      'fireball', 'pyroblast', 'frostbolt', 'arcane_blast', 'wrath',
-      'starfire', 'starsurge', 'lightning_bolt', 'lava_burst', 'chain_lightning'
-    ].includes(spellId);
+    const normSpell = getSpellByAnyId(spellId, player.classId);
+    const isRevive =
+      spellId === 'revive' ||
+      spellId === 'ancestral_spirit' ||
+      spellId === 'rebirth' ||
+      spellId === 'redemption' ||
+      spellId === 'resurrection' ||
+      Boolean(normSpell?.isResurrect);
+    const isHarmful =
+      [
+        'fireball', 'pyroblast', 'frostbolt', 'arcane_blast', 'wrath',
+        'starfire', 'starsurge', 'lightning_bolt', 'lava_burst', 'chain_lightning',
+      ].includes(spellId) ||
+      Boolean(normSpell && !normSpell.isHeal && !normSpell.isShield && !normSpell.isResurrect && !normSpell.isDispel && !normSpell.isDefensive && !normSpell.isResourceRestore);
 
     // ── 目标存活与射程校验：若目标已死亡或超出范围，施法失败且绝对不进CD！──
     if (isHarmful) {
@@ -2658,27 +2666,48 @@ export function App() {
     } else if (spellId === 'lightning_bolt') {
       if (boss && boss.alive) {
         const isCrit = Math.random() < 0.28;
-        engine.dealDamage(player, boss, 14000, 'NATURE', isCrit, '闪电箭');
-        engine.threatManager.addThreat(boss.id, player.id, 14000);
+        const sp = getSpellByAnyId('lightning_bolt', 'SHAMAN');
+        const base = sp?.directDamage || 8500;
+        const dmg = Math.round(base + (player.stats.spellPower || 3800) * 0.86);
+        engine.dealDamage(player, boss, dmg, 'NATURE', isCrit, '闪电箭');
+        engine.threatManager.addThreat(boss.id, player.id, dmg);
+        // 大地之流回蓝后同步资源条
+        syncUnitResources(player);
       }
     } else if (spellId === 'lava_burst') {
       if (boss && boss.alive) {
         setScreenShake(true);
         setTimeout(() => setScreenShake(false), 120);
-        engine.dealDamage(player, boss, 26000, 'FIRE', true, '熔岩爆裂'); // Guaranteed critical hit
-        engine.threatManager.addThreat(boss.id, player.id, 26000);
+        const sp = getSpellByAnyId('lava_burst', 'SHAMAN');
+        const base = sp?.directDamage || 14000;
+        // 熔岩爆裂：有烈焰震击时必然暴击；这里按技能描述保底暴击
+        const dmg = Math.round((base + (player.stats.spellPower || 3800) * 0.86) * 2.0);
+        engine.dealDamage(player, boss, dmg, 'FIRE', true, '熔岩爆裂');
+        engine.threatManager.addThreat(boss.id, player.id, dmg);
       }
     } else if (spellId === 'chain_lightning') {
-      if (boss && boss.alive) {
+      const enemies = engine.enemyUnits.filter(e => (e.isAlive ?? e.alive) && e.hp > 0).slice(0, 4);
+      const targets = enemies.length > 0 ? enemies : (boss && (boss.isAlive ?? boss.alive) && boss.hp > 0 ? [boss] : []);
+      const sp = getSpellByAnyId('chain_lightning', 'SHAMAN');
+      const base = sp?.directDamage || 8600;
+      // 80 级满级标定：基础值 + 法强系数，弹跳衰减 30%
+      let jumpAmt = Math.round(base + (player.stats.spellPower || 3800) * 0.86);
+      targets.forEach((enemy, idx) => {
         const isCrit = Math.random() < 0.25;
-        engine.dealDamage(player, boss, 16500, 'NATURE', isCrit, '闪电链');
-        engine.threatManager.addThreat(boss.id, player.id, 16500);
-      }
+        const hit = Math.round(jumpAmt * (isCrit ? 1.5 : 1));
+        engine.dealDamage(player, enemy, hit, 'NATURE', isCrit, '闪电链');
+        engine.threatManager.addThreat(enemy.id, player.id, hit);
+        jumpAmt *= 0.7;
+      });
+      syncUnitResources(player);
     } else if (spellId === 'healing_wave') {
       const target = (castTargetIdRef.current ? engine.friendlyUnits.find(u => u.id === castTargetIdRef.current) : null)
         || (selectedTargetId ? engine.friendlyUnits.find(u => u.id === selectedTargetId) : null)
         || player;
-      engine.healUnit(player, target, 22000, Math.random() < 0.3, '治疗波');
+      const sp = getSpellByAnyId('healing_wave', 'SHAMAN');
+      const base = sp?.directHeal || 8800;
+      const heal = Math.round(base + (player.stats.spellPower || 4000) * 0.8);
+      engine.healUnit(player, target, heal, Math.random() < 0.3, '治疗波');
     } else if (spellId === 'nourish') {
       const target = (castTargetIdRef.current ? engine.friendlyUnits.find(u => u.id === castTargetIdRef.current) : null)
         || (selectedTargetId ? engine.friendlyUnits.find(u => u.id === selectedTargetId) : null)
@@ -2700,12 +2729,16 @@ export function App() {
       const target = (castTargetIdRef.current ? engine.friendlyUnits.find(u => u.id === castTargetIdRef.current) : null)
         || (selectedTargetId ? engine.friendlyUnits.find(u => u.id === selectedTargetId) : null)
         || player;
-      engine.healUnit(player, target, 16000, Math.random() < 0.3, '治疗之涌');
+      const sp = getSpellByAnyId('healing_surge', 'SHAMAN');
+      const heal = Math.round((sp?.directHeal || 12400) + (player.stats.spellPower || 4000) * 0.8);
+      engine.healUnit(player, target, heal, Math.random() < 0.3, '治疗之涌');
     } else if (spellId === 'greater_healing_wave') {
       const target = (castTargetIdRef.current ? engine.friendlyUnits.find(u => u.id === castTargetIdRef.current) : null)
         || (selectedTargetId ? engine.friendlyUnits.find(u => u.id === selectedTargetId) : null)
         || player;
-      engine.healUnit(player, target, 32000, Math.random() < 0.35, '强效治疗波');
+      const sp = getSpellByAnyId('greater_healing_wave', 'SHAMAN');
+      const heal = Math.round((sp?.directHeal || 20500) + (player.stats.spellPower || 4000) * 0.8);
+      engine.healUnit(player, target, heal, Math.random() < 0.35, '强效治疗波');
     } else if (spellId === 'healing_touch') {
       const target = (castTargetIdRef.current ? engine.friendlyUnits.find(u => u.id === castTargetIdRef.current) : null)
         || (selectedTargetId ? engine.friendlyUnits.find(u => u.id === selectedTargetId) : null)
@@ -2771,11 +2804,88 @@ export function App() {
       } else {
         return false;
       }
-    } else if (spellId === 'revive' || spellId === 'ancestral_spirit') {
+    } else if (spellId === 'chain_heal') {
+      const target = (castTargetIdRef.current ? engine.friendlyUnits.find(u => u.id === castTargetIdRef.current) : null)
+        || (selectedTargetId ? engine.friendlyUnits.find(u => u.id === selectedTargetId) : null)
+        || player;
+      const isCrit = Math.random() < (player.stats.critChance || 0.25);
+      const sp = getSpellByAnyId('chain_heal', 'SHAMAN');
+      // 80 级满级：主目标按 ClassRegistry 直疗 + 法强系数，后续弹跳衰减 30%
+      let healVal = Math.round((sp?.directHeal || 23500) + (player.stats.spellPower || 4000) * 0.55);
+      engine.healUnit(player, target, healVal, isCrit, '治疗链');
+      const otherAllies = engine.friendlyUnits
+        .filter(u => u.id !== target.id && (u.alive || u.isAlive) && u.hp > 0 && u.hp < u.maxHp)
+        .sort((a, b) => (a.hp / a.maxHp) - (b.hp / b.maxHp));
+      for (let i = 0; i < Math.min(3, otherAllies.length); i++) {
+        healVal = Math.round(healVal * 0.7);
+        engine.healUnit(player, otherAllies[i], healVal, Math.random() < (player.stats.critChance || 0.25), `治疗链(第${i + 2}跳)`);
+      }
+    } else if (spellId === 'revive' || spellId === 'ancestral_spirit' || spellId === 'redemption' || spellId === 'resurrection') {
       const deadTarget = engine.friendlyUnits.find(u => (!u.isAlive && !u.alive) || u.hp <= 0);
       if (deadTarget) {
         engine.resurrectUnit(deadTarget.id, 0.4, 0.4);
-        engine.healUnit(player, deadTarget, 30000, false, spellId === 'revive' ? '起死回生' : '先祖之魂');
+        const rezName = normSpell?.name || (spellId === 'revive' ? '起死回生' : '先祖之魂');
+        engine.healUnit(player, deadTarget, Math.round(deadTarget.maxHp * 0.4), false, rezName);
+      }
+    } else if (normSpell) {
+      // Data-driven resolution for ALL 10 Cataclysm classes' cast-time spells
+      const spPower = player.stats.spellPower || 3200;
+      const apPower = player.stats.attackPower || 3200;
+      const isCrit = Math.random() < (player.stats.critChance || 0.28);
+      if (normSpell.isHeal || normSpell.isShield) {
+        const target = (castTargetIdRef.current ? engine.friendlyUnits.find(u => u.id === castTargetIdRef.current) : null)
+          || (selectedTargetId ? engine.friendlyUnits.find(u => u.id === selectedTargetId) : null)
+          || player;
+        if (normSpell.isAOE) {
+          const maxT = Math.max(3, normSpell.maxAoeTargets || 5);
+          const wounded = engine.friendlyUnits
+            .filter(u => (u.alive || u.isAlive) && u.hp > 0)
+            .sort((a, b) => (a.hp / a.maxHp) - (b.hp / b.maxHp))
+            .slice(0, maxT);
+          const perHeal = Math.round(Math.max(3800, normSpell.directHeal || normSpell.hotTotalHeal * 0.45) + spPower * 0.4);
+          for (const ally of wounded) {
+            engine.healUnit(player, ally, perHeal, Math.random() < (player.stats.critChance || 0.25), normSpell.name);
+          }
+        } else {
+          const healVal = Math.round(Math.max(4500, normSpell.directHeal) + spPower * 0.55);
+          engine.healUnit(player, target, healVal, isCrit, normSpell.name);
+        }
+      } else if (normSpell.isAOE) {
+        const livingEnemies = engine.enemyUnits.filter(e => (e.isAlive ?? e.alive) && e.hp > 0);
+        const targets = livingEnemies.slice(0, Math.max(3, normSpell.maxAoeTargets || 6));
+        const power = normSpell.school === 'PHYSICAL' ? apPower : spPower;
+        const perDmg = Math.round(Math.max(3600, normSpell.directDamage || normSpell.dotTotalDamage * 0.5) + power * 0.45);
+        for (const enemy of targets) {
+          engine.dealDamage(player, enemy, perDmg, normSpell.school, Math.random() < (player.stats.critChance || 0.28), normSpell.name);
+          engine.threatManager.addThreat(enemy.id, player.id, perDmg);
+        }
+      } else if (boss && boss.alive) {
+        const power = normSpell.school === 'PHYSICAL' ? apPower : spPower;
+        const dmgVal = Math.round(Math.max(5200, normSpell.directDamage || normSpell.dotTotalDamage * 0.35) + power * 0.65);
+        if (isCrit) {
+          setScreenShake(true);
+          setTimeout(() => setScreenShake(false), 110);
+        }
+        engine.dealDamage(player, boss, dmgVal, normSpell.school, isCrit, normSpell.name);
+        engine.threatManager.addThreat(boss.id, player.id, dmgVal);
+        if (normSpell.isDot && normSpell.dotTotalDamage > 0) {
+          engine.applyBuff(boss, {
+            id: `${normSpell.shortId}_${Date.now()}`,
+            spellId: normSpell.shortId,
+            name: `${normSpell.name} (DoT)`,
+            kind: 'DEBUFF',
+            tags: ['DOT'],
+            sourceUnitId: player.id,
+            targetUnitId: boss.id,
+            stacks: 1,
+            maxStacks: 1,
+            durationMs: 15000,
+            remainingMs: 15000,
+            school: normSpell.school,
+            tickIntervalMs: 3000,
+            tickValue: Math.round(normSpell.dotTotalDamage / 5),
+          });
+        }
       }
     }
 
@@ -2807,12 +2917,15 @@ export function App() {
     });
   };
 
-  // Trigger Global Cooldown (GCD) for on-GCD spells: 0.75s (750ms)
+  // Trigger Global Cooldown (GCD) using authentic Lv.80 Cataclysm GCD grouping:
+  // NORMAL = max(1000ms, round(1500 / (1 + haste))), ROGUE = fixed 1000ms, OFF_GCD = 0ms
   const triggerGcd = (spellId?: string) => {
     if (spellId && isOffGcdSpell(spellId)) return;
     const engine = engineRef.current;
     const player = engine.friendlyUnits.find(u => u.isPlayer);
-    const gcdMs = 750;
+    const gcdCat = getSpellGcdCategory(spellId || '', player?.classId);
+    const gcdMs = getEffectiveGcdMs(gcdCat, player?.stats?.haste ?? LEVEL_80_MAX_HASTE);
+    if (gcdMs <= 0) return;
     setPlayerGcdRemainingMs(gcdMs);
     setPlayerGcdTotalMs(gcdMs);
     if (player) {
@@ -2820,7 +2933,7 @@ export function App() {
     }
   };
 
-  // Dispel unit debuffs (Cataclysm dispel matrix)
+  // Dispel unit debuffs (Cataclysm dispel matrix for all 10 classes)
   const handleDispelUnit = (targetUnitId?: string | null) => {
     const engine = engineRef.current;
     const player = engine.friendlyUnits.find(u => u.isPlayer);
@@ -2851,6 +2964,12 @@ export function App() {
       ? (currentChar?.lastSpec === 'RESTORATION' ? 'natures_cure' : 'remove_corruption')
       : currentChar?.classId === 'SHAMAN'
       ? 'cleanse_spirit'
+      : currentChar?.classId === 'PALADIN'
+      ? 'cleanse'
+      : currentChar?.classId === 'PRIEST'
+      ? 'dispel_magic'
+      : currentChar?.classId === 'WARLOCK'
+      ? 'devour_magic'
       : 'remove_curse';
 
     if ((playerCooldowns[dispelSpellId]?.cdRemainingMs || 0) > 0) {
@@ -3096,10 +3215,26 @@ export function App() {
       res[sp] = distToTarget > 360;
     }
 
+    // Dynamic range check for ALL 10 Cataclysm classes' slotted spells
+    for (const slot of getPlayerSlots()) {
+      if (res[slot.spellId] !== undefined) continue;
+      const norm = getSpellByAnyId(slot.spellId, player.classId);
+      if (!norm) continue;
+      if (norm.isDefensive || norm.isResourceRestore) {
+        res[slot.spellId] = false;
+      } else if (norm.isHeal || norm.isShield || norm.isDispel || norm.isResurrect) {
+        res[slot.spellId] = distToTarget > 360;
+      } else if (norm.school === 'PHYSICAL' && norm.classId !== 'HUNTER' && !norm.isTaunt) {
+        res[slot.spellId] = distToBoss > 80;
+      } else {
+        res[slot.spellId] = distToBoss > 360;
+      }
+    }
+
     return res;
   }, [friendlyUnits, bossUnit, selectedTargetId]);
 
-  // Compute resource insufficiency (Mana / Energy / Rage / Runic Power)
+  // Compute resource insufficiency (Mana / Energy / Rage / Focus / Runic Power / Holy Power)
   const { insufficientResourceSpells, spellResourceErrors } = useMemo(() => {
     const engine = engineRef.current;
     const player = engine.friendlyUnits.find(u => u.isPlayer);
@@ -3110,33 +3245,49 @@ export function App() {
     const curMp = player.mp ?? player.resources?.find(r => r.kind === 'MANA')?.current ?? 0;
     const curEnergy = player.energy ?? player.resources?.find(r => r.kind === 'ENERGY')?.current ?? 100;
     const curRage = player.rage ?? 0;
-    const curRunic = player.runicPower ?? player.energy ?? 0;
+    const curFocus = player.focus ?? 100;
+    const curRunic = player.runicPower ?? 0;
+    const curHolyPower = player.holyPower ?? 0;
 
     const slots = getPlayerSlots();
     for (const slot of slots) {
       const spId = slot.spellId;
-      const manaCost = SPELL_MANA_COSTS[spId] || 0;
+      const norm = getSpellByAnyId(spId, player.classId);
+
+      const manaCost = SPELL_MANA_COSTS[spId] ?? (norm?.resourceKind === 'MANA' ? norm.resourceCostAmount : 0);
       if (manaCost > 0 && player.maxMp && player.maxMp > 0 && curMp < manaCost) {
         insufficient[spId] = true;
         errors[spId] = '法力值不足';
         continue;
       }
-      const energyCost = SPELL_ENERGY_COSTS[spId] || 0;
-      if (energyCost > 0 && (player.classId === 'ROGUE' || player.energy !== undefined) && curEnergy < energyCost) {
+      const energyCost = SPELL_ENERGY_COSTS[spId] ?? (norm?.resourceKind === 'ENERGY' ? norm.resourceCostAmount : 0);
+      if (energyCost > 0 && player.classId === 'ROGUE' && curEnergy < energyCost) {
         insufficient[spId] = true;
         errors[spId] = '能量不足';
         continue;
       }
-      const rageCost = SPELL_RAGE_COSTS[spId] || 0;
-      if (rageCost > 0 && curRage < rageCost) {
+      const rageCost = SPELL_RAGE_COSTS[spId] ?? (norm?.resourceKind === 'RAGE' ? norm.resourceCostAmount : 0);
+      if (rageCost > 0 && (player.classId === 'WARRIOR' || (player.classId === 'DRUID' && player.role === 'TANK')) && curRage < rageCost) {
         insufficient[spId] = true;
         errors[spId] = '怒气不足';
         continue;
       }
-      const runicCost = SPELL_RUNIC_COSTS[spId] || 0;
+      const focusCost = norm?.resourceKind === 'FOCUS' ? norm.resourceCostAmount : 0;
+      if (focusCost > 0 && player.classId === 'HUNTER' && curFocus < focusCost) {
+        insufficient[spId] = true;
+        errors[spId] = '集中值不足';
+        continue;
+      }
+      const runicCost = SPELL_RUNIC_COSTS[spId] ?? (norm?.resourceKind === 'RUNIC_POWER' ? norm.resourceCostAmount : 0);
       if (runicCost > 0 && player.classId === 'DK' && curRunic < runicCost) {
         insufficient[spId] = true;
         errors[spId] = '符能不足';
+        continue;
+      }
+      const hpCost = norm?.resourceKind === 'HOLY_POWER' ? norm.resourceCostAmount : 0;
+      if (hpCost > 0 && player.classId === 'PALADIN' && curHolyPower < hpCost) {
+        insufficient[spId] = true;
+        errors[spId] = '神圣能量不足';
         continue;
       }
     }
@@ -3171,8 +3322,20 @@ export function App() {
     if (!slot) return;
 
     const engine = engineRef.current;
-    const player = engine.friendlyUnits.find(u => u.isPlayer);
+    const player = engine.friendlyUnits.find(u => u.isPlayer) || (currentChar ? engine.getUnit(currentChar.id) : undefined);
     const boss = engine.bossUnit;
+
+    // Network guest: forward cast intent to host; do not simulate locally
+    if (isNetworkGuestRef.current && netClient.connected && activeRoomIdRef.current && currentChar) {
+      netClient.sendPlayerInput(activeRoomIdRef.current, {
+        kind: 'CAST',
+        playerId: currentChar.id,
+        spellId: slot.spellId,
+        slotIndex: slotIdx,
+        targetId: bossTargetId || boss?.id || player?.id || null,
+      });
+      return;
+    }
 
     if (!player || (!player.isAlive && !player.alive)) return;
 
@@ -3204,8 +3367,10 @@ export function App() {
       return;
     }
 
+    const normSlotSpell = getSpellByAnyId(slot.spellId, player.classId);
+
     // ── Check Mana Cost ──────────────────────────────────────────────
-    const manaCost = SPELL_MANA_COSTS[slot.spellId] || 0;
+    const manaCost = SPELL_MANA_COSTS[slot.spellId] ?? (normSlotSpell?.resourceKind === 'MANA' ? normSlotSpell.resourceCostAmount : 0);
     if (manaCost > 0 && player.maxMp && player.maxMp > 0) {
       if ((player.mp ?? 0) < manaCost) {
         window.dispatchEvent(new CustomEvent('cata_ui_error', { detail: { text: '法力值不足' } }));
@@ -3220,7 +3385,7 @@ export function App() {
     }
 
     // ── Check Energy Cost for Rogue ──────────────────────────────────
-    const energyCost = SPELL_ENERGY_COSTS[slot.spellId] || 0;
+    const energyCost = SPELL_ENERGY_COSTS[slot.spellId] ?? (normSlotSpell?.resourceKind === 'ENERGY' ? normSlotSpell.resourceCostAmount : 0);
     if (energyCost > 0 && player.classId === 'ROGUE') {
       if ((player.energy ?? 100) < energyCost) {
         window.dispatchEvent(new CustomEvent('cata_ui_error', { detail: { text: '能量不足' } }));
@@ -3235,8 +3400,8 @@ export function App() {
     }
 
     // ── Check Rage Cost ──────────────────────────────────────────────
-    const rageCost = SPELL_RAGE_COSTS[slot.spellId] || 0;
-    if (rageCost > 0) {
+    const rageCost = SPELL_RAGE_COSTS[slot.spellId] ?? (normSlotSpell?.resourceKind === 'RAGE' ? normSlotSpell.resourceCostAmount : 0);
+    if (rageCost > 0 && (player.classId === 'WARRIOR' || (player.classId === 'DRUID' && player.role === 'TANK'))) {
       const curRage = player.rage ?? 0;
       if (curRage < rageCost) {
         window.dispatchEvent(new CustomEvent('cata_ui_error', { detail: { text: '怒气不足' } }));
@@ -3250,15 +3415,47 @@ export function App() {
       }
     }
 
+    // ── Check Focus Cost for Hunter ──────────────────────────────────
+    const focusCost = normSlotSpell?.resourceKind === 'FOCUS' ? normSlotSpell.resourceCostAmount : 0;
+    if (focusCost > 0 && player.classId === 'HUNTER') {
+      const curFocus = player.focus ?? 100;
+      if (curFocus < focusCost) {
+        window.dispatchEvent(new CustomEvent('cata_ui_error', { detail: { text: '集中值不足' } }));
+        engine.effectsManager?.addFloatingText({
+          targetId: player.id,
+          text: '⚠️ 集中值不足！',
+          category: 'STATUS',
+          isCrit: false,
+        });
+        return;
+      }
+    }
+
     // ── Check Runic Cost for DK ──────────────────────────────────────
-    const runicCost = SPELL_RUNIC_COSTS[slot.spellId] || 0;
+    const runicCost = SPELL_RUNIC_COSTS[slot.spellId] ?? (normSlotSpell?.resourceKind === 'RUNIC_POWER' ? normSlotSpell.resourceCostAmount : 0);
     if (runicCost > 0 && player.classId === 'DK') {
-      const curRunic = player.runicPower ?? player.energy ?? 0;
+      const curRunic = player.runicPower ?? 0;
       if (curRunic < runicCost) {
         window.dispatchEvent(new CustomEvent('cata_ui_error', { detail: { text: '符能不足' } }));
         engine.effectsManager?.addFloatingText({
           targetId: player.id,
           text: '⚠️ 符能不足！',
+          category: 'STATUS',
+          isCrit: false,
+        });
+        return;
+      }
+    }
+
+    // ── Check Holy Power Cost for Paladin ────────────────────────────
+    const holyPowerCost = normSlotSpell?.resourceKind === 'HOLY_POWER' ? normSlotSpell.resourceCostAmount : 0;
+    if (holyPowerCost > 0 && player.classId === 'PALADIN') {
+      const curHpPower = player.holyPower ?? 0;
+      if (curHpPower < holyPowerCost) {
+        window.dispatchEvent(new CustomEvent('cata_ui_error', { detail: { text: '神圣能量不足' } }));
+        engine.effectsManager?.addFloatingText({
+          targetId: player.id,
+          text: '⚠️ 神圣能量不足！',
           category: 'STATUS',
           isCrit: false,
         });
@@ -3290,18 +3487,38 @@ export function App() {
       return;
     }
 
-    // ── Guard Against Casting while Moving ────────────────────────────
+    // ── Guard Against Casting while Moving & Classify Spell Lifecycle ──
     const isMoving = Date.now() - lastPlayerMoveMsRef.current < 250;
-    const isCastOrChannel = [
+    const isHardcodedCastOrChannel = [
       'fireball', 'pyroblast', 'frostbolt', 'arcane_blast', 'arcane_missiles',
       'wrath', 'starfire', 'starsurge', 'lightning_bolt', 'lava_burst',
       'chain_lightning', 'healing_wave', 'healing_surge', 'greater_healing_wave',
-      'nourish', 'regrowth', 'healing_touch', 'tranquility', 'rebirth', 'revive', 'ancestral_spirit'
+      'chain_heal', 'nourish', 'regrowth', 'healing_touch', 'tranquility',
+      'rebirth', 'revive', 'ancestral_spirit', 'redemption', 'resurrection',
     ].includes(slot.spellId);
 
     const hasNaturesSwiftness = player.buffs.some(b => b.spellId === 'natures_swiftness');
     const isNatureInstantable = ['healing_touch', 'rebirth', 'regrowth', 'nourish', 'wrath', 'revive'].includes(slot.spellId);
     const isInstantViaNs = hasNaturesSwiftness && isNatureInstantable;
+
+    const isSlotChanneled = isChanneledSpell({
+      spellId: slot.spellId,
+      castTimeMs: normSlotSpell?.castTimeMs,
+      channelDurationMs: normSlotSpell?.channelDurationMs,
+      isInstantOverride: isInstantViaNs,
+    });
+
+    const castMode = classifySpellCastMode({
+      spellId: slot.spellId,
+      castTimeMs: isHardcodedCastOrChannel && !isSlotChanneled
+        ? Math.max(1500, normSlotSpell?.castTimeMs || 1500)
+        : normSlotSpell?.castTimeMs,
+      channelDurationMs: normSlotSpell?.channelDurationMs,
+      isChannel: isSlotChanneled,
+      isInstantOverride: isInstantViaNs,
+    });
+    const castLifecycle = getCastLifecyclePolicy(castMode);
+    const isCastOrChannel = castMode !== 'INSTANT';
 
     if (isMoving && isCastOrChannel && !isInstantViaNs) {
       engine.effectsManager?.addFloatingText({
@@ -3314,21 +3531,38 @@ export function App() {
     }
 
     // ── Smart Target Redirection (Friendly -> Self fallback, Hostile -> Nearest Enemy fallback) ──
-    const isFriendlySpell = [
-      'rejuvenation', 'lifebloom', 'regrowth', 'healing_touch', 'nourish', 'swiftmend',
-      'wild_growth', 'tranquility', 'rebirth', 'revive', 'natures_cure', 'riptide',
-      'healing_wave', 'healing_surge', 'greater_healing_wave', 'chain_heal',
-      'healing_rain', 'spirit_link', 'cleanse_spirit', 'ancestral_spirit',
-      'innervate', 'remove_curse', 'remove_corruption', 'bone_shield',
-      'vampiric_blood', 'pillar_of_frost', 'horn_of_winter', 'slice_and_dice',
-      'adrenaline_rush', 'feint', 'bloodlust', 'time_warp', 'arcane_power',
-      'arcane_brilliance', 'mark_of_the_wild', 'natures_swiftness'
-    ].includes(slot.spellId);
+    const isFriendlySpell =
+      [
+        'rejuvenation', 'lifebloom', 'regrowth', 'healing_touch', 'nourish', 'swiftmend',
+        'wild_growth', 'tranquility', 'rebirth', 'revive', 'natures_cure', 'riptide',
+        'healing_wave', 'healing_surge', 'greater_healing_wave', 'chain_heal',
+        'healing_rain', 'spirit_link', 'cleanse_spirit', 'ancestral_spirit',
+        'innervate', 'remove_curse', 'remove_corruption', 'bone_shield',
+        'vampiric_blood', 'pillar_of_frost', 'horn_of_winter', 'slice_and_dice',
+        'adrenaline_rush', 'feint', 'bloodlust', 'time_warp', 'arcane_power',
+        'arcane_brilliance', 'mark_of_the_wild', 'natures_swiftness',
+      ].includes(slot.spellId) ||
+      Boolean(
+        normSlotSpell &&
+          (normSlotSpell.isHeal ||
+            normSlotSpell.isShield ||
+            normSlotSpell.isResurrect ||
+            normSlotSpell.isDispel ||
+            normSlotSpell.isDefensive ||
+            normSlotSpell.isResourceRestore)
+      );
 
     let effectiveTarget: Unit = player;
 
     if (isFriendlySpell) {
-      if (slot.spellId === 'revive' || slot.spellId === 'ancestral_spirit' || slot.spellId === 'rebirth') {
+      if (
+        slot.spellId === 'revive' ||
+        slot.spellId === 'ancestral_spirit' ||
+        slot.spellId === 'rebirth' ||
+        slot.spellId === 'redemption' ||
+        slot.spellId === 'resurrection' ||
+        normSlotSpell?.isResurrect
+      ) {
         const deadAlly = selectedTargetId
           ? engine.friendlyUnits.find(u => u.id === selectedTargetId && ((!u.isAlive && !u.alive) || u.hp <= 0))
           : engine.friendlyUnits.find(u => (!u.isAlive && !u.alive) || u.hp <= 0);
@@ -3343,14 +3577,11 @@ export function App() {
         }
         effectiveTarget = deadAlly;
       } else {
-        // 必须按选中目标施法：若选中的是友方则对选中的友方施法；若选中目标不匹配(选中的是敌方/首领/空)则向自己放(自我施法回退)
-        // 鼠标悬停在团队框架上绝不劫持施法目标，严格按当前选中目标施法
         const hoveredFriendly = null;
         const selectedFriendly = selectedTargetId ? engine.friendlyUnits.find(u => u.id === selectedTargetId) : null;
         effectiveTarget = hoveredFriendly || selectedFriendly || player;
       }
     } else {
-      // 敌对攻击技能：若当前选中的是敌方目标，对该敌方施法；若选中目标敌友不匹配(选中了友方队友或无目标)，向最近的敌人施法
       const selectedEnemy = selectedTargetId
         ? engine.enemyUnits.find(u => u.id === selectedTargetId && (u.isAlive ?? u.alive) && u.hp > 0)
         : null;
@@ -3358,7 +3589,6 @@ export function App() {
       if (selectedEnemy) {
         effectiveTarget = selectedEnemy;
       } else {
-        // 选中友方或无目标：自动寻找距离玩家最近的存活敌人
         const livingEnemies = engine.enemyUnits.filter(u => (u.isAlive ?? u.alive) && u.hp > 0);
         if (livingEnemies.length === 0) {
           engine.effectsManager?.addFloatingText({
@@ -3397,7 +3627,13 @@ export function App() {
     const effectiveFriendly = effectiveTarget;
 
     // ── Check Out-of-Combat-Only Spell Restriction ────────────────────
-    if (slot.spellId === 'revive' || slot.spellId === 'ancestral_spirit') {
+    if (
+      slot.spellId === 'revive' ||
+      slot.spellId === 'ancestral_spirit' ||
+      slot.spellId === 'redemption' ||
+      slot.spellId === 'resurrection' ||
+      normSlotSpell?.isOutOfCombatOnly
+    ) {
       if (runPhase === 'BOSS_COMBAT') {
         engine.effectsManager?.addFloatingText({
           targetId: player.id,
@@ -3410,16 +3646,20 @@ export function App() {
     }
 
     // ── Distance Check & Auto-approach Target ─────────────────────────
-    const isSelfOrPartyWide = [
-      'bone_shield', 'vampiric_blood', 'pillar_of_frost', 'horn_of_winter',
-      'slice_and_dice', 'adrenaline_rush', 'feint', 'bloodlust', 'time_warp',
-      'arcane_power', 'tranquility', 'natures_swiftness'
-    ].includes(slot.spellId);
+    const isSelfOrPartyWide =
+      [
+        'bone_shield', 'vampiric_blood', 'pillar_of_frost', 'horn_of_winter',
+        'slice_and_dice', 'adrenaline_rush', 'feint', 'bloodlust', 'time_warp',
+        'arcane_power', 'tranquility', 'natures_swiftness',
+      ].includes(slot.spellId) ||
+      Boolean(normSlotSpell && (normSlotSpell.isDefensive || normSlotSpell.isResourceRestore));
 
-    const isMelee = [
-      'death_strike', 'heart_strike', 'rune_strike', 'mind_freeze', 'sinister_strike',
-      'eviscerate', 'kick', 'obliterate', 'frost_strike', 'mutilate', 'envenom'
-    ].includes(slot.spellId);
+    const isMelee =
+      [
+        'death_strike', 'heart_strike', 'rune_strike', 'mind_freeze', 'sinister_strike',
+        'eviscerate', 'kick', 'obliterate', 'frost_strike', 'mutilate', 'envenom',
+      ].includes(slot.spellId) ||
+      Boolean(normSlotSpell && normSlotSpell.school === 'PHYSICAL' && normSlotSpell.classId !== 'HUNTER' && !normSlotSpell.isTaunt && !normSlotSpell.isDefensive && !normSlotSpell.isHeal);
     const maxAllowedRange = isMelee ? 80 : 360;
 
     if (!isSelfOrPartyWide) {
@@ -3455,7 +3695,13 @@ export function App() {
     }
 
     // ── Target Liveness Check ─────────────────────────────────────────
-    const isRevive = slot.spellId === 'revive' || slot.spellId === 'ancestral_spirit' || slot.spellId === 'rebirth';
+    const isRevive =
+      slot.spellId === 'revive' ||
+      slot.spellId === 'ancestral_spirit' ||
+      slot.spellId === 'rebirth' ||
+      slot.spellId === 'redemption' ||
+      slot.spellId === 'resurrection' ||
+      Boolean(normSlotSpell?.isResurrect);
     const isTargetAlive = (effectiveTarget.isAlive ?? effectiveTarget.alive) && effectiveTarget.hp > 0;
     if (!isRevive && !isTargetAlive) {
       engine.effectsManager?.addFloatingText({
@@ -3490,26 +3736,32 @@ export function App() {
       }
     }
 
-    // ── Deduct Resource & Trigger Global Cooldown (GCD) ──
-    if (manaCost > 0 && player.maxMp && player.maxMp > 0) {
-      player.mp = Math.max(0, (player.mp ?? 0) - manaCost);
-      const mRes = player.resources?.find(r => r.kind === 'MANA');
-      if (mRes) mRes.current = player.mp;
+    // ── Deduct Resource (INSTANT & CHANNELED immediately; CASTED defers until cast completion) ──
+    const spellCostBundle: SpellResourceCostBundle = {
+      mana: manaCost,
+      energy: energyCost,
+      rage: rageCost,
+      focus: focusCost,
+      runicPower: runicCost,
+      holyPower: holyPowerCost,
+    };
+
+    if (castLifecycle.deductResourceOnStart) {
+      deductPlayerResources(player, spellCostBundle, syncUnitResources);
     }
-    if (energyCost > 0 && player.classId === 'ROGUE') {
-      player.energy = Math.max(0, (player.energy ?? 100) - energyCost);
-      const eRes = player.resources?.find(r => r.kind === 'ENERGY');
-      if (eRes) eRes.current = player.energy;
-    }
-    if (!isOffGcd) {
-      const gcdMs = 750;
-      setPlayerGcdRemainingMs(gcdMs);
-      setPlayerGcdTotalMs(gcdMs);
-      engine.cooldownManager?.startGcd?.(player.id, gcdMs);
+
+    if (!isOffGcd && castLifecycle.triggerGcdOnStart) {
+      const gcdCat = getSpellGcdCategory(slot.spellId, player.classId);
+      const gcdMs = getEffectiveGcdMs(gcdCat, player.stats?.haste ?? LEVEL_80_MAX_HASTE);
+      if (gcdMs > 0) {
+        setPlayerGcdRemainingMs(gcdMs);
+        setPlayerGcdTotalMs(gcdMs);
+        engine.cooldownManager?.startGcd?.(player.id, gcdMs);
+      }
     }
 
     const triggerSlotCooldown = (explicitCdMs?: number) => {
-      const defaultCd = DEFAULT_SPELL_COOLDOWNS[slot.spellId] || 0;
+      const defaultCd = DEFAULT_SPELL_COOLDOWNS[slot.spellId] || normSlotSpell?.cooldownMs || 0;
       const cd = explicitCdMs ?? ((slot.totalCdMs && slot.totalCdMs > 0) ? slot.totalCdMs : defaultCd);
       if (cd > 0) {
         triggerCooldown(slot.spellId, cd);
@@ -3517,29 +3769,39 @@ export function App() {
     };
 
     const startPlayerCast = (newCast: PlayerCastState) => {
-      playerCastRef.current = newCast;
-      setPlayerCast(newCast);
-      if (!newCast.isHarmful && !newCast.isChannel && newCast.targetId) {
-        const pAmt = getPredictedHealAmount(newCast.spellId, player);
+      const effectiveIsChannel = Boolean(newCast.isChannel || isSlotChanneled);
+      const castStateWithLifecycle: PlayerCastState = {
+        ...newCast,
+        isChannel: effectiveIsChannel,
+        deferredCosts: effectiveIsChannel ? undefined : spellCostBundle,
+      };
+      // 引导技能起手立即触发冷却（读条技能不进CD，直到读完结算成功才进CD）
+      if (effectiveIsChannel) {
+        triggerSlotCooldown(newCast.totalCdMs && newCast.totalCdMs > 0 ? newCast.totalCdMs : undefined);
+      }
+      playerCastRef.current = castStateWithLifecycle;
+      setPlayerCast(castStateWithLifecycle);
+      if (!castStateWithLifecycle.isHarmful && !castStateWithLifecycle.isChannel && castStateWithLifecycle.targetId) {
+        const pAmt = getPredictedHealAmount(castStateWithLifecycle.spellId, player);
         if (pAmt > 0) {
           const castObj: IncomingHealCast = {
             casterId: player.id || 'p1_player',
             casterName: player.name || '勇士',
-            spellName: newCast.spellName,
+            spellName: castStateWithLifecycle.spellName,
             amount: pAmt,
             progress: 0,
             classId: player.classId || 'DRUID',
           };
           setIncomingCasts((prev) => {
-            const existing = prev[newCast.targetId!]?.filter(c => c.casterId !== (player.id || 'p1_player')) || [];
+            const existing = prev[castStateWithLifecycle.targetId!]?.filter(c => c.casterId !== (player.id || 'p1_player')) || [];
             return {
               ...prev,
-              [newCast.targetId!]: [...existing, castObj],
+              [castStateWithLifecycle.targetId!]: [...existing, castObj],
             };
           });
           setIncomingHeals((prev) => ({
             ...prev,
-            [newCast.targetId!]: (prev[newCast.targetId!] || 0) + pAmt,
+            [castStateWithLifecycle.targetId!]: (prev[castStateWithLifecycle.targetId!] || 0) + pAmt,
           }));
         }
       }
@@ -4412,17 +4674,19 @@ export function App() {
       triggerSlotCooldown();
       return;
     } else if (slot.spellId === 'chain_heal') {
-      const target = selectedTargetId
-        ? engine.friendlyUnits.find(u => u.id === selectedTargetId) || player
-        : player;
-      let healVal = 18000;
-      engine.healUnit(player, target, healVal, false, '治疗链');
-      const otherAllies = engine.friendlyUnits.filter(u => u.id !== target.id && u.alive && u.isAlive);
-      for (let i = 0; i < Math.min(3, otherAllies.length); i++) {
-        healVal = Math.round(healVal * 0.7);
-        engine.healUnit(player, otherAllies[i], healVal, false, '治疗链');
-      }
-      triggerSlotCooldown();
+      // Cataclysm Resto Shaman Chain Heal: 2.5s base cast (1.67s at Lv.80 max haste), 0s CD!
+      const hastedMs = getHastedCastTimeMs(2500, player.stats?.haste ?? LEVEL_80_MAX_HASTE);
+      startPlayerCast({
+        spellId: 'chain_heal',
+        spellName: '治疗链',
+        elapsedMs: 0,
+        totalMs: hastedMs,
+        progress: 0,
+        isChannel: false,
+        isHarmful: false,
+        targetId: effectiveFriendly.id,
+        totalCdMs: 0,
+      });
       return;
     } else if (slot.spellId === 'healing_rain') {
       const rainPos = findOptimalGroundAuraCentroid(player, engine.friendlyUnits, 60, 360);
@@ -4768,6 +5032,285 @@ export function App() {
       return;
     }
 
+    // ── Data-Driven Universal Player Spell Executor (Warrior / Paladin / Hunter / Priest / Warlock & All New Spells) ──
+    if (normSlotSpell) {
+      // Cast-time & Channeled spells start hasted player cast/channel bar
+      const normIsChannel = isChanneledSpell({
+        spellId: slot.spellId,
+        castTimeMs: normSlotSpell.castTimeMs,
+        channelDurationMs: normSlotSpell.channelDurationMs,
+      });
+      if (normIsChannel || normSlotSpell.castTimeMs > 0) {
+        const baseDurMs = normIsChannel
+          ? (normSlotSpell.channelDurationMs > 0 ? normSlotSpell.channelDurationMs : Math.max(2000, normSlotSpell.castTimeMs))
+          : normSlotSpell.castTimeMs;
+        const hastedMs = getHastedCastTimeMs(baseDurMs, player.stats?.haste ?? LEVEL_80_MAX_HASTE);
+        const defaultCd = DEFAULT_SPELL_COOLDOWNS[slot.spellId] ?? normSlotSpell.cooldownMs ?? 0;
+        startPlayerCast({
+          spellId: slot.spellId,
+          spellName: normIsChannel ? `${normSlotSpell.name} (引导施法中...)` : normSlotSpell.name,
+          elapsedMs: 0,
+          totalMs: hastedMs,
+          progress: 0,
+          isChannel: normIsChannel,
+          isHarmful: !isFriendlySpell,
+          targetId: effectiveTarget.id,
+          totalCdMs: defaultCd,
+        });
+        return;
+      }
+
+      // Resource generation for builders (Paladin Holy Power / Warrior Rage / DK Runic Power)
+      if (player.classId === 'PALADIN' && normSlotSpell.resourceKind !== 'HOLY_POWER' && !normSlotSpell.isDefensive && !normSlotSpell.isTaunt && !normSlotSpell.isInterrupt) {
+        player.holyPower = Math.min(3, (player.holyPower ?? 0) + 1);
+      } else if (player.classId === 'WARRIOR' && normSlotSpell.resourceCostAmount === 0) {
+        player.rage = Math.min(100, (player.rage ?? 0) + 15);
+      }
+      syncUnitResources(player);
+
+      // Interrupt
+      if (normSlotSpell.isInterrupt) {
+        const success = bossAiRef.current?.interruptCurrentCast?.() ?? false;
+        if (success) {
+          if (player.combatStats) player.combatStats.interruptCount++;
+          engine.effectsManager?.addFloatingText({
+            targetId: boss?.id || player.id,
+            text: `⚡ ${normSlotSpell.name} 打断成功！`,
+            category: 'INTERRUPT',
+            isCrit: true,
+          });
+        } else {
+          engine.effectsManager?.addFloatingText({
+            targetId: player.id,
+            text: `${normSlotSpell.name} (目标未在读条)`,
+            category: 'STATUS',
+            isCrit: false,
+          });
+        }
+        triggerSlotCooldown(normSlotSpell.cooldownMs);
+        return;
+      }
+
+      // Taunt
+      if (normSlotSpell.isTaunt && boss && boss.alive) {
+        engine.threatManager.applyTaunt(boss.id, player.id);
+        engine.effectsManager?.addFloatingText({
+          targetId: boss.id,
+          text: `🛡️ ${normSlotSpell.name} 嘲讽成功！`,
+          category: 'CRIT',
+          isCrit: true,
+        });
+        triggerSlotCooldown(normSlotSpell.cooldownMs);
+        return;
+      }
+
+      // Dispel
+      if (normSlotSpell.isDispel) {
+        handleDispelUnit(effectiveFriendly.id);
+        return;
+      }
+
+      // Buff-only / Buff+Heal skills (Earth Shield / Ascendance / Ancestral Guidance / Unleash Life)
+      if (normSlotSpell.isBuff && !normSlotSpell.isDefensive && !normSlotSpell.isShield) {
+        const shortId = normSlotSpell.shortId;
+        const isUnleashLife = shortId === 'unleash_life';
+        const isEarthShield = shortId === 'earth_shield';
+        const isSelfBuff =
+          normSlotSpell.targetType === 'SELF' ||
+          shortId === 'ascendance' ||
+          shortId === 'ancestral_guidance';
+        const buffTarget = isSelfBuff ? player : effectiveFriendly;
+        const auraSpellId = normSlotSpell.auraId || shortId;
+        const stacks = isEarthShield ? 9 : 1;
+
+        if (isUnleashLife || (normSlotSpell.isHeal && normSlotSpell.directHeal > 0 && !isSelfBuff)) {
+          const healVal = Math.round((normSlotSpell.directHeal || 8500) + (player.stats.spellPower || 3200) * 0.35);
+          engine.healUnit(player, effectiveFriendly, healVal, Math.random() < (player.stats.critChance || 0.25), normSlotSpell.name);
+        }
+
+        // Unleash Life next-heal buff resides on the caster
+        const auraTarget = isUnleashLife ? player : buffTarget;
+        engine.applyBuff(auraTarget, {
+          id: `${auraSpellId}_${Date.now()}`,
+          spellId: auraSpellId,
+          name: isEarthShield ? `${normSlotSpell.name} (${stacks}层)` : normSlotSpell.name,
+          kind: 'BUFF',
+          tags: isEarthShield ? ['SHIELD'] : ['STAT'],
+          sourceUnitId: player.id,
+          targetUnitId: auraTarget.id,
+          stacks,
+          maxStacks: stacks,
+          durationMs: Math.max(10000, normSlotSpell.durationMs || 15000),
+          remainingMs: Math.max(10000, normSlotSpell.durationMs || 15000),
+          school: normSlotSpell.school,
+        });
+
+        // Ascendance also enables resto heal-duplication via same buff id checked in CombatEngine
+        if (shortId === 'ascendance' && (player.classId === 'SHAMAN')) {
+          engine.effectsManager?.addFloatingText({
+            targetId: player.id,
+            text: '升腾！伤害+35% / 治疗复制',
+            category: 'CRIT',
+            isCrit: true,
+          });
+        } else {
+          engine.effectsManager?.addFloatingText({
+            targetId: auraTarget.id,
+            text: `✨ ${normSlotSpell.name}`,
+            category: 'HEAL',
+            isCrit: false,
+          });
+        }
+
+        triggerSlotCooldown(normSlotSpell.cooldownMs);
+        return;
+      }
+
+      // Resource Restore
+      if (normSlotSpell.isResourceRestore) {
+        if (player.maxMp && player.maxMp > 0) {
+          player.mp = Math.min(player.maxMp, (player.mp ?? 0) + Math.round(player.maxMp * 0.25));
+          syncUnitResources(player);
+        }
+        engine.applyBuff(player, {
+          id: `${normSlotSpell.shortId}_${Date.now()}`,
+          spellId: normSlotSpell.shortId,
+          name: `${normSlotSpell.name} (+回蓝)`,
+          kind: 'BUFF',
+          tags: ['STAT'],
+          sourceUnitId: player.id,
+          targetUnitId: player.id,
+          stacks: 1,
+          maxStacks: 1,
+          durationMs: 10000,
+          remainingMs: 10000,
+          school: normSlotSpell.school,
+        });
+        engine.effectsManager?.addFloatingText({
+          targetId: player.id,
+          text: `✨ ${normSlotSpell.name} 资源恢复！`,
+          category: 'HEAL',
+          isCrit: true,
+        });
+        triggerSlotCooldown(normSlotSpell.cooldownMs);
+        return;
+      }
+
+      // Defensive / Shield
+      if (normSlotSpell.isDefensive || normSlotSpell.isShield) {
+        const target = normSlotSpell.isShield ? effectiveFriendly : player;
+        const shieldVal = Math.round(normSlotSpell.shieldValue || target.maxHp * 0.2);
+        target.absorb = Math.min(target.maxHp * 0.5, (target.absorb || 0) + shieldVal);
+        engine.applyBuff(target, {
+          id: `${normSlotSpell.shortId}_${Date.now()}`,
+          spellId: normSlotSpell.shortId,
+          name: normSlotSpell.name,
+          kind: 'BUFF',
+          tags: ['SHIELD'],
+          sourceUnitId: player.id,
+          targetUnitId: target.id,
+          stacks: 1,
+          maxStacks: 1,
+          durationMs: 12000,
+          remainingMs: 12000,
+          school: normSlotSpell.school,
+        });
+        engine.effectsManager?.addFloatingText({
+          targetId: target.id,
+          text: `🛡️ ${normSlotSpell.name} (+${shieldVal}吸收)`,
+          category: 'HEAL',
+          isCrit: true,
+        });
+        triggerSlotCooldown(normSlotSpell.cooldownMs);
+        return;
+      }
+
+      // Instant Heals (AoE or ST or HoT)
+      if (normSlotSpell.isHeal) {
+        const spPower = player.stats.spellPower || 3200;
+        const isCrit = Math.random() < (player.stats.critChance || 0.25);
+        if (normSlotSpell.isAOE) {
+          const maxT = Math.max(3, normSlotSpell.maxAoeTargets || 5);
+          const wounded = engine.friendlyUnits
+            .filter(u => (u.alive || u.isAlive) && u.hp > 0)
+            .sort((a, b) => (a.hp / a.maxHp) - (b.hp / b.maxHp))
+            .slice(0, maxT);
+          const perHeal = Math.round(Math.max(3800, normSlotSpell.directHeal || normSlotSpell.hotTotalHeal * 0.45) + spPower * 0.4);
+          for (const ally of wounded) {
+            engine.healUnit(player, ally, perHeal, Math.random() < (player.stats.critChance || 0.25), normSlotSpell.name);
+          }
+        } else {
+          if (normSlotSpell.directHeal > 0) {
+            const healVal = Math.round(normSlotSpell.directHeal + spPower * 0.5);
+            engine.healUnit(player, effectiveFriendly, healVal, isCrit, normSlotSpell.name);
+          }
+          if (normSlotSpell.isHot && normSlotSpell.hotTotalHeal > 0) {
+            engine.applyBuff(effectiveFriendly, {
+              id: `${normSlotSpell.shortId}_${Date.now()}`,
+              spellId: normSlotSpell.shortId,
+              name: `${normSlotSpell.name} (HoT)`,
+              kind: 'BUFF',
+              tags: ['HOT'],
+              sourceUnitId: player.id,
+              targetUnitId: effectiveFriendly.id,
+              stacks: 1,
+              maxStacks: 1,
+              durationMs: 12000,
+              remainingMs: 12000,
+              school: normSlotSpell.school,
+              tickIntervalMs: 3000,
+              tickValue: Math.round(normSlotSpell.hotTotalHeal / 4),
+            });
+          }
+        }
+        triggerSlotCooldown(normSlotSpell.cooldownMs);
+        return;
+      }
+
+      // Instant Damage (AoE or ST / DoT)
+      const power = normSlotSpell.school === 'PHYSICAL' ? (player.stats.attackPower || 3200) : (player.stats.spellPower || 3200);
+      if (normSlotSpell.isAOE) {
+        const livingEnemies = engine.enemyUnits.filter(e => (e.isAlive ?? e.alive) && e.hp > 0);
+        const targets = livingEnemies.slice(0, Math.max(3, normSlotSpell.maxAoeTargets || 6));
+        const perDmg = Math.round(Math.max(3200, normSlotSpell.directDamage || normSlotSpell.dotTotalDamage * 0.5) + power * 0.45);
+        for (const enemy of targets) {
+          engine.dealDamage(player, enemy, perDmg, normSlotSpell.school, Math.random() < (player.stats.critChance || 0.28), normSlotSpell.name);
+          engine.threatManager.addThreat(enemy.id, player.id, player.role === 'TANK' ? perDmg * 3 : perDmg);
+        }
+        triggerSlotCooldown(normSlotSpell.cooldownMs);
+        return;
+      } else if (boss && boss.alive) {
+        const isCrit = Math.random() < (player.stats.critChance || 0.3);
+        const dmgVal = Math.round(Math.max(4200, normSlotSpell.directDamage || normSlotSpell.dotTotalDamage * 0.35) + power * 0.55);
+        if (isCrit) {
+          setScreenShake(true);
+          setTimeout(() => setScreenShake(false), 110);
+        }
+        engine.dealDamage(player, boss, dmgVal, normSlotSpell.school, isCrit, normSlotSpell.name);
+        engine.threatManager.addThreat(boss.id, player.id, player.role === 'TANK' ? dmgVal * 3.5 : dmgVal);
+        if (normSlotSpell.isDot && normSlotSpell.dotTotalDamage > 0) {
+          engine.applyBuff(boss, {
+            id: `${normSlotSpell.shortId}_${Date.now()}`,
+            spellId: normSlotSpell.shortId,
+            name: `${normSlotSpell.name} (DoT)`,
+            kind: 'DEBUFF',
+            tags: ['DOT'],
+            sourceUnitId: player.id,
+            targetUnitId: boss.id,
+            stacks: 1,
+            maxStacks: 1,
+            durationMs: 15000,
+            remainingMs: 15000,
+            school: normSlotSpell.school,
+            tickIntervalMs: 3000,
+            tickValue: Math.round(normSlotSpell.dotTotalDamage / 5),
+          });
+        }
+        triggerSlotCooldown(normSlotSpell.cooldownMs);
+        return;
+      }
+    }
+
     // Default Fallback
     if (boss && boss.alive) {
       const isCrit = Math.random() < 0.35;
@@ -4775,8 +5318,8 @@ export function App() {
         setScreenShake(true);
         setTimeout(() => setScreenShake(false), 120);
       }
-      engine.dealDamage(player, boss, 11500, 'PHYSICAL', isCrit, '影袭');
-      engine.threatManager.addThreat(boss.id, player.id, 11500);
+      engine.dealDamage(player, boss, 6500, 'PHYSICAL', isCrit, slot.name || '攻击');
+      engine.threatManager.addThreat(boss.id, player.id, 6500);
       triggerSlotCooldown();
     }
   };
@@ -4861,6 +5404,58 @@ export function App() {
       });
       triggerSlotCooldown();
       setGroundTargetState(null);
+    } else if (spellId === 'healing_tide' || spellId === 'healing_tide_totem') {
+      engine.effectsManager?.addGroundEffect({
+        id: `htt_${Date.now()}`,
+        kind: 'TOTEM',
+        spellId: 'healing_tide',
+        ownerId: player.id,
+        x,
+        y,
+        radius: 70,
+        colorHex: '#0EA5E9',
+        remainingMs: 10000,
+        tickIntervalMs: 2000,
+        tickElapsedMs: 0,
+        tickValue: 5200,
+      });
+      triggerSlotCooldown();
+      setGroundTargetState(null);
+    } else if (spellId === 'mana_tide' || spellId === 'mana_tide_totem') {
+      engine.effectsManager?.addGroundEffect({
+        id: `mtt_${Date.now()}`,
+        kind: 'TOTEM',
+        spellId: 'mana_tide',
+        ownerId: player.id,
+        x,
+        y,
+        radius: 70,
+        colorHex: '#56CCF2',
+        remainingMs: 12000,
+        tickIntervalMs: 5000,
+        tickElapsedMs: 0,
+        tickValue: 0,
+      });
+      for (const u of engine.friendlyUnits) {
+        if (u.alive || u.isAlive) {
+          engine.applyBuff(u, {
+            id: `mana_tide_${u.id}_${Date.now()}`,
+            spellId: 'mana_tide',
+            name: '法力之潮',
+            kind: 'BUFF',
+            tags: ['STAT'],
+            sourceUnitId: player.id,
+            targetUnitId: u.id,
+            stacks: 1,
+            maxStacks: 1,
+            durationMs: 12000,
+            remainingMs: 12000,
+            school: 'NATURE',
+          });
+        }
+      }
+      triggerSlotCooldown();
+      setGroundTargetState(null);
     }
   };
 
@@ -4933,6 +5528,17 @@ export function App() {
     if (engine) {
       engine.reset();
     }
+    // Clean up active room on combat exit / failure return so no ghost room lingers
+    if (activeRoomId && currentChar) {
+      roomManager.leaveRoom(activeRoomId, currentChar.id);
+    } else if (activeRoomId) {
+      roomManager.deleteRoom(activeRoomId);
+    }
+    roomManager.cleanupAiOnlyRooms();
+    setActiveRoomId(null);
+    setLobbySubView('ROOM_LIST');
+    setRoomsTick(t => t + 1);
+
     setRunPhase('LOBBY');
     setPlayerCooldowns({});
     playerCastRef.current = null;
@@ -4962,7 +5568,17 @@ export function App() {
 
     rsm.handleWipeVoteChoice(choice);
 
-    if (choice === 'RETRY') {
+    if (choice === 'FINISH') {
+      // Combat failed and ended: immediately clean up the room so it doesn't linger
+      if (activeRoomId && currentChar) {
+        roomManager.leaveRoom(activeRoomId, currentChar.id);
+      } else if (activeRoomId) {
+        roomManager.deleteRoom(activeRoomId);
+      }
+      roomManager.cleanupAiOnlyRooms();
+      setActiveRoomId(null);
+      setRoomsTick(t => t + 1);
+    } else if (choice === 'RETRY') {
       // 1. 全体友方单位完全重置至 100% 满状态 (isAlive, alive, full HP/MP/energy, runes, 清空护盾与debuff)
       for (const u of engine.friendlyUnits) {
         u.isAlive = true;
@@ -5014,13 +5630,36 @@ export function App() {
     setRunPhase(rsm.phase);
   };
 
-  const handleStartAdventure = () => {
+  const handleStartAdventure = (overrides?: {
+    tier?: '5man' | '20man';
+    difficulty?: DungeonDifficulty;
+    customDiff?: CustomDifficultySettings;
+    activeRoom?: LobbyRoom;
+  }) => {
     if (!currentChar) return;
+    // keep ref fresh for WS ROOM_START handler
     const engine = engineRef.current;
     const rsm = rsmRef.current;
 
+    const effectiveTier = overrides?.tier ?? dungeonTier;
+    const effectiveDiff = overrides?.difficulty ?? dungeonDifficulty;
+    const effectiveCustomDiff = overrides?.customDiff ?? customDifficulty;
+    const effectiveRoom = overrides?.activeRoom ?? (activeRoomId ? (roomFacadeRef.current.getRoom(activeRoomId) || roomManager.getRoom(activeRoomId)) : undefined);
+
+    // Sync player's spec if they changed it in the room before starting
+    let effectiveSpec = currentChar.lastSpec;
+    if (effectiveRoom) {
+      const playerRoomMember = effectiveRoom.members.find(m => m.id === currentChar.id);
+      if (playerRoomMember && playerRoomMember.spec !== currentChar.lastSpec) {
+        effectiveSpec = playerRoomMember.spec;
+        accountMgrRef.current.setCharacterSpec(currentChar.id, effectiveSpec);
+        const updatedAcc = accountMgrRef.current.getCurrentAccount();
+        if (updatedAcc) setAccount({ ...updatedAcc });
+      }
+    }
+
     // 1. 重置技能 CD 与读条施法状态，固化加载当前专精自定义动作条布局
-    setCustomSlotLayout(loadSpecCustomSlots(currentChar.id, currentChar.lastSpec, currentChar.classId));
+    setCustomSlotLayout(loadSpecCustomSlots(currentChar.id, effectiveSpec, currentChar.classId));
     setPlayerCooldowns({});
     playerCastRef.current = null;
     clearPlayerIncomingCast();
@@ -5037,13 +5676,13 @@ export function App() {
     approachedBossIdRef.current = null;
     setIsApproaching(false);
 
-    // 2. 重新初始化队伍为 100% 满状态存活
-    setupRaidUnits(currentChar, dungeonTier, dungeonDifficulty, customDifficulty);
+    // 2. 使用房间内准备好的成员、副本规模与难度初始化队伍（首进即生效，不再被覆盖）
+    setupRaidUnits(currentChar, effectiveTier, effectiveDiff, effectiveCustomDiff, effectiveRoom);
 
     // 3. 引擎系统重置 (CD、仇恨、地面法阵、DK符文)
     if (engine) {
-      engine.difficulty = dungeonDifficulty;
-      engine.customDifficulty = customDifficulty;
+      engine.difficulty = effectiveDiff;
+      engine.customDifficulty = effectiveCustomDiff;
       engine.resetCooldowns();
       engine.threatManager.resetAll();
       engine.effectsManager.clearAll();
@@ -5052,7 +5691,7 @@ export function App() {
         u.alive = true;
         u.hp = u.maxHp;
         u.mp = u.maxMp;
-        u.energy = 100;
+        u.energy = u.classId === 'ROGUE' ? 100 : (u.energy ?? 0);
         u.absorb = 0;
         u.buffs = [];
         u.threatTable = [];
@@ -5064,7 +5703,7 @@ export function App() {
 
     // 4. 副本状态机启动
     if (rsm) {
-      rsm.dungeon = dungeonTier === '20man' ? DRAGON_SOUL_CONFIG : SHADOWFANG_KEEP_CONFIG;
+      rsm.dungeon = effectiveTier === '20man' ? DRAGON_SOUL_CONFIG : SHADOWFANG_KEEP_CONFIG;
       rsm.startRun();
       setRunPhase(rsm.phase);
       setIsCertClaimed(false);
@@ -5075,6 +5714,7 @@ export function App() {
       setFriendlyUnits([...engine.friendlyUnits]);
     }
   };
+  startAdventureRef.current = handleStartAdventure;
 
   const handleExportCsv = () => {
     const rsm = rsmRef.current;
@@ -5135,13 +5775,25 @@ export function App() {
         </div>
 
         <div className="flex items-center space-x-3">
+          <div
+            className={`px-2 py-1 text-[10px] rounded border font-bold ${
+              netConnected
+                ? 'border-emerald-600/60 text-emerald-300 bg-emerald-950/40'
+                : 'border-slate-600 text-slate-400 bg-slate-900/40'
+            }`}
+            title={netConnected ? '已连接联机服务器（房间/战斗同步）' : '未连接服务器，房间仅本机有效'}
+          >
+            {netConnected ? '联机中' : '单机'}
+          </div>
           {currentChar && (
             <div
               onClick={() => {
-                setLobbySubView('AUTH_CHAR');
                 if (runPhase !== 'LOBBY') {
                   handleReturnToLobby();
+                } else if (activeRoomId) {
+                  handleLeaveActiveRoom();
                 }
+                setLobbySubView('AUTH_CHAR');
               }}
               className="bg-[#1b1b34] border border-[#3b3b5c] px-3 py-1 rounded-lg text-xs font-bold cursor-pointer hover:border-amber-400 transition flex items-center space-x-2"
               title="点击返回主页与角色切换"
@@ -5151,6 +5803,17 @@ export function App() {
               <span className="text-[10px] text-gray-400">({currentChar.lastSpec})</span>
             </div>
           )}
+
+          <div
+            className={`px-2 py-1 text-[10px] rounded border font-bold ${
+              netConnected
+                ? 'border-emerald-600/60 text-emerald-300 bg-emerald-950/40'
+                : 'border-slate-600 text-slate-400 bg-slate-900/50'
+            }`}
+            title={netConnected ? '已连接联机服务器（房间与房主战斗同步）' : '未连接服务器，房间为本地模式'}
+          >
+            {netConnected ? '联机 · 在线' : '本地模式'}
+          </div>
 
           {/* Locked Read-Only Badge during active combat/travel (R8) */}
           <button disabled={runPhase !== 'LOBBY' && runPhase !== 'SUMMARY'} className="hidden" aria-hidden="true" tabIndex={-1} />
@@ -5169,9 +5832,14 @@ export function App() {
 
           <button
             onClick={() => {
-              setLobbySubView('ROOM_LIST');
               if (runPhase !== 'LOBBY') {
                 handleReturnToLobby();
+              } else if (activeRoomId) {
+                handleLeaveActiveRoom();
+              } else {
+                roomManager.cleanupAiOnlyRooms();
+                setLobbySubView('ROOM_LIST');
+                setRoomsTick(t => t + 1);
               }
             }}
             className="px-3 py-1.5 text-xs bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-lg font-bold shadow flex items-center space-x-1"
@@ -5214,29 +5882,29 @@ export function App() {
         {runPhase === 'LOBBY' ? (
           lobbySubView === 'ROOM_LIST' && currentChar ? (
             <RoomListView
-              rooms={roomManager.listRooms()}
+              rooms={roomFacadeRef.current.listRooms()}
               player={{
                 id: currentChar.id,
                 name: currentChar.name,
                 classId: currentChar.classId,
                 spec: currentChar.lastSpec,
               }}
+              customDifficulty={customDifficulty}
+              onChangeCustomDifficulty={handleCustomDifficultyChange}
               onCreateRoom={handleCreateRoom}
               onJoinRoom={handleJoinRoom}
               onJoinWaitingQueue={handleJoinWaitingQueue}
               onQuickJoin={handleQuickJoin}
               onBackToCharacterSelect={() => setLobbySubView('AUTH_CHAR')}
             />
-          ) : lobbySubView === 'ROOM_DETAIL' && activeRoomId && roomManager.getRoom(activeRoomId) && currentChar ? (
+          ) : lobbySubView === 'ROOM_DETAIL' && activeRoomId && (roomFacadeRef.current.getRoom(activeRoomId) || roomManager.getRoom(activeRoomId)) && currentChar ? (
             <RoomDetailView
-              room={roomManager.getRoom(activeRoomId)!}
+              room={(roomFacadeRef.current.getRoom(activeRoomId) || roomManager.getRoom(activeRoomId))!}
               currentPlayerId={currentChar.id}
-              roomManager={roomManager}
-              onLeaveRoom={() => {
-                setActiveRoomId(null);
-                setLobbySubView('ROOM_LIST');
-                setRoomsTick(t => t + 1);
-              }}
+              roomManager={roomFacadeRef.current}
+              customDifficulty={customDifficulty}
+              onChangeCustomDifficulty={handleCustomDifficultyChange}
+              onLeaveRoom={handleLeaveActiveRoom}
               onStartGame={handleStartGameFromRoom}
               onRefreshRoom={() => setRoomsTick(t => t + 1)}
             />
@@ -5319,12 +5987,6 @@ export function App() {
               if (!acc) acc = accountMgrRef.current.register(user, 'wow123');
               setAccount({ ...accountMgrRef.current.getCurrentAccount()! });
             }}
-            dungeonTier={dungeonTier}
-            onSelectDungeonTier={handleSelectDungeonTier}
-            dungeonDifficulty={dungeonDifficulty}
-            onSelectDungeonDifficulty={handleSelectDungeonDifficulty}
-            customDifficulty={customDifficulty}
-            onChangeCustomDifficulty={handleCustomDifficultyChange}
             slots={getPlayerSlots(selectedCharId, currentChar?.lastSpec)}
             onSwapSlots={(src, dest, targetCharId, targetSpecId) =>
               handleSwapSlots(src, dest, targetCharId || selectedCharId, targetSpecId || currentChar?.lastSpec)
@@ -5614,14 +6276,23 @@ export function App() {
                       : undefined
                   }
                   comboPoints={currentChar?.classId === 'ROGUE' ? 4 : 0}
+                  holyPower={
+                    currentChar?.classId === 'PALADIN'
+                      ? (friendlyUnits.find(u => u.isPlayer)?.holyPower ?? 0)
+                      : undefined
+                  }
                   isPlayerDead={(() => {
                     const p = friendlyUnits.find(u => u.isPlayer);
                     return !p || (!p.isAlive && !p.alive) || (p.hp !== undefined && p.hp <= 0);
                   })()}
-                  initialPos={currentChar?.uiLayout?.actionBar}
+                  initialPos={currentChar?.uiLayout?.actionBar ?? null}
                   onSavePos={(pos) => {
                     if (currentChar) {
                       accountMgrRef.current.saveCharacterUiLayout(currentChar.id, { actionBar: pos });
+                      const updatedAcc = accountMgrRef.current.getCurrentAccount();
+                      if (updatedAcc) {
+                        setAccount({ ...updatedAcc });
+                      }
                     }
                   }}
                 />
