@@ -163,7 +163,7 @@ export const RoomListView: React.FC<RoomListViewProps> = ({
               onClick={onQuickJoin}
               className="px-4 py-2 rounded font-bold text-xs bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow transition flex items-center space-x-1"
             >
-              <span>⚡ 快速加入</span>
+              <span>⚡ 快速加入游戏</span>
             </button>
             <button
               onClick={() => setShowCreateModal(true)}
@@ -295,16 +295,16 @@ export const RoomListView: React.FC<RoomListViewProps> = ({
                           <button
                             onClick={() => onJoinRoom(room.id)}
                             className="px-3 py-1 rounded font-bold text-xs bg-rose-600 hover:bg-rose-500 text-white shadow transition"
-                            title="战斗中可加入并顶替同职责 AI"
+                            title="战斗中可加入游戏并顶替同职责 AI"
                           >
-                            加入
+                            加入游戏
                           </button>
                         ) : (
                           <button
                             onClick={() => onJoinRoom(room.id)}
                             className="px-3 py-1 rounded font-bold text-xs bg-amber-500 hover:bg-amber-400 text-slate-950 shadow transition"
                           >
-                            进入房间
+                            加入游戏
                           </button>
                         )}
                       </td>

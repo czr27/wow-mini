@@ -290,20 +290,26 @@ describe('Multiplayer room WS flow (2–3 humans + AI)', () => {
     assert.ok(result, '应收到跳过赶路投票结果');
     assert.equal((result!.payload as any).result, 'YES');
 
-    // Non-host leave (explicit ROOM_LEAVE) — room survives
+    // Non-host leave mid-run → AI takeover, room survives
     g2.drain();
+    host.drain();
     g2.inject({ type: 'ROOM_LEAVE', roomId, timeMs: Date.now() });
     assert.ok(hub.roomManager.getRoom(roomId), '非房主离开后房间应仍存在');
     assert.equal(hub.roomManager.countHumanPlayers(roomId), 2);
+    assert.equal(hub.roomManager.getRoom(roomId)!.members.length, 5, 'AI 接续席位后总人数不变');
     assert.ok(
       !hub.roomManager.getRoom(roomId)!.members.some((m) => m.id === 'g2'),
-      '离开的玩家应从名单移除（大厅/战斗显式离开）'
+      '离开的玩家 id 应从名单移除（由 AI 接续）'
     );
+    assert.ok(host.lastOfType('MEMBER_REPLACE_AI'), '房主应收到 MEMBER_REPLACE_AI');
 
-    // Host leave destroys room
+    // Host leave destroys room; mid-run guests get forceSummary
+    g1.drain();
     host.inject({ type: 'ROOM_LEAVE', roomId, timeMs: Date.now() });
     assert.equal(hub.roomManager.getRoom(roomId), undefined);
-    assert.ok(g1.lastOfType('ROOM_CLOSED') || host.lastOfType('ROOM_CLOSED'));
+    const closed = g1.lastOfType('ROOM_CLOSED') || host.lastOfType('ROOM_CLOSED');
+    assert.ok(closed);
+    assert.equal((closed!.payload as any).forceSummary, true);
   });
 
   it('热加入：战斗中第三人顶替同职责 AI，单位数仍为 5 且继承战斗状态', () => {

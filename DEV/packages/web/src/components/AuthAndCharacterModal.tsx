@@ -314,6 +314,8 @@ interface Props {
   onLogout?: () => void;
   /** 注销账号（服务器删除 + 本地清除），需密码确认 */
   onDeleteAccount?: (password: string) => Promise<{ success: boolean; error?: string }>;
+  /** 顶栏登录/注册点击时递增 id，打开本组件内的登录弹窗 */
+  authOpenRequest?: { mode: 'login' | 'register'; id: number } | null;
   slots?: ActionSlot[];
   onSwapSlots?: (srcIdx: number, destIdx: number, targetCharId?: string, targetSpecId?: string) => void;
   onAssignSlot?: (slotIdx: number, spellId: string, targetCharId?: string, targetSpecId?: string) => void;
@@ -364,6 +366,7 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
   onAuth,
   onLogout,
   onDeleteAccount,
+  authOpenRequest,
   slots,
   onSwapSlots,
   onAssignSlot,
@@ -423,6 +426,12 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
     }
     setShowLoginModal(true);
   };
+
+  useEffect(() => {
+    if (!authOpenRequest) return;
+    openAuthModal(authOpenRequest.mode);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- open on each new request id
+  }, [authOpenRequest?.id]);
 
   const handleAuthSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
@@ -615,24 +624,6 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
               </p>
             </div>
           </div>
-          {!isLoggedIn && (
-            <div className="flex items-center space-x-2">
-              <button
-                type="button"
-                onClick={() => openAuthModal('login')}
-                className="px-3 py-1.5 text-xs bg-[#1e2a44] hover:bg-[#263556] rounded-lg transition border border-sky-700/50 text-sky-200 font-semibold"
-              >
-                登录
-              </button>
-              <button
-                type="button"
-                onClick={() => openAuthModal('register')}
-                className="px-3 py-1.5 text-xs bg-emerald-800/80 hover:bg-emerald-700 rounded-lg transition border border-emerald-500/40 text-emerald-100 font-semibold"
-              >
-                注册
-              </button>
-            </div>
-          )}
         </div>
 
         {/* Main Content Area — character UI only when logged in */}

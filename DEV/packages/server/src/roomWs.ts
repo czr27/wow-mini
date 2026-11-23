@@ -45,6 +45,22 @@ export class RoomWsHub {
     return room.members.filter((m) => m.isPlayer && !m.isAi).map((m) => m.id);
   }
 
+  /** Destroy room and notify all clients. Mid-run host leave sets forceSummary for guests. */
+  private destroyRoomAndNotify(roomId: string, reason: string, forceSummary: boolean) {
+    this.lastCombatMetaPush.delete(roomId);
+    this.roomManager.destroyRoom(roomId);
+    for (const s of this.sessionsByPlayer.values()) {
+      if (s.roomId === roomId) s.roomId = null;
+    }
+    this.broadcastAll({
+      type: 'ROOM_CLOSED',
+      roomId,
+      timeMs: Date.now(),
+      payload: { roomId, reason, forceSummary },
+    });
+    this.pushRoomList();
+  }
+
   private startVote(roomId: string, kind: NetworkVoteKind) {
     const eligible = this.humanIdsInRoom(roomId);
     if (eligible.length === 0) return null;
@@ -336,31 +352,60 @@ export class RoomWsHub {
 
       case 'ROOM_LEAVE': {
         if (!session.roomId) break;
-        const result = this.roomManager.leaveRoom(session.roomId, session.playerId);
         const leftRoomId = session.roomId;
+        const room = this.roomManager.getRoom(leftRoomId);
+        if (!room) {
+          session.roomId = null;
+          break;
+        }
+        const isHost = room.hostId === session.playerId;
+        const inRun = room.status === 'IN_COMBAT' || room.status === 'OUT_OF_COMBAT';
         session.roomId = null;
-        if (result.roomDeleted) {
-          this.broadcastAll({
-            type: 'ROOM_CLOSED',
-            roomId: leftRoomId,
-            timeMs: Date.now(),
-            payload: {
+
+        // Host leave / return lobby mid-run → destroy room; remaining players settle
+        if (isHost) {
+          this.destroyRoomAndNotify(leftRoomId, 'host_left', inRun);
+          break;
+        }
+
+        // Non-host mid-run: AI takes over their slot so the dungeon continues
+        if (inRun) {
+          const replaced = this.roomManager.replaceHumanWithAi(leftRoomId, session.playerId);
+          if (replaced.roomDeleted) {
+            this.destroyRoomAndNotify(leftRoomId, 'empty', false);
+            break;
+          }
+          if (replaced.ok && replaced.room) {
+            this.broadcastRoom(leftRoomId, {
+              type: 'MEMBER_REPLACE_AI',
               roomId: leftRoomId,
-              reason: result.destroyedByHost ? 'host_left' : 'empty',
-            },
-          });
-          this.pushRoomList();
+              timeMs: Date.now(),
+              payload: {
+                roomId: leftRoomId,
+                playerId: session.playerId,
+                aiMemberId: replaced.aiMemberId,
+                room: replaced.room,
+              },
+            });
+            this.pushRoomUpdate(replaced.room);
+          }
+          break;
+        }
+
+        // Lobby leave: remove seat
+        const result = this.roomManager.leaveRoom(leftRoomId, session.playerId);
+        if (result.roomDeleted) {
+          this.destroyRoomAndNotify(leftRoomId, result.destroyedByHost ? 'host_left' : 'empty', false);
         } else {
-          const room = this.roomManager.getRoom(leftRoomId);
-          if (room) this.pushRoomUpdate(room);
+          const updated = this.roomManager.getRoom(leftRoomId);
+          if (updated) this.pushRoomUpdate(updated);
           else this.pushRoomList();
         }
         break;
       }
 
       case 'ROOM_CLOSED': {
-        // Host requests destroy (e.g. wipe FINISH)
-        if (msg.roomId) this.lastCombatMetaPush.delete(msg.roomId);
+        // Host requests destroy (return lobby / wipe FINISH)
         const roomId = msg.roomId || session.roomId;
         if (!roomId) break;
         const room = this.roomManager.getRoom(roomId);
@@ -369,17 +414,11 @@ export class RoomWsHub {
           this.send(ws, { type: 'ERROR', error: 'Host only' });
           break;
         }
-        this.roomManager.destroyRoom(roomId);
-        for (const s of this.sessionsByPlayer.values()) {
-          if (s.roomId === roomId) s.roomId = null;
-        }
-        this.broadcastAll({
-          type: 'ROOM_CLOSED',
-          roomId,
-          timeMs: Date.now(),
-          payload: { roomId, reason: (msg.payload as any)?.reason || 'destroyed' },
-        });
-        this.pushRoomList();
+        const reason = (msg.payload as any)?.reason || 'destroyed';
+        const inRun = room.status === 'IN_COMBAT' || room.status === 'OUT_OF_COMBAT';
+        const forceSummary = inRun || reason === 'host_left';
+        session.roomId = null;
+        this.destroyRoomAndNotify(roomId, reason, forceSummary);
         break;
       }
 
@@ -591,20 +630,10 @@ export class RoomWsHub {
         const room = this.roomManager.getRoom(current.roomId);
         if (!room) return;
 
-        // Host disconnect / leave always destroys the room
+        // Host disconnect / leave always destroys the room; mid-run guests settle
         if (room.hostId === session.playerId) {
-          this.lastCombatMetaPush.delete(current.roomId);
-          this.roomManager.destroyRoom(current.roomId);
-          for (const s of this.sessionsByPlayer.values()) {
-            if (s.roomId === current.roomId) s.roomId = null;
-          }
-          this.broadcastAll({
-            type: 'ROOM_CLOSED',
-            roomId: current.roomId,
-            timeMs: Date.now(),
-            payload: { roomId: current.roomId, reason: 'host_left' },
-          });
-          this.pushRoomList();
+          const inRun = room.status === 'IN_COMBAT' || room.status === 'OUT_OF_COMBAT';
+          this.destroyRoomAndNotify(current.roomId, 'host_left', inRun);
           return;
         }
 

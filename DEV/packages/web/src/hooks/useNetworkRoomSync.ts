@@ -214,27 +214,39 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
         d().setRoomsTick((t) => t + 1);
       }
       if (msg.type === 'ROOM_CLOSED' && msg.payload) {
-        const body = msg.payload as { roomId: string; reason?: string };
+        const body = msg.payload as { roomId: string; reason?: string; forceSummary?: boolean };
         const closedId = body.roomId || msg.roomId;
         if (closedId) d().roomFacadeRef.current.deleteRoom(closedId);
         if (closedId && (d().activeRoomIdRef.current === closedId || d().waitingQueueRoomIdRef.current === closedId)) {
+          const rsm = d().rsmRef.current;
+          const wasInRun =
+            !!rsm && rsm.phase !== 'LOBBY' && rsm.phase !== 'SUMMARY';
+          // Host left / returned to lobby mid-run → remaining players go to settlement
+          const goSummary = !!(body.forceSummary || body.reason === 'host_left') && wasInRun;
+
           d().isNetworkGuestRef.current = false;
           d().isNetworkHostRef.current = false;
           d().setActiveRoomId(null);
           d().setWaitingQueueRoomId(null);
           d().setWipeNetworkVote(null);
           d().setSkipTravelVote(null);
-          const engine = d().engineRef.current;
-          const rsm = d().rsmRef.current;
-          if (engine) engine.reset();
-          if (rsm) rsm.phase = 'LOBBY';
-          d().setRunPhase('LOBBY');
-          d().setLobbySubView('ROOM_LIST');
-          d().setFriendlyUnits([]);
-          d().setBossUnit(undefined);
           d().setPlayerCast(null);
           d().playerCastRef.current = null;
           d().setCompanionCasts({});
+
+          if (goSummary) {
+            if (rsm) rsm.phase = 'SUMMARY';
+            d().setRunPhase('SUMMARY');
+            d().setLobbySubView('ROOM_LIST');
+          } else {
+            const engine = d().engineRef.current;
+            if (engine) engine.reset();
+            if (rsm) rsm.phase = 'LOBBY';
+            d().setRunPhase('LOBBY');
+            d().setLobbySubView('ROOM_LIST');
+            d().setFriendlyUnits([]);
+            d().setBossUnit(undefined);
+          }
           // Room teardown must not drop the account session
           netClient.ensureConnected();
           if (netClient.connected) d().setNetConnected(true);
@@ -508,8 +520,9 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
           const engine = d().engineRef.current;
           const unit = engine.getUnit(body.playerId);
           if (unit) {
-            // Keep combat unit id; mark as AI until next full snapshot
+            // Keep combat unit id; clear human flags so host AI can drive the seat
             unit.isPlayer = false;
+            unit.isHumanControlled = false;
             const aiMeta = body.room.members.find((m) => m.id === body.aiMemberId);
             if (aiMeta) {
               unit.name = aiMeta.name;

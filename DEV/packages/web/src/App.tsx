@@ -165,6 +165,10 @@ export function App() {
   const [headerDeletePassword, setHeaderDeletePassword] = useState('');
   const [headerDeleteError, setHeaderDeleteError] = useState<string | null>(null);
   const [headerDeleteBusy, setHeaderDeleteBusy] = useState(false);
+  const [authOpenRequest, setAuthOpenRequest] = useState<{
+    mode: 'login' | 'register';
+    id: number;
+  } | null>(null);
   const [isCertClaimed, setIsCertClaimed] = useState(false);
 
   // Combat runtime state
@@ -1493,7 +1497,32 @@ export function App() {
             </div>
           )}
 
-          {account && (
+          {!account ? (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  setLobbySubView('AUTH_CHAR');
+                  setAuthOpenRequest({ mode: 'login', id: Date.now() });
+                }}
+                className="px-3 py-1.5 text-xs bg-[#1e2a44] hover:bg-[#263556] rounded-lg transition border border-sky-700/50 text-sky-200 font-semibold"
+                title="登录账号"
+              >
+                登录
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setLobbySubView('AUTH_CHAR');
+                  setAuthOpenRequest({ mode: 'register', id: Date.now() });
+                }}
+                className="px-3 py-1.5 text-xs bg-emerald-800/80 hover:bg-emerald-700 rounded-lg transition border border-emerald-500/40 text-emerald-100 font-semibold"
+                title="注册新账号"
+              >
+                注册
+              </button>
+            </>
+          ) : (
             <>
               <button
                 type="button"
@@ -1580,6 +1609,7 @@ export function App() {
             authPanel={(
               <AuthAndCharacterModal
             currentAccountName={account?.username || '未登录'}
+            authOpenRequest={authOpenRequest}
             characters={account?.characters || []}
             selectedCharId={selectedCharId}
             onSelectCharacter={(id) => {

@@ -406,7 +406,7 @@
       }
     ],
     "createdAtIso": "2026-11-22T13:33:20.156Z",
-    "updatedAtMs": 1795417946191
+    "updatedAtMs": 1795418750009
   },
   {
     "id": "acc_1795307172004_ze24f",
@@ -874,7 +874,7 @@
         "id": "char_1795307313080_emowk",
         "name": "牛头人万岁",
         "classId": "DRUID",
-        "lastSpec": "BALANCE",
+        "lastSpec": "RESTORATION",
         "specKeybindings": {
           "RESTORATION": {
             "0": "1",
@@ -951,7 +951,7 @@
             "height": 341
           }
         },
-        "updatedAtMs": 1795417744284,
+        "updatedAtMs": 1795418838083,
         "specSlotLayouts": {
           "RESTORATION": {
             "0": "moonfire",
@@ -1095,7 +1095,7 @@
       }
     ],
     "createdAtIso": "2026-11-23T00:06:13.466Z",
-    "updatedAtMs": 1795417744284
+    "updatedAtMs": 1795418838083
   },
   {
     "id": "acc_1795413301351_h51yj",
@@ -1254,6 +1254,6 @@
       }
     ],
     "createdAtIso": "2026-11-23T07:12:26.193Z",
-    "updatedAtMs": 1795417946194
+    "updatedAtMs": 1795418750014
   }
 ]
