@@ -1,7 +1,20 @@
 import React, { useState, useEffect, useRef } from 'react';
 import type { Unit } from '@cata-raid-sim/engine';
+import { normalizeCombatSkillName } from '@cata-raid-sim/engine';
 import { CLASS_COLORS } from './AuthAndCharacterModal.js';
 import { CLASS_PIXEL_AVATARS } from '../assets/pixelIcons.js';
+
+/** Merge bounce / bloom variants (e.g. 治疗链(第2跳)) into the base skill for meters. */
+function mergeSkillMap(raw: Record<string, number> | undefined): Record<string, number> {
+  if (!raw) return {};
+  const out: Record<string, number> = {};
+  for (const [name, amt] of Object.entries(raw)) {
+    if (!(amt > 0)) continue;
+    const key = normalizeCombatSkillName(name) || name;
+    out[key] = (out[key] || 0) + amt;
+  }
+  return out;
+}
 
 interface Props {
   units: Unit[];
@@ -585,12 +598,12 @@ export const StatsPanel: React.FC<Props> = ({ units, durationSec, initialPos = n
           {(() => {
             let skillMap: Record<string, number> = {};
             if (metric === 'DPS' || metric === 'DAMAGE_TAKEN') {
-              skillMap = hoveredStat.skillDamage || {};
+              skillMap = mergeSkillMap(hoveredStat.skillDamage);
               if (Object.keys(skillMap).length === 0 && hoveredStat.totalDamage > 0) {
                 skillMap = { '普通攻击': hoveredStat.totalDamage };
               }
             } else if (metric === 'EFFECTIVE_HPS') {
-              skillMap = hoveredStat.skillHealing || {};
+              skillMap = mergeSkillMap(hoveredStat.skillHealing);
               if (Object.keys(skillMap).length === 0 && hoveredStat.totalHeal > 0) {
                 skillMap = { '基础治疗': hoveredStat.totalHeal };
               }

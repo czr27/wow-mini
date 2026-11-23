@@ -170,6 +170,7 @@ export const SHAMAN: ClassSpec = {
       targetType: 'GROUND',
       school: 'NATURE',
       spec: 'RESTO_HEAL',
+      range: 320, // 40 码点地放置（与治疗之雨一致）
       effects: [
         {
           type: 'GROUND_EFFECT',
@@ -177,7 +178,7 @@ export const SHAMAN: ClassSpec = {
           groundColorHex: '#6FCF97',
           groundRadius: 10,
           durationMs: 6_000,
-          description: '灵魂链接图腾：持续6s，全团血量均摊（瞬间拉平血量差值）+10%减伤',
+          description: '40码内点地插下灵魂链接图腾：持续6s，范围内队友血量均摊+10%减伤（图腾半径约10码）',
         },
       ],
     },

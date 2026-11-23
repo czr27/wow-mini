@@ -9,13 +9,14 @@ import { EffectsManager } from './EffectsManager.js';
 import { getHastedCastTimeMs, LEVEL_80_BOSS_DAMAGE_SCALE } from './TierProfile.js';
 import { classifySpellCastMode, getCastLifecyclePolicy, type SpellCastMode } from './CastLifecycle.js';
 
-/** Collapse bounce / bloom / HoT label variants into one meter key. */
+/** Collapse bounce / bloom / HoT / copy-heal label variants into one meter key. */
 export function normalizeCombatSkillName(raw: string): string {
   return raw
     .replace(/[（(]第\d+跳[）)]/g, '')
     .replace(/\s*[（(]大绽放[）)]/g, '')
     .replace(/\s*[（(]HoT[）)]/gi, '')
     .replace(/\s*[（(]\d+层[）)]/g, '')
+    .replace(/\s*[（(]复制治疗[）)]/g, '')
     .trim();
 }
 
@@ -66,7 +67,7 @@ export const SPELL_ID_TO_NAME: Record<string, string> = {
   shaman_ancestral_guidance: '先祖指引',
   ascendance: '升腾',
   shaman_ascendance: '升腾',
-  ascendance_dup: '升腾(复制治疗)',
+  ascendance_dup: '升腾',
   thunderstorm: '雷霆风暴',
   shaman_thunderstorm: '雷霆风暴',
   lightning_bolt: '闪电箭',

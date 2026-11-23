@@ -265,13 +265,13 @@ export const GROUND_TARGET_SPELL_DEFS: Record<
     name: '治疗之雨',
     radius: 60,
     color: '#38bdf8',
-    maxRange: 320,
+    maxRange: 320, // 40 码点地
   },
   spirit_link: {
     name: '灵魂链接图腾',
     radius: 55,
     color: '#2dd4bf',
-    maxRange: 280,
+    maxRange: 320, // 与治疗之雨相同：40 码内点地插图腾
   },
   healing_tide: {
     name: '治疗之潮图腾',
@@ -301,7 +301,7 @@ export const GROUND_TARGET_SPELL_DEFS: Record<
     name: '灵魂链接图腾',
     radius: 55,
     color: '#2dd4bf',
-    maxRange: 280,
+    maxRange: 320, // 与治疗之雨相同：40 码内点地插图腾
   },
 };
 

@@ -5,9 +5,11 @@
 
 用法:
   python tools/wowhead_icon_dl.py "https://www.wowhead.com/classic/cn/spell=379/大地之盾"
+  python tools/wowhead_icon_dl.py 树皮术
+  python tools/wowhead_icon_dl.py 清除腐蚀 树皮术 --flavor classic
   python tools/wowhead_icon_dl.py --test
-  python tools/wowhead_icon_dl.py URL1 URL2 --name-map 大地之盾=earth_shield
 
+输入可以是 Wowhead URL，也可以是技能中文/英文名（自动用搜索引擎找 wowhead spell 链接）。
 绕过 CloudFront: 优先 curl_cffi（TLS 指纹），再 cloudscraper，最后 requests。
 主路径走 nether.wowhead.com/tooltip（通常不被拦），页面 HTML 仅作兜底。
 """
@@ -22,9 +24,10 @@ import sys
 from datetime import datetime
 
 try:
-    from urllib.parse import unquote
+    from urllib.parse import unquote, quote, urlparse, parse_qs
 except ImportError:
-    from urlparse import unquote  # type: ignore
+    from urlparse import unquote, urlparse, parse_qs  # type: ignore
+    from urllib import quote  # type: ignore
 
 # 中文显示名 -> 游戏内 spellId（文件名）
 CN_TO_SPELL_ID = {
@@ -80,7 +83,31 @@ EN_TO_SPELL_ID = {
     "lifebloom": "lifebloom",
     "ancestral guidance": "ancestral_guidance",
     "windfury totem": "windfury_totem",
+    "barkskin": "barkskin",
+    "remove corruption": "remove_corruption",
 }
+
+# 搜索结果 flavor 优先级（本项目偏 Cata/MoP）
+FLAVOR_SCORE = {
+    "mop-classic": 100,
+    "mop": 95,
+    "classic": 90,
+    "cata": 88,
+    "wotlk": 70,
+    "tbc": 60,
+    "sod": 50,
+    "retail": 40,
+    "": 40,
+}
+
+SPELL_URL_RE = re.compile(
+    r"https?://(?:www\.)?wowhead\.com/[^\s\"'<>]*?spell=\d+[^\s\"'<>]*",
+    re.I,
+)
+SPELL_REL_RE = re.compile(
+    r"(?:https?://(?:www\.)?wowhead\.com)?(/[^\s\"'<>]*?spell=\d+[^\s\"'<>]*)",
+    re.I,
+)
 
 # URL 路径段 -> 优先尝试的 dataEnv 列表（Wowhead nether tooltip）
 # classic=4；mop-classic 在 4/5/8 上常 404，用 retail 系 env 可取到同 spellId 图标
@@ -190,8 +217,38 @@ def make_session():
         )
 
 
+def is_wowhead_url(text):
+    t = (text or "").strip()
+    return bool(re.search(r"wowhead\.com/.+spell=\d+", t, re.I)) or (
+        t.startswith("http") and "spell=" in t
+    )
+
+
+def normalize_wowhead_url(url):
+    """清洗搜索结果里的脏 URL（截断、&amp;、uddg 包装等）。"""
+    u = unquote(url.strip())
+    u = u.replace("&amp;", "&")
+    # DuckDuckGo 跳转包装
+    if "uddg=" in u:
+        qs = parse_qs(urlparse(u).query)
+        if qs.get("uddg"):
+            u = unquote(qs["uddg"][0])
+    # 只保留到 spell 段，去掉查询串
+    m = re.search(
+        r"(https?://(?:www\.)?wowhead\.com/[^\s?#\"']*?spell=\d+(?:/[^\s?#\"']*)?)",
+        u,
+        re.I,
+    )
+    if m:
+        u = m.group(1)
+    # 去掉尾部标点
+    u = u.rstrip(").,;\"'")
+    return u
+
+
 def parse_wowhead_url(url):
     """返回 (flavor, spell_num, cn_name)。"""
+    url = normalize_wowhead_url(url)
     m = re.search(r"wowhead\.com/([^?]*)", url, re.I)
     path = m.group(1) if m else url
     parts = [p for p in path.split("/") if p]
@@ -208,6 +265,146 @@ def parse_wowhead_url(url):
     spell_num = sm.group(1)
     cn_name = unquote(sm.group(2) or "").strip().strip("/")
     return flavor, spell_num, cn_name
+
+
+def _extract_spell_links(html):
+    found = []
+    seen = set()
+    for m in SPELL_URL_RE.finditer(html):
+        u = normalize_wowhead_url(m.group(0))
+        if u not in seen and "spell=" in u:
+            seen.add(u)
+            found.append(u)
+    if not found:
+        for m in SPELL_REL_RE.finditer(html):
+            path = m.group(1)
+            if not path.startswith("http"):
+                path = "https://www.wowhead.com" + path
+            u = normalize_wowhead_url(path)
+            if u not in seen and "spell=" in u:
+                seen.add(u)
+                found.append(u)
+    return found
+
+
+def _score_spell_url(url, query, preferred_flavor):
+    try:
+        flavor, spell_num, slug = parse_wowhead_url(url)
+    except Exception:
+        return -1
+    score = FLAVOR_SCORE.get(flavor, 40)
+    if preferred_flavor:
+        if flavor == preferred_flavor.lower():
+            score += 200
+        elif preferred_flavor.lower() == "classic" and flavor in ("classic", "cata"):
+            score += 150
+    q = (query or "").strip().lower()
+    slug_l = (slug or "").lower()
+    # 中文名完全在 slug 中
+    if q and q in slug_l:
+        score += 50
+    # 英文 slug 匹配（barkskin / remove-corruption）
+    q_slug = slugify_en(q).replace("_", "-")
+    if q_slug and q_slug in slug_l.replace("_", "-"):
+        score += 40
+    # forever / study 噪音
+    if "/forever/" in url.lower():
+        score -= 80
+    # 版本页带 /cn/ 略加分
+    if "/cn/" in url.lower():
+        score += 5
+    return score
+
+
+def search_ddg(session, query):
+    q = "site:wowhead.com {} spell".format(query)
+    url = "https://html.duckduckgo.com/html/?q=" + quote(q)
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    }
+    r = session.get(url, headers=headers)
+    status = getattr(r, "status_code", 0)
+    html = r.text if hasattr(r, "text") else r.content.decode("utf-8", "replace")
+    if status >= 400:
+        raise RuntimeError("DuckDuckGo HTTP {}".format(status))
+    return _extract_spell_links(html), "duckduckgo"
+
+
+def search_bing(session, query):
+    q = "site:wowhead.com {} spell".format(query)
+    url = "https://www.bing.com/search?q=" + quote(q) + "&setlang=zh-CN"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+    }
+    r = session.get(url, headers=headers)
+    status = getattr(r, "status_code", 0)
+    html = r.text if hasattr(r, "text") else r.content.decode("utf-8", "replace")
+    if status >= 400:
+        raise RuntimeError("Bing HTTP {}".format(status))
+    # Bing 常把目标放在 u= 参数里
+    links = _extract_spell_links(html)
+    for m in re.finditer(r"[?&]u=([^&\"']+)", html):
+        cand = unquote(m.group(1))
+        if "wowhead.com" in cand and "spell=" in cand:
+            links.append(normalize_wowhead_url(cand))
+    # 去重保序
+    seen = set()
+    uniq = []
+    for u in links:
+        if u not in seen:
+            seen.add(u)
+            uniq.append(u)
+    return uniq, "bing"
+
+
+def resolve_query_to_url(session, query, preferred_flavor=None, engine="auto"):
+    """URL 直接返回；技能名则搜索引擎找 Wowhead spell 页。"""
+    q = (query or "").strip()
+    if not q:
+        raise ValueError("空查询")
+    if is_wowhead_url(q):
+        return normalize_wowhead_url(q), None, []
+
+    engines = []
+    if engine == "bing":
+        engines = [search_bing]
+    elif engine == "ddg" or engine == "duckduckgo":
+        engines = [search_ddg]
+    else:
+        engines = [search_ddg, search_bing]
+
+    last_err = None
+    all_links = []
+    used = None
+    for fn in engines:
+        try:
+            links, used = fn(session, q)
+            all_links.extend(links)
+            if links:
+                break
+        except Exception as ex:
+            last_err = ex
+            eprint("[warn] 搜索失败 ({})：{}".format(fn.__name__, ex))
+
+    if not all_links:
+        raise RuntimeError(
+            "搜索引擎未找到 Wowhead 技能链接：「{}」{}".format(
+                q, (" / " + str(last_err)) if last_err else ""
+            )
+        )
+
+    ranked = sorted(
+        all_links,
+        key=lambda u: _score_spell_url(u, q, preferred_flavor),
+        reverse=True,
+    )
+    best = ranked[0]
+    if _score_spell_url(best, q, preferred_flavor) < 0:
+        raise RuntimeError("未找到可用的 Wowhead spell 链接：「{}」".format(q))
+    eprint("[info] 搜索引擎:", used, "命中", len(ranked), "条，选用:", best)
+    return best, used, ranked[:8]
 
 
 def slugify_en(name):
@@ -360,11 +557,32 @@ def update_unaudited_manifest(out_dir, entry):
     return path
 
 
-def process_one(session, backend, url, out_dir, explicit_name, extra_map, ext):
-    flavor, spell_num, cn_name = parse_wowhead_url(url)
+def process_one(
+    session,
+    backend,
+    query,
+    out_dir,
+    explicit_name,
+    extra_map,
+    ext,
+    preferred_flavor=None,
+    engine="auto",
+):
     eprint("[info] ----")
+    eprint("[info] 输入:", query)
+    url, search_engine, candidates = resolve_query_to_url(
+        session, query, preferred_flavor=preferred_flavor, engine=engine
+    )
+    flavor, spell_num, cn_name = parse_wowhead_url(url)
+    # 用户直接输入中文名时，优先用查询词作为 cnName
+    if not is_wowhead_url(query):
+        cn_name = query.strip() or cn_name
     eprint("[info] URL:", url)
-    eprint("[info] flavor={} spell={} cn={}".format(flavor or "retail", spell_num, cn_name or "?"))
+    eprint(
+        "[info] flavor={} spell={} cn={}".format(
+            flavor or "retail", spell_num, cn_name or "?"
+        )
+    )
 
     meta = None
     try:
@@ -401,6 +619,9 @@ def process_one(session, backend, url, out_dir, explicit_name, extra_map, ext):
         "bytes": size,
         "savedAs": dest.replace("\\", "/"),
         "pageUrl": url,
+        "query": query,
+        "searchEngine": search_engine,
+        "searchCandidates": candidates or [],
         "httpBackend": backend,
     }
     manifest = update_unaudited_manifest(out_dir, entry)
@@ -422,15 +643,32 @@ def parse_name_map(pairs):
 
 
 def main(argv=None):
-    parser = argparse.ArgumentParser(description="Wowhead 技能图标下载 -> ART/resources/未审计")
-    parser.add_argument("urls", nargs="*", help="Wowhead 技能页 URL（可多个）")
+    parser = argparse.ArgumentParser(
+        description="Wowhead 技能图标下载 -> ART/resources/未审计（支持 URL 或技能名搜索）"
+    )
+    parser.add_argument(
+        "queries",
+        nargs="*",
+        help="Wowhead URL 或技能名（如 树皮术），可多个",
+    )
     parser.add_argument("--test", action="store_true", help="跑内置测试用例并保留图标")
-    parser.add_argument("--name", help="单个 URL 时强制 spellId 文件名")
+    parser.add_argument("--name", help="单个查询时强制 spellId 文件名")
     parser.add_argument(
         "--name-map",
         nargs="*",
         default=[],
         help="额外中文映射：大地之盾=earth_shield",
+    )
+    parser.add_argument(
+        "--flavor",
+        default=None,
+        help="搜索时优先版本：classic / mop-classic / cata / retail 等",
+    )
+    parser.add_argument(
+        "--engine",
+        default="auto",
+        choices=("auto", "ddg", "duckduckgo", "bing"),
+        help="技能名搜索引擎，默认 auto（先 DDG 再 Bing）",
     )
     parser.add_argument(
         "--out",
@@ -440,11 +678,11 @@ def main(argv=None):
     parser.add_argument("--ext", default="jpg", choices=("jpg", "png"))
     args = parser.parse_args(argv)
 
-    urls = list(args.urls)
+    queries = list(args.queries)
     if args.test:
-        urls.extend(TEST_URLS)
-    if not urls:
-        parser.error("请提供 URL，或使用 --test")
+        queries.extend(TEST_URLS)
+    if not queries:
+        parser.error("请提供 URL/技能名，或使用 --test")
 
     out_dir = os.path.abspath(args.out or default_out_dir())
     if not os.path.isdir(out_dir):
@@ -457,22 +695,32 @@ def main(argv=None):
 
     results = []
     failed = 0
-    for i, url in enumerate(urls):
-        explicit = args.name if (args.name and len(urls) == 1) else None
+    for query in queries:
+        explicit = args.name if (args.name and len(queries) == 1) else None
         try:
             results.append(
-                process_one(session, backend, url, out_dir, explicit, extra_map, args.ext)
+                process_one(
+                    session,
+                    backend,
+                    query,
+                    out_dir,
+                    explicit,
+                    extra_map,
+                    args.ext,
+                    preferred_flavor=args.flavor,
+                    engine=args.engine,
+                )
             )
         except Exception as ex:
             failed += 1
             err = {
                 "ok": False,
-                "pageUrl": url,
+                "query": query,
                 "error": str(ex),
                 "httpBackend": backend,
             }
             results.append(err)
-            eprint("[error]", url, ex)
+            eprint("[error]", query, ex)
 
     summary = {
         "ok": failed == 0,
