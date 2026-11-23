@@ -1,30 +1,29 @@
 @echo off
-chcp 65001 >nul
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
-echo ========== å½“å‰æœ¬åœ°æ”¹åŠ¨ ==========
+echo ========== µ±Ç°±¾µØ¸Ä¶¯ ==========
 git status -s
 echo ==================================
 echo.
 
 set "MSG="
-set /p "MSG=è¯·è¾“å…¥æœ¬æ¬¡ä¿®æ”¹è¯´æ˜ï¼ˆç›´æ¥å›è½¦é»˜è®¤å¡« updateï¼‰: "
+set /p "MSG=ÇëÊäÈë±¾´ÎĞŞ¸ÄËµÃ÷£¨Ö±½Ó»Ø³µÄ¬ÈÏÌî update£©: "
 if "!MSG!"=="" set "MSG=update"
 
 git add .
 git commit -m "!MSG!"
 if errorlevel 1 (
     echo.
-    echo æ²¡æœ‰æ–°çš„æ”¹åŠ¨éœ€è¦æäº¤ï¼Œå°è¯•æ¨é€å·²æœ‰è®°å½•...
+    echo Ã»ÓĞĞÂµÄ¸Ä¶¯ĞèÒªÌá½»£¬³¢ÊÔÍÆËÍÒÑÓĞ¼ÇÂ¼...
 )
 
 git push origin main
 if errorlevel 1 (
     echo.
-    echo ä¸Šä¼ å¤±è´¥ï¼å¦‚æœæç¤ºå†²çªæˆ– rejectedï¼Œè¯·å…ˆè¿è¡Œ "3_ä»GitHubä¸‹è½½.bat" å†ä¸Šä¼ ã€‚
+    echo ÉÏ´«Ê§°Ü£¡Èç¹ûÌáÊ¾³åÍ»»ò rejected£¬ÇëÏÈÔËĞĞ "G3_´ÓGitHubÏÂÔØ.bat" ÔÙÉÏ´«¡£
 ) else (
     echo.
-    echo å·²æˆåŠŸåŒæ­¥åˆ° GitHubï¼
+    echo ÒÑ³É¹¦Í¬²½µ½ GitHub£¡
 )
 pause

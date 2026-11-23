@@ -23,14 +23,19 @@ import type {
 import {
   roomManager,
   getRoleBySpec,
-  DRAGON_SOUL_CONFIG,
-  SHADOWFANG_KEEP_CONFIG,
+  DUNGEON_ROLE_QUOTAS,
+  getDungeonConfig,
 } from '@cata-raid-sim/engine';
 import type { PlayerCastState } from '../components/ActionBar.js';
 import { netClient } from '../net/NetClient.js';
 import type { NetworkRoomFacade } from '../net/NetworkRoomFacade.js';
 import { buildCastFromTimeline, gcdRemainingFromTimelines } from '../net/netTimeline.js';
-import type { RoomLobbySubView, StartAdventureOverrides } from './useRoomLobby.js';
+import {
+  pendingQuickPlayStartRef,
+  type RoomLobbySubView,
+  type StartAdventureOverrides,
+} from './useRoomLobby.js';
+import { applyGuestMazeSync } from '../combat/mazeSyncBridge.js';
 
 export type NetworkRoomSyncDeps = {
   currentChar: CharacterRecord | null;
@@ -65,8 +70,15 @@ export type NetworkRoomSyncDeps = {
   setActiveRoomId: Dispatch<SetStateAction<string | null>>;
   setLobbySubView: Dispatch<SetStateAction<RoomLobbySubView>>;
   setRunPhase: Dispatch<SetStateAction<any>>;
+  setIsApproaching: Dispatch<SetStateAction<boolean>>;
+  /** 立刻弹出「别处登录」提示（勿用 window.alert，会被浏览器延后到下次点击） */
+  setSessionKickNotice: Dispatch<SetStateAction<string | null>>;
+  setAuthOpenRequest: Dispatch<
+    SetStateAction<{ mode: 'login' | 'register'; id: number } | null>
+  >;
   setWaitingQueueRoomId: Dispatch<SetStateAction<string | null>>;
   setDungeonTier: Dispatch<SetStateAction<'5man' | '20man'>>;
+  setSelectedDungeonId: Dispatch<SetStateAction<string>>;
   setDungeonDifficulty: Dispatch<SetStateAction<DungeonDifficulty>>;
   setCustomDifficulty: Dispatch<SetStateAction<CustomDifficultySettings>>;
   setFriendlyUnits: Dispatch<SetStateAction<Unit[]>>;
@@ -86,6 +98,9 @@ export type NetworkRoomSyncDeps = {
   setGuestBossCasting: Dispatch<
     SetStateAction<{
       spellName: string;
+      spellId?: string;
+      description?: string;
+      school?: string;
       elapsedMs: number;
       castTimeMs: number;
       interruptible: boolean;
@@ -97,8 +112,12 @@ export type NetworkRoomSyncDeps = {
 export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
   const depsRef = useRef(deps);
   depsRef.current = deps;
+  /** Guest: ignore stale/out-of-order COMBAT_STATE; newer full snapshots heal missed ones */
+  const lastAppliedCombatSeqRef = useRef(0);
 
   const charId = deps.currentChar?.id;
+  const charSpec = deps.currentChar?.lastSpec;
+  const charClassId = deps.currentChar?.classId;
   const username = deps.account?.username;
 
   useEffect(() => {
@@ -110,6 +129,7 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
 
     // Always attach to the game server (incl. localhost). Session id may be
     // a placeholder until the player has a character.
+    // Re-run when lastSpec/class changes so join uses the latest role/spec.
     if (currentChar) {
       netClient.connect({
         username: account.username,
@@ -142,20 +162,36 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
         }
       }
       if (msg.type === 'SESSION_KICKED') {
-        // Same character reconnected elsewhere — drop this socket only (other accounts on this PC stay fine)
+        // Same account logged in elsewhere — full logout; show notice immediately (no alert deferral)
+        const reason =
+          (msg.payload as { reason?: string } | undefined)?.reason ||
+          '账号已在其他地方登录，请重新登录';
+        try {
+          d().accountMgrRef.current.logout();
+        } catch {}
         netClient.disconnect();
+        d().setAccount(null);
+        d().setSelectedCharId(null);
         d().setNetConnected(false);
         d().setActiveRoomId(null);
         d().isNetworkGuestRef.current = false;
         d().isNetworkHostRef.current = false;
         d().setLobbySubView('AUTH_CHAR');
         d().setRunPhase('LOBBY');
-        window.alert((msg.payload as any)?.reason || '同一角色已在其他窗口登录，本窗口已断开联机');
+        d().setSessionKickNotice(reason);
+        d().setAuthOpenRequest({ mode: 'login', id: Date.now() });
+      }
+      if (msg.type === 'ERROR') {
+        const errText =
+          (typeof msg.error === 'string' && msg.error) ||
+          (msg.payload as { reason?: string } | undefined)?.reason ||
+          '操作失败';
+        window.alert(errText);
       }
       if (msg.type === 'ROOM_LIST_SYNC' && Array.isArray(msg.payload)) {
         const list = msg.payload as NetLobbyRoom[];
         const ids = new Set(list.map((r) => r.id));
-        // Mirror purge must use local RoomManager — facade.listRooms() may already be net-synced
+        // 用服务端名单整表替换本地镜像，清掉旧房残留
         for (const existing of roomManager.listRooms()) {
           if (!ids.has(existing.id)) {
             roomManager.deleteRoom(existing.id);
@@ -164,6 +200,8 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
         for (const room of list) {
           d().roomFacadeRef.current.upsertRoom(room);
         }
+        // 再扫一遍纯 AI / 空房（listRooms 内也会 cleanup）
+        roomManager.cleanupAiOnlyRooms();
         d().setRoomsTick((t) => t + 1);
       }
       if (msg.type === 'ROOM_UPDATE' && msg.payload) {
@@ -178,8 +216,10 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
             room.hostId !== d().currentChar.id &&
             room.members.some((m) => m.id === d().currentChar.id && !m.isAi);
           // Lobby room meta from server (map / difficulty / custom coeffs)
-          const tier: '5man' | '20man' = room.dungeonId === 'dragon_soul' ? '20man' : '5man';
+          const cfg = getDungeonConfig(room.dungeonId, room.difficulty);
+          const tier = cfg.tier;
           d().setDungeonTier(tier);
+          d().setSelectedDungeonId(room.dungeonId);
           d().setDungeonDifficulty(room.difficulty);
           if (room.customDifficulty) {
             d().setCustomDifficulty(room.customDifficulty);
@@ -187,7 +227,36 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
           const phase = d().rsmRef.current?.phase || 'LOBBY';
           const alreadyInRun = phase !== 'LOBBY' && phase !== 'SUMMARY';
           const roomInCombat = room.status === 'IN_COMBAT' || room.status === 'OUT_OF_COMBAT';
-          if (roomInCombat && !alreadyInRun) {
+
+          if (room.status === 'LOBBY') {
+            // Create / rejoin prep room: never keep a leftover dungeon phase from a prior run.
+            // (Main router only shows LobbyScreen when runPhase === 'LOBBY'.)
+            const rsm = d().rsmRef.current;
+            const engine = d().engineRef.current;
+            const leftoverDungeon = !!rsm && rsm.phase !== 'LOBBY';
+            if (leftoverDungeon) {
+              rsm!.phase = 'LOBBY';
+              d().setWipeNetworkVote(null);
+              d().setMyWipeVote(null);
+              d().setSkipTravelVote(null);
+              d().setMySkipVote(null);
+              d().playerCastRef.current = null;
+              d().setPlayerCast(null);
+              d().setCompanionCasts({});
+              d().setBossUnit(undefined);
+              d().setBossTargetId(null);
+              d().setGroundEffects([]);
+              d().setFloatingTexts([]);
+              if (engine) {
+                try {
+                  engine.reset();
+                } catch {}
+              }
+              d().setFriendlyUnits([]);
+            }
+            d().setRunPhase('LOBBY');
+            d().setLobbySubView('ROOM_DETAIL');
+          } else if (roomInCombat && !alreadyInRun) {
             // Hot-join mid-boss: enter as guest; host COMBAT_STATE will sync HP/frames
             d().isNetworkGuestRef.current = room.hostId !== d().currentChar.id;
             d().isNetworkHostRef.current = room.hostId === d().currentChar.id;
@@ -201,14 +270,37 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
             );
             d().setFriendlyUnits([...d().engineRef.current.friendlyUnits]);
             if (d().rsmRef.current) {
-              d().rsmRef.current.dungeon =
-                tier === '20man' ? DRAGON_SOUL_CONFIG : SHADOWFANG_KEEP_CONFIG;
+              d().rsmRef.current.dungeon = cfg;
               d().rsmRef.current.phase =
                 room.status === 'OUT_OF_COMBAT' ? 'TRAVEL_RECOVERY' : 'BOSS_COMBAT';
               d().setRunPhase(d().rsmRef.current.phase);
             }
           } else if (!alreadyInRun) {
             d().setLobbySubView('ROOM_DETAIL');
+          }
+          // Client fallback for 快速游戏 when server ignored quickStart (old process)
+          if (
+            pendingQuickPlayStartRef.current &&
+            room.hostId === d().currentChar.id &&
+            room.status === 'LOBBY'
+          ) {
+            const quota = DUNGEON_ROLE_QUOTAS[room.dungeonId] || DUNGEON_ROLE_QUOTAS.shadowfang_keep;
+            if (room.members.length < quota.capacity) {
+              d().roomFacadeRef.current.autoFillAi(room.id);
+            } else {
+              const validation = d().roomFacadeRef.current.validateStartGame(room.id);
+              if (validation.canStart) {
+                pendingQuickPlayStartRef.current = false;
+                d().isNetworkHostRef.current = true;
+                d().isNetworkGuestRef.current = false;
+                netClient.startRoom(room.id);
+              }
+            }
+          } else if (
+            pendingQuickPlayStartRef.current &&
+            (room.status === 'IN_COMBAT' || room.status === 'OUT_OF_COMBAT')
+          ) {
+            pendingQuickPlayStartRef.current = false;
           }
         }
         d().setRoomsTick((t) => t + 1);
@@ -229,7 +321,9 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
           d().setActiveRoomId(null);
           d().setWaitingQueueRoomId(null);
           d().setWipeNetworkVote(null);
+          d().setMyWipeVote(null);
           d().setSkipTravelVote(null);
+          d().setMySkipVote(null);
           d().setPlayerCast(null);
           d().playerCastRef.current = null;
           d().setCompanionCasts({});
@@ -255,13 +349,19 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
       }
       if (msg.type === 'ROOM_START' && msg.payload) {
         const room = msg.payload as NetLobbyRoom;
+        pendingQuickPlayStartRef.current = false;
+        lastAppliedCombatSeqRef.current = 0;
+        netClient.clearReliableInputs();
+        netClient.clearHostInputAckState();
         d().roomFacadeRef.current.upsertRoom(room);
         d().setActiveRoomId(room.id);
         d().isNetworkHostRef.current = !!(d().currentChar && room.hostId === d().currentChar.id);
         d().isNetworkGuestRef.current = !!(d().currentChar && room.hostId !== d().currentChar.id);
-        const tier: '5man' | '20man' = room.dungeonId === 'dragon_soul' ? '20man' : '5man';
+        const cfg = getDungeonConfig(room.dungeonId, room.difficulty);
+        const tier = cfg.tier;
         const effectiveCustom = room.customDifficulty || d().customDifficultyRef.current;
         d().setDungeonTier(tier);
+        d().setSelectedDungeonId(room.dungeonId);
         d().setDungeonDifficulty(room.difficulty);
         if (room.difficulty === 'CUSTOM') d().setCustomDifficulty(effectiveCustom);
         d().startAdventureRef.current({
@@ -278,17 +378,34 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
         if (snap.roomId && myRoom && snap.roomId !== myRoom) return;
         if (msg.roomId && myRoom && msg.roomId !== myRoom) return;
 
+        // 技能 ack：未回传则客人侧会重传；此处停掉已确认意图
+        netClient.ackReliableInputs(snap.ackedInputIds);
+
+        // 全量状态快照：只接受更新的 seq（乱序旧包丢弃；中间丢包由后续快照补血量/位置）
+        const seq = typeof snap.seq === 'number' ? snap.seq : msg.seq ?? 0;
+        if (seq > 0 && seq <= lastAppliedCombatSeqRef.current) return;
+        if (seq > 0) lastAppliedCombatSeqRef.current = seq;
+
         const engine = d().engineRef.current;
         const rsm = d().rsmRef.current;
         engine.applyNetworkUnitSnapshots(snap.units);
         // Host snapshots use each member's real id; keep local controllability on this client
         const myId = d().currentChar?.id;
+        const myChar = d().currentChar;
         if (myId) {
           for (const u of engine.friendlyUnits) {
             const isMe = u.id === myId;
             u.isPlayer = isMe;
-            if (isMe) u.isHumanControlled = true;
-            else if ((snap.units || []).find((s) => s.id === u.id)?.isHumanControlled) {
+            if (isMe) {
+              u.isHumanControlled = true;
+              // Never keep replaced AI name/class on the local seat
+              if (myChar) {
+                u.name = myChar.name || u.name;
+                u.classId = myChar.classId || u.classId;
+                u.spec = myChar.lastSpec || u.spec;
+              }
+              delete (u as { unitKind?: string }).unitKind;
+            } else if ((snap.units || []).find((s) => s.id === u.id)?.isHumanControlled) {
               u.isHumanControlled = true;
             }
           }
@@ -358,6 +475,32 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
           );
         }
 
+        // Host-relayed actor→target actions for cast/ground/summon VFX hooks
+        if (Array.isArray(snap.recentActions) && snap.recentActions.length > 0) {
+          window.dispatchEvent(
+            new CustomEvent('cata_combat_actions', { detail: { actions: snap.recentActions, roomId: snap.roomId } })
+          );
+        }
+
+        // Maze: seed + trash HP/tombstones from host (guest mirrors, does not sim trash DPS)
+        if (
+          snap.mazeSeed != null ||
+          snap.mazeTrash ||
+          snap.mazeDungeonId ||
+          snap.mazeLeadDist != null ||
+          snap.mazeSctEvents
+        ) {
+          applyGuestMazeSync({
+            roomId: snap.roomId || msg.roomId || d().activeRoomIdRef.current,
+            mazeSeed: snap.mazeSeed,
+            mazeDungeonId: snap.mazeDungeonId,
+            mazeStageIndex: snap.mazeStageIndex,
+            mazeLeadDist: snap.mazeLeadDist,
+            mazeTrash: snap.mazeTrash,
+            sctEvents: snap.mazeSctEvents,
+          });
+        }
+
         // Apply cast timelines to local player cast bar / companion casts
         const now = Date.now();
         const myCast = (snap.casts || []).find((c) => c.unitId === myId && !c.interrupted);
@@ -376,9 +519,10 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
           d().setPlayerCast(null);
         }
 
-        const companion: Record<string, { spellName: string; progress: number }> = {};
+        const companion: Record<string, { spellName: string; progress: number; spellId?: string }> = {};
         let bossCasting: {
           spellName: string;
+          spellId?: string;
           elapsedMs: number;
           castTimeMs: number;
           interruptible: boolean;
@@ -389,10 +533,15 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
           if (c.unitId === myId) continue;
           const built = buildCastFromTimeline(c, now);
           if (!built) continue;
-          companion[c.unitId] = { spellName: built.spellName, progress: built.progress };
+          companion[c.unitId] = {
+            spellName: built.spellName,
+            progress: built.progress,
+            spellId: built.spellId,
+          };
           if (bossId && c.unitId === bossId) {
             bossCasting = {
               spellName: c.spellName,
+              spellId: c.spellId,
               elapsedMs: Math.max(0, now - c.startedAtMs),
               castTimeMs: c.totalMs || 1,
               interruptible: c.interruptible !== false,
@@ -429,10 +578,37 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
           room: NetLobbyRoom;
           playerId: string;
           replacedAiId: string;
+          playerName?: string;
+          classId?: string;
+          spec?: string;
+          role?: string;
           unitSnapshot?: NetworkCombatSnapshot['units'][number];
         };
         d().roomFacadeRef.current.upsertRoom(body.room);
         const engine = d().engineRef.current;
+        const member = body.room.members.find((m) => m.id === body.playerId);
+        const joinerIdentity = {
+          id: body.playerId,
+          name: body.playerName || member?.name || body.playerId,
+          classId: (body.classId || member?.classId || 'MAGE') as any,
+          spec: body.spec || member?.spec || 'FIRE',
+          role: (body.role || member?.role || 'DPS') as any,
+        };
+        const markLocalPlayerFlags = () => {
+          const myId = d().currentChar?.id;
+          if (!myId || !engine) return;
+          for (const u of engine.friendlyUnits) {
+            const isMe = u.id === myId;
+            u.isPlayer = isMe;
+            if (isMe) {
+              u.isHumanControlled = true;
+              u.name = d().currentChar!.name || u.name;
+              u.classId = d().currentChar!.classId || u.classId;
+              u.spec = d().currentChar!.lastSpec || u.spec;
+              delete (u as { unitKind?: string }).unitKind;
+            }
+          }
+        };
         const inCombatView =
           d().isNetworkHostRef.current ||
           d().isNetworkGuestRef.current ||
@@ -445,39 +621,48 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
               ...engine
                 .buildNetworkUnitSnapshots()
                 .filter((u) => u.id !== body.replacedAiId && u.id !== body.playerId),
-              body.unitSnapshot,
+              {
+                ...body.unitSnapshot,
+                // Guarantee joiner identity even if host snapshot lagged
+                id: body.playerId,
+                name: joinerIdentity.name,
+                classId: joinerIdentity.classId,
+                spec: joinerIdentity.spec,
+                role: joinerIdentity.role,
+                isHumanControlled: true,
+              },
             ]);
+            markLocalPlayerFlags();
             d().setFriendlyUnits([...engine.friendlyUnits]);
           } else if (d().isNetworkHostRef.current && body.replacedAiId) {
-            const member = body.room.members.find((m) => m.id === body.playerId);
-            roomManager.inheritCombatUnitFromAi(engine, body.replacedAiId, {
-              id: body.playerId,
-              name: member?.name || body.playerId,
-              classId: (member?.classId || 'MAGE') as any,
-              spec: member?.spec || 'FIRE',
-              role: (member?.role || 'DPS') as any,
-            });
+            roomManager.inheritCombatUnitFromAi(engine, body.replacedAiId, joinerIdentity);
             d().setFriendlyUnits([...engine.friendlyUnits]);
             // Push unit snapshot so guests/joiner see AI disappear + player appear
-            if (netClient.connected && d().activeRoomIdRef.current) {
+            const roomId = d().activeRoomIdRef.current || body.room.id;
+            if (netClient.connected && roomId) {
               const unitSnap = engine
                 .buildNetworkUnitSnapshots()
                 .find((u) => u.id === body.playerId);
-              netClient.sendHotSwap(d().activeRoomIdRef.current, {
-                roomId: d().activeRoomIdRef.current,
+              netClient.sendHotSwap(roomId, {
+                roomId,
                 room: body.room,
                 playerId: body.playerId,
                 replacedAiId: body.replacedAiId,
+                playerName: joinerIdentity.name,
+                classId: joinerIdentity.classId,
+                spec: joinerIdentity.spec,
+                role: joinerIdentity.role,
                 unitSnapshot: unitSnap,
               });
             }
           } else if (body.replacedAiId) {
-            // Guest/joiner: drop AI unit from local frames until full snapshot arrives
+            // Guest/joiner: drop AI unit; temporarily claim seat with joiner identity until host snapshot
             const aiUnit = engine.getUnit(body.replacedAiId);
             if (aiUnit) {
-              engine.removeUnit(body.replacedAiId);
-              d().setFriendlyUnits([...engine.friendlyUnits]);
+              roomManager.inheritCombatUnitFromAi(engine, body.replacedAiId, joinerIdentity);
             }
+            markLocalPlayerFlags();
+            d().setFriendlyUnits([...engine.friendlyUnits]);
           }
         }
 
@@ -490,9 +675,10 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
           const roomInCombat =
             body.room.status === 'IN_COMBAT' || body.room.status === 'OUT_OF_COMBAT';
           if (roomInCombat && (phase === 'LOBBY' || phase === 'SUMMARY')) {
-            const tier: '5man' | '20man' =
-              body.room.dungeonId === 'dragon_soul' ? '20man' : '5man';
+            const cfg = getDungeonConfig(body.room.dungeonId, body.room.difficulty);
+            const tier = cfg.tier;
             d().setDungeonTier(tier);
+            d().setSelectedDungeonId(body.room.dungeonId);
             d().setDungeonDifficulty(body.room.difficulty);
             d().setupRaidUnitsRef.current(
               d().currentChar,
@@ -501,14 +687,34 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
               body.room.customDifficulty || d().customDifficultyRef.current,
               body.room
             );
+            // Prefer host-inherited combat snapshot over fresh full-HP roster when available
+            if (body.unitSnapshot && d().engineRef.current) {
+              d().engineRef.current.applyNetworkUnitSnapshots([
+                ...d()
+                  .engineRef.current.buildNetworkUnitSnapshots()
+                  .filter((u) => u.id !== body.replacedAiId && u.id !== body.playerId),
+                {
+                  ...body.unitSnapshot,
+                  id: body.playerId,
+                  name: joinerIdentity.name,
+                  classId: joinerIdentity.classId,
+                  spec: joinerIdentity.spec,
+                  role: joinerIdentity.role,
+                  isHumanControlled: true,
+                },
+              ]);
+            }
+            markLocalPlayerFlags();
             d().setFriendlyUnits([...d().engineRef.current.friendlyUnits]);
             if (d().rsmRef.current) {
-              d().rsmRef.current.dungeon =
-                tier === '20man' ? DRAGON_SOUL_CONFIG : SHADOWFANG_KEEP_CONFIG;
+              d().rsmRef.current.dungeon = cfg;
               d().rsmRef.current.phase =
                 body.room.status === 'OUT_OF_COMBAT' ? 'TRAVEL_RECOVERY' : 'BOSS_COMBAT';
               d().setRunPhase(d().rsmRef.current.phase);
             }
+          } else {
+            markLocalPlayerFlags();
+            if (engine) d().setFriendlyUnits([...engine.friendlyUnits]);
           }
         }
         d().setRoomsTick((t) => t + 1);
@@ -551,15 +757,31 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
       if (msg.type === 'VOTE_START' || msg.type === 'VOTE_STATE') {
         const vote = (msg.payload as any)?.vote || (msg.payload as NetworkVoteState);
         if (!vote?.kind) return;
+        // 已结束的状态包 / 乱序迟到包：清面板，勿把上一轮投票刷回来
+        if (vote.resolved) {
+          if (vote.kind === 'WIPE') {
+            d().setWipeNetworkVote(null);
+            d().setMyWipeVote(null);
+          } else if (vote.kind === 'SKIP_TRAVEL') {
+            d().setSkipTravelVote(null);
+            d().setMySkipVote(null);
+          }
+          return;
+        }
+        const snap = {
+          ...vote,
+          votes: { ...(vote.votes || {}) },
+          eligiblePlayerIds: [...(vote.eligiblePlayerIds || [])],
+        };
         if (vote.kind === 'WIPE') {
-          d().setWipeNetworkVote({ ...vote });
-          if (d().currentChar && vote.votes?.[d().currentChar.id]) {
-            d().setMyWipeVote(vote.votes[d().currentChar.id] as 'RETRY' | 'FINISH');
+          d().setWipeNetworkVote(snap);
+          if (d().currentChar && snap.votes?.[d().currentChar.id]) {
+            d().setMyWipeVote(snap.votes[d().currentChar.id] as 'RETRY' | 'FINISH');
           }
         } else if (vote.kind === 'SKIP_TRAVEL') {
-          d().setSkipTravelVote({ ...vote });
-          if (d().currentChar && vote.votes?.[d().currentChar.id]) {
-            d().setMySkipVote(vote.votes[d().currentChar.id] as 'YES' | 'NO');
+          d().setSkipTravelVote(snap);
+          if (d().currentChar && snap.votes?.[d().currentChar.id]) {
+            d().setMySkipVote(snap.votes[d().currentChar.id] as 'YES' | 'NO');
           }
         }
       }
@@ -578,6 +800,9 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
           if (body.result === 'YES' && d().isNetworkHostRef.current) {
             d().rsmRef.current?.fastForwardTravel();
             d().setRunPhase(d().rsmRef.current?.phase || 'BOSS_COMBAT');
+            if ((d().rsmRef.current?.phase || 'BOSS_COMBAT') === 'BOSS_COMBAT') {
+              d().setIsApproaching(true);
+            }
           }
         }
       }
@@ -586,5 +811,5 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
     return () => {
       unsub();
     };
-  }, [charId, username]); // reconnect when account or selected character changes
+  }, [charId, charSpec, charClassId, username]); // refresh AUTH on char / spec switch
 }

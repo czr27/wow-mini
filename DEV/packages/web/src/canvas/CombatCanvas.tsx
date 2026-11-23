@@ -5,11 +5,87 @@ import {
   FloatingCombatText,
   RunPhase,
   evaluateGroundFormationPosition,
+  orderTanksByThreatPriority,
+  clampPosWithinTankRange,
   GroundTargetState,
   createAIPersonality,
   resolveFidgetIdleThresholdMs,
+  clampToMazePath,
+  getMazeDrawOrigin,
+  MAZE_TRAVERSE_SPEED_SCALE,
+  resolveAoeAlphaByRadiusPx,
+  isTotemUnit,
+  resolveUnitFacingRad,
+  FIDGET_MAX_PX,
+  isPosInHazard,
+  resolveCombatDisplayPrefs,
+  type CombatDisplayPrefs,
+  type MazeLayout,
 } from '@cata-raid-sim/engine';
+import {
+  getMazeLayoutSync,
+  ensureMazeLayout,
+  trashSpawnsToMobs,
+} from '../combat/mazeRuntime.js';
+import {
+  publishHostMazeSync,
+  readGuestMazeSync,
+} from '../combat/mazeSyncBridge.js';
+import { resolveLocalFloatingTextMode } from './floatingTextFilter.js';
+import {
+  applyCanvasViewTransform,
+  enterScreenSpaceFromIso,
+  ISO_ORBIT_PX_PER_TURN,
+  ISO_PITCH_DEG_DEFAULT,
+  orbitRadiansPerPixel,
+  pitchDegFromOrbitDrag,
+  pitchDegToSin,
+  screenDirToWorld,
+  viewRelativeFacingRad,
+  viewDepthKey,
+  viewToWorld,
+  worldAabbCoveringCanvas,
+  worldToView,
+  type ViewCamera,
+} from './canvasViewMath.js';
+
 import { CLASS_COLORS } from '../components/AuthAndCharacterModal.js';
+import {
+  type AoeRingState,
+  syncPersistentRingsFromGround,
+  ingestCombatActionsAsRings,
+  drawAoeRing,
+  drawConeWarning,
+} from '../combat/aoeRingDraw.js';
+import {
+  createHitFxState,
+  ingestCombatActionsAsHitFx,
+  pruneHitFx,
+  drawHitFx,
+  spawnHitProjectile,
+  spawnHitSlash,
+  spawnHealSnowBurst,
+  meleeHandPose,
+  BOSS_HIT_FX_COLOR,
+  HIT_FX_BOSS_SIZE_MULT,
+  type HitFxState,
+} from '../combat/combatHitFx.js';
+import {
+  createClassAoePulseState,
+  ingestCombatActionsAsClassAoePulses,
+  pruneClassAoePulses,
+  drawClassAoePulses,
+  type ClassAoePulseState,
+} from '../combat/combatClassAoePulse.js';
+import { drawFiveManBossModel, drawFiveManBossFallback } from './fiveManBossModels.js';
+import {
+  drawClassEightDirBody,
+  drawFacingEyePair,
+  getActiveFacingPose,
+  withBossEightDirFacing,
+  facingDirFromRad,
+  type FacingDir,
+} from './eightDirModels.js';
 
 interface Props {
   units: Unit[];
@@ -20,6 +96,8 @@ interface Props {
   runPhase: RunPhase | 'PULL_APPROACH';
   screenShake: boolean;
   selectedUnitId: string | null;
+  /** Focus frame target — name always shown in combat */
+  focusTargetId?: string | null;
   onSelectUnit: (id: string) => void;
   onSetFocus?: (id: string) => void;
   onPlayerMove?: () => void;
@@ -31,6 +109,7 @@ interface Props {
   autoApproachTarget?: { targetX: number; targetY: number; desiredDist: number } | null;
   onApproachTargetReached?: () => void;
   dungeonTier?: any;
+  dungeonId?: string;
   targetBossName?: string;
   currentBossIndex?: number;
   travelRemainingMs?: number;
@@ -42,40 +121,15 @@ interface Props {
   onCancelGroundTarget?: () => void;
   /** When true, remote humans/AI/boss lerp to unit.position from host snapshot */
   syncRemotePositions?: boolean;
+  /** 联机客人：不本地结算迷宫小怪，只镜像房主快照 */
+  isNetworkGuest?: boolean;
   /** Guest: report local player xy to host for broadcast */
   onNetworkMoveReport?: (x: number, y: number) => void;
-}
-
-interface Projectile {
-  id: string;
-  fromX: number;
-  fromY: number;
-  toX: number;
-  toY: number;
-  color: string;
-  kind: 'FIRE' | 'FROST' | 'HEAL';
-  progress: number;
-}
-
-interface MeleeSlash {
-  id: string;
-  x: number;
-  y: number;
-  angle: number;
-  color: string;
-  elapsedMs: number;
-  totalMs: number;
-}
-
-interface HealingBeam {
-  id: string;
-  fromX: number;
-  fromY: number;
-  toX: number;
-  toY: number;
-  color: string;
-  elapsedMs: number;
-  totalMs: number;
+  /** Maze auto-path (controlled by TravelRecovery HUD) */
+  autoNavActive?: boolean;
+  onAutoNavChange?: (active: boolean) => void;
+  /** Per-character canvas display prefs (bars / names / FX / terrain) */
+  combatDisplayPrefs?: CombatDisplayPrefs | null;
 }
 
 export type MobModelType =
@@ -86,13 +140,23 @@ export type MobModelType =
   | 'TWILIGHT_DRAKONID'
   | 'LAVA_DRAKE'
   | 'TWILIGHT_VOIDWEAVER'
-  | 'DRAGON_ANNIHILATOR';
+  | 'DRAGON_ANNIHILATOR'
+  | 'DEFIAS_MINER'
+  | 'GOBLIN_TECH'
+  | 'SCARLET_FOOTMAN'
+  | 'SCARLET_ACOLYTE'
+  | 'SCOURGE_ABOM'
+  | 'GARGOYLE_SENTRY'
+  | 'TROLL_BERSERKER'
+  | 'VENOM_WARLOCK';
 
 export interface TrashMob {
   id: string;
   name: string;
   mobModel: MobModelType;
-  packIndex: number; // 1 or 2
+  packIndex: number;
+  /** Path fight pack; false = scenery only (still drawn). */
+  isEncounter: boolean;
   distAlongMaze: number;
   x: number;
   y: number;
@@ -176,10 +240,12 @@ function drawBaronAshbury(ctx: CanvasRenderingContext2D, boss: Unit, tickCount: 
   ctx.beginPath();
   ctx.arc(0, -42, 14, 0, Math.PI * 2);
   ctx.fill();
-  // Eyes: Green normally, Red in Archangel
-  ctx.fillStyle = isArchangel ? '#EF4444' : '#10B981';
-  ctx.fillRect(-6, -44, 4, 3);
-  ctx.fillRect(2, -44, 4, 3);
+  // Eyes: Green normally, Red in Archangel — biased by eight-dir facing
+  drawFacingEyePair(ctx, isArchangel ? '#EF4444' : '#10B981', {
+    y: -44,
+    size: 3.2,
+    halfGap: 5,
+  });
 
   // High arched collar
   ctx.fillStyle = '#312e81';
@@ -234,10 +300,8 @@ function drawBaronSilverlaine(ctx: CanvasRenderingContext2D, boss: Unit, tickCou
   ctx.fillRect(-4, -34, 2, 3);
   ctx.fillRect(2, -34, 2, 3);
 
-  // Spectral Pale Eyes
-  ctx.fillStyle = '#99f6e4';
-  ctx.fillRect(-6, -46, 3, 3);
-  ctx.fillRect(3, -46, 3, 3);
+  // Spectral Pale Eyes — eight-dir bias
+  drawFacingEyePair(ctx, '#99f6e4', { y: -46, size: 3, halfGap: 4.5 });
 
   // Ethereal Claws
   ctx.fillStyle = '#5eead4';
@@ -260,9 +324,8 @@ function drawCommanderSpringvale(ctx: CanvasRenderingContext2D, boss: Unit, tick
   ctx.beginPath();
   ctx.arc(0, -44, 15, 0, Math.PI * 2);
   ctx.fill();
-  // Glowing green eye slit
-  ctx.fillStyle = '#22c55e';
-  ctx.fillRect(-8, -45, 16, 3);
+  // Glowing green visor eyes — eight-dir bias
+  drawFacingEyePair(ctx, '#22c55e', { y: -45, size: 3.2, halfGap: 5.5 });
 
   // Massive Spiked Shoulders (Pauldrons)
   ctx.fillStyle = '#475569';
@@ -311,14 +374,20 @@ function drawLordWalden(ctx: CanvasRenderingContext2D, boss: Unit, tickCount: nu
   ctx.fillRect(-17, -44, 6, 12);
   ctx.fillRect(11, -44, 6, 12);
 
-  // Brass Goggles (One green lens, one red lens)
-  ctx.fillStyle = '#ca8a04';
-  ctx.fillRect(-9, -43, 8, 7);
-  ctx.fillRect(1, -43, 8, 7);
-  ctx.fillStyle = '#22c55e'; // Left green lens
-  ctx.fillRect(-7, -41, 4, 3);
-  ctx.fillStyle = '#ef4444'; // Right red lens
-  ctx.fillRect(3, -41, 4, 3);
+  // Brass Goggles (green / red lenses) — follow eight-dir eye bias
+  {
+    const pose = getActiveFacingPose();
+    if (pose.showFace) {
+      const e = pose.eyeBiasX;
+      ctx.fillStyle = '#ca8a04';
+      ctx.fillRect(-9 + e, -43, 8, 7);
+      ctx.fillRect(1 + e, -43, 8, 7);
+      ctx.fillStyle = '#22c55e';
+      ctx.fillRect(-7 + e, -41, 4, 3);
+      ctx.fillStyle = '#ef4444';
+      ctx.fillRect(3 + e, -41, 4, 3);
+    }
+  }
 
   // Bandolier of chemical vials
   ctx.fillStyle = '#1c1917';
@@ -369,11 +438,18 @@ function drawLordGodfrey(ctx: CanvasRenderingContext2D, boss: Unit, tickCount: n
   ctx.fillRect(-16, -46, 5, 14);
   ctx.fillRect(11, -46, 5, 14);
 
-  // Wire spectacles & Monocle
-  ctx.strokeStyle = '#d4af37';
-  ctx.lineWidth = 1.2;
-  ctx.strokeRect(-8, -44, 6, 5);
-  ctx.strokeRect(2, -44, 6, 5);
+  // Wire spectacles + facing eyes
+  {
+    const pose = getActiveFacingPose();
+    const e = pose.showFace ? pose.eyeBiasX : 0;
+    if (pose.showFace) {
+      ctx.strokeStyle = '#d4af37';
+      ctx.lineWidth = 1.2;
+      ctx.strokeRect(-8 + e, -44, 6, 5);
+      ctx.strokeRect(2 + e, -44, 6, 5);
+      drawFacingEyePair(ctx, '#1e293b', { y: -43, size: 2.4, halfGap: 5 });
+    }
+  }
 
   // Godfrey's Dual Flintlock Pistols
   // Left Pistol
@@ -439,10 +515,8 @@ function drawMorchok(ctx: CanvasRenderingContext2D, tickCount: number) {
   ctx.beginPath();
   ctx.arc(0, -42, 16, 0, Math.PI * 2);
   ctx.fill();
-  // Glowing Magma Fissure Eyes
-  ctx.fillStyle = '#f59e0b';
-  ctx.fillRect(-8, -44, 5, 3);
-  ctx.fillRect(3, -44, 5, 3);
+  // Glowing Magma Fissure Eyes — eight-dir bias
+  drawFacingEyePair(ctx, '#f59e0b', { y: -44, size: 3.5, halfGap: 5.5 });
   // Floating Earth debris
   const floatY = Math.sin(tickCount * 0.1) * 3;
   ctx.fillStyle = '#78716c';
@@ -507,14 +581,13 @@ function drawYorsahj(ctx: CanvasRenderingContext2D, tickCount: number) {
   ctx.beginPath();
   ctx.arc(0, 10 + pulse, 14, 0, Math.PI * 2);
   ctx.fill();
-  // Maw with multiple jagged eyes
+  // Maw with jagged eyes — upper pair follows facing; lower stays centered
   ctx.fillStyle = '#09090b';
   ctx.beginPath();
   ctx.arc(0, -38, 15, 0, Math.PI * 2);
   ctx.fill();
+  drawFacingEyePair(ctx, '#facc15', { y: -42, size: 3.2, halfGap: 6 });
   ctx.fillStyle = '#facc15';
-  ctx.fillRect(-8, -42, 4, 3);
-  ctx.fillRect(4, -42, 4, 3);
   ctx.fillRect(-2, -34, 4, 3);
 }
 
@@ -530,10 +603,8 @@ function drawHagara(ctx: CanvasRenderingContext2D, tickCount: number) {
   ctx.beginPath();
   ctx.arc(0, -38, 13, 0, Math.PI * 2);
   ctx.fill();
-  // Lightning eyes
-  ctx.fillStyle = '#38bdf8';
-  ctx.fillRect(-6, -40, 3, 3);
-  ctx.fillRect(3, -40, 3, 3);
+  // Lightning eyes — eight-dir bias
+  drawFacingEyePair(ctx, '#38bdf8', { y: -40, size: 3, halfGap: 4.5 });
   // Left Hand: Lightning Spark Orb
   ctx.fillStyle = '#fde047';
   ctx.beginPath();
@@ -586,10 +657,8 @@ function drawUltraxion(ctx: CanvasRenderingContext2D, tickCount: number) {
   ctx.lineTo(24, -68);
   ctx.lineTo(14, -46);
   ctx.fill();
-  // Glowing Twilight Eyes
-  ctx.fillStyle = '#c084fc';
-  ctx.fillRect(-8, -44, 4, 3);
-  ctx.fillRect(4, -44, 4, 3);
+  // Glowing Twilight Eyes — eight-dir bias
+  drawFacingEyePair(ctx, '#c084fc', { y: -44, size: 3.2, halfGap: 6 });
   // Unstable Twilight Sparks
   ctx.fillStyle = '#f43f5e';
   const spark = (tickCount * 3) % 40;
@@ -619,10 +688,8 @@ function drawWarmasterBlackhorn(ctx: CanvasRenderingContext2D, tickCount: number
   ctx.quadraticCurveTo(36, -65, 34, -40);
   ctx.lineTo(12, -42);
   ctx.fill();
-  // Red War Eyes
-  ctx.fillStyle = '#dc2626';
-  ctx.fillRect(-7, -44, 4, 3);
-  ctx.fillRect(3, -44, 4, 3);
+  // Red War Eyes — eight-dir bias
+  drawFacingEyePair(ctx, '#dc2626', { y: -44, size: 3.2, halfGap: 5 });
   // Spiked Halberd
   ctx.fillStyle = '#a1a1aa';
   ctx.fillRect(26, -45, 4, 60);
@@ -704,10 +771,8 @@ function drawMadnessOfDeathwing(ctx: CanvasRenderingContext2D, tickCount: number
   ctx.fillRect(-16, -34 + jawDrop, 32, 14);
   ctx.fillStyle = '#ea580c';
   ctx.fillRect(-12, -30 + jawDrop, 24, 6); // Fire breathing maw
-  // Blazing Golden Lava Eyes
-  ctx.fillStyle = '#fde047';
-  ctx.fillRect(-11, -48, 5, 4);
-  ctx.fillRect(6, -48, 5, 4);
+  // Blazing Golden Lava Eyes — eight-dir bias
+  drawFacingEyePair(ctx, '#fde047', { y: -48, size: 4, halfGap: 8 });
 }
 
 function drawBossModel(
@@ -716,8 +781,13 @@ function drawBossModel(
   pos: { x: number; y: number },
   isSelected: boolean,
   tickCount: number,
-  isMoving = false
+  isMoving = false,
+  opts?: { showName?: boolean; facingDir?: FacingDir }
 ) {
+  const showName = opts?.showName !== false;
+  const facingDir =
+    opts?.facingDir ??
+    facingDirFromRad((bossUnit as { facingRad?: number }).facingRad);
   ctx.save();
   // Running footstep bob animation when pursuing target
   const runBob = isMoving ? Math.abs(Math.sin(tickCount * 0.35)) * 4 : 0;
@@ -758,71 +828,126 @@ function drawBossModel(
 
   const bId = (bossUnit.id || '').toLowerCase();
 
-  if (bId === 'ashbury') {
-    drawBaronAshbury(ctx, bossUnit, tickCount);
-  } else if (bId === 'silverlaine') {
-    drawBaronSilverlaine(ctx, bossUnit, tickCount);
-  } else if (bId === 'springvale') {
-    drawCommanderSpringvale(ctx, bossUnit, tickCount);
-  } else if (bId === 'walden') {
-    drawLordWalden(ctx, bossUnit, tickCount);
-  } else if (bId === 'godfrey') {
-    drawLordGodfrey(ctx, bossUnit, tickCount);
-  } else if (bId === 'morchok') {
-    drawMorchok(ctx, tickCount);
-  } else if (bId === 'zonozz') {
-    drawZonozz(ctx, tickCount);
-  } else if (bId === 'yorsahj') {
-    drawYorsahj(ctx, tickCount);
-  } else if (bId === 'hagara') {
-    drawHagara(ctx, tickCount);
-  } else if (bId === 'ultraxion') {
-    drawUltraxion(ctx, tickCount);
-  } else if (bId === 'blackhorn') {
-    drawWarmasterBlackhorn(ctx, tickCount);
-  } else if (bId === 'spine') {
-    drawSpineOfDeathwing(ctx, tickCount);
-  } else if (bId === 'madness') {
-    drawMadnessOfDeathwing(ctx, tickCount);
-  } else {
-    // Default Dragon Soul dragon silhouette
-    drawMadnessOfDeathwing(ctx, tickCount);
+  // 八向建模：身体随朝向镜像/肩宽；铭牌与施法条不受镜像影响
+  withBossEightDirFacing(ctx, facingDir, () => {
+    if (bId === 'ashbury') {
+      drawBaronAshbury(ctx, bossUnit, tickCount);
+    } else if (bId === 'silverlaine') {
+      drawBaronSilverlaine(ctx, bossUnit, tickCount);
+    } else if (bId === 'springvale') {
+      drawCommanderSpringvale(ctx, bossUnit, tickCount);
+    } else if (bId === 'walden') {
+      drawLordWalden(ctx, bossUnit, tickCount);
+    } else if (bId === 'godfrey') {
+      drawLordGodfrey(ctx, bossUnit, tickCount);
+    } else if (bId === 'morchok') {
+      drawMorchok(ctx, tickCount);
+    } else if (bId === 'zonozz') {
+      drawZonozz(ctx, tickCount);
+    } else if (bId === 'yorsahj') {
+      drawYorsahj(ctx, tickCount);
+    } else if (bId === 'hagara') {
+      drawHagara(ctx, tickCount);
+    } else if (bId === 'ultraxion') {
+      drawUltraxion(ctx, tickCount);
+    } else if (bId === 'blackhorn') {
+      drawWarmasterBlackhorn(ctx, tickCount);
+    } else if (bId === 'spine') {
+      drawSpineOfDeathwing(ctx, tickCount);
+    } else if (bId === 'madness') {
+      drawMadnessOfDeathwing(ctx, tickCount);
+    } else if (drawFiveManBossModel(ctx, bossUnit, tickCount)) {
+      // 死矿 / 血色 / 斯坦 / ZG：按攻略定位绘制专属外形
+    } else {
+      // 未知 Boss：五人剪影回落（勿误用死亡之翼）
+      drawFiveManBossFallback(ctx, tickCount);
+    }
+  });
+
+  // Name-only overhead (when HP also on, name is drawn inside drawBossHpBar)
+  if (showName) {
+    const barH = 12;
+    const fontPx = Math.max(7, Math.round(barH * 0.85));
+    const label = `💀 ${bossUnit.name}`;
+    const y = -78;
+    ctx.fillStyle = '#FFE08A';
+    ctx.font = `bold ${fontPx}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineWidth = Math.max(2, fontPx * 0.22);
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.85)';
+    ctx.strokeText(label, 0, y + barH / 2);
+    ctx.fillText(label, 0, y + barH / 2);
+    ctx.textBaseline = 'alphabetic';
   }
 
-  // Boss Overhead Name & Skull
-  ctx.fillStyle = '#FFD700';
-  ctx.font = 'bold 13px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText(`💀 ${bossUnit.name}`, 0, -68);
-
-  // Overhead Status: Cast bar when stationary-casting, or Running indicator when pursuing target
   const isCasting = Boolean((bossUnit as any)?.isCasting);
-  const castingSpellName = (bossUnit as any)?.castingSpellName;
+  const castingSpellName = (bossUnit as any)?.castingSpellName as string | undefined;
+  const overheadSkillName = ((bossUnit as any)?.overheadSkillName ||
+    (isCasting ? castingSpellName : null)) as string | null | undefined;
   const castProgress = (bossUnit as any)?.castProgress || 0;
+
+  if (overheadSkillName) {
+    ctx.fillStyle = '#FDE68A';
+    ctx.font = 'bold 9px sans-serif';
+    ctx.fillText(overheadSkillName, 0, -56);
+  }
 
   if (isCasting && castingSpellName) {
     const barW = 74;
-    const barH = 7;
+    const barH = 6;
+    const barY = overheadSkillName ? -48 : -55;
     ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
-    ctx.fillRect(-barW / 2 - 1, -85 - 1, barW + 2, barH + 2);
+    ctx.fillRect(-barW / 2 - 1, barY - 1, barW + 2, barH + 2);
     ctx.fillStyle = '#EAB308';
-    ctx.fillRect(-barW / 2, -85, barW * Math.min(1, Math.max(0, castProgress)), barH);
+    ctx.fillRect(-barW / 2, barY, barW * Math.min(1, Math.max(0, castProgress)), barH);
     ctx.strokeStyle = '#713F12';
     ctx.lineWidth = 1;
-    ctx.strokeRect(-barW / 2, -85, barW, barH);
-    ctx.fillStyle = '#FFFFFF';
-    ctx.font = 'bold 9px sans-serif';
-    ctx.fillText(castingSpellName, 0, -88);
-  } else if (isMoving) {
+    ctx.strokeRect(-barW / 2, barY, barW, barH);
+  } else if (isMoving && !overheadSkillName) {
     ctx.fillStyle = '#F87171';
-    ctx.font = 'bold 10px sans-serif';
-    ctx.fillText('🏃 追击目标中...', 0, -84);
+    ctx.font = 'bold 9px sans-serif';
+    ctx.fillText('🏃 追击目标中...', 0, -56);
   }
 
   ctx.restore();
 }
 
 // ── Class Character Drawing (Enhanced Authentic Models) ─────────────────────
+
+
+/** Combat nameplate gated by display prefs (defaults: self / target / focus). */
+function shouldShowCombatName(
+  u: Unit,
+  selectedUnitId: string | null | undefined,
+  focusTargetId: string | null | undefined,
+  prefs: CombatDisplayPrefs,
+  localPlayerId?: string | null
+): boolean {
+  if (u.role !== 'ENEMY' && prefs.showAllNames) return true;
+  if (u.isPlayer) return prefs.showSelfName;
+  if (u.isPet && localPlayerId && u.ownerId === localPlayerId) return prefs.showSelfName;
+  if (selectedUnitId && u.id === selectedUnitId) return prefs.showTargetName;
+  if (focusTargetId && (u.id === focusTargetId || (focusTargetId === 'boss' && u.role === 'ENEMY'))) {
+    return prefs.showFocusName;
+  }
+  return false;
+}
+
+function shouldShowUnitHpBar(
+  u: Unit,
+  selectedUnitId: string | null | undefined,
+  focusTargetId: string | null | undefined,
+  prefs: CombatDisplayPrefs,
+  localPlayerId?: string | null
+): boolean {
+  if (u.role !== 'ENEMY' && prefs.showAllHp) return true;
+  if (u.isPlayer) return prefs.showSelfHp;
+  if (u.isPet && localPlayerId && u.ownerId === localPlayerId) return prefs.showSelfHp;
+  if (selectedUnitId && u.id === selectedUnitId) return prefs.showTargetHp;
+  if (focusTargetId && u.id === focusTargetId) return prefs.showFocusHp;
+  return false;
+}
 
 function drawClassCharacter(
   ctx: CanvasRenderingContext2D,
@@ -831,19 +956,21 @@ function drawClassCharacter(
   isPlayer: boolean,
   isSelected: boolean,
   tickCount: number,
-  idx: number
+  idx: number,
+  opts?: { scale?: number; showName?: boolean; facingDir?: FacingDir }
 ) {
+  const scale = opts?.scale ?? 1;
+  const showName = opts?.showName ?? true;
+  const facingDir =
+    opts?.facingDir ?? facingDirFromRad((u as { facingRad?: number }).facingRad);
   const isAlive = (u.isAlive ?? u.alive) && u.hp > 0;
   ctx.save();
   ctx.translate(pos.x, pos.y);
+  if (scale !== 1) ctx.scale(scale, scale);
 
   if (!isAlive) {
-    ctx.fillStyle = '#888';
-    ctx.font = 'bold 18px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.fillText('🪦', 0, 0);
-    ctx.font = '10px sans-serif';
-    ctx.fillText(u.name, 0, 16);
+    // Same weathered marker as maze trash tombstones
+    drawTombstoneIcon(ctx, showName ? u.name : '');
     ctx.restore();
     return;
   }
@@ -855,7 +982,6 @@ function drawClassCharacter(
     u.classId === 'DK' ||
     (u.classId === 'PALADIN' && u.role !== 'HEALER');
   const sway = isMelee ? Math.sin(tickCount * 0.12 + idx) * 2.2 : Math.sin(tickCount * 0.06 + idx) * 1.0;
-  const classColor = CLASS_COLORS[u.classId as any] || '#888';
 
   // Footprint scale: pets smaller, player slightly larger, normal companions mid
   const footScale = u.isPet ? 0.72 : isPlayer ? 1.15 : 1.0;
@@ -906,297 +1032,155 @@ function drawClassCharacter(
       ctx.fillRect(-2 + sway, -12, 1.5, 1.5);
       ctx.fillRect(1 + sway, -12, 1.5, 1.5);
     }
-    ctx.font = 'bold 9px sans-serif';
-    ctx.fillStyle = '#bae6fd';
-    ctx.textAlign = 'center';
-    ctx.fillText(u.name, 0, 14);
+    if (showName) {
+      ctx.font = 'bold 9px sans-serif';
+      ctx.fillStyle = '#bae6fd';
+      ctx.textAlign = 'center';
+      ctx.fillText(u.name, 0, 14);
+    }
     ctx.restore();
     return;
   }
 
-  // 2. Class-specific Body & Armor Silhouettes
-  switch (u.classId) {
-    case 'DK': {
-      // Dark Runed Plate Armor
-      ctx.fillStyle = '#1e1b2e';
-      ctx.fillRect(-10 + sway, -14, 20, 24);
-      ctx.fillStyle = '#C41F3B'; // Blood red trim
-      ctx.fillRect(-8 + sway, -12, 16, 8);
-      // Spiked Horned Helm
-      ctx.fillStyle = '#2d2845';
-      ctx.beginPath();
-      ctx.arc(0 + sway, -18, 8, 0, Math.PI * 2);
-      ctx.fill();
-      // Glowing Cyan Runic Eyes
-      ctx.fillStyle = '#00ffff';
-      ctx.fillRect(-4 + sway, -20, 2.5, 2.5);
-      ctx.fillRect(2 + sway, -20, 2.5, 2.5);
-      // Spikes
-      ctx.fillStyle = '#94A3B8';
-      ctx.fillRect(-10 + sway, -24, 3, 7);
-      ctx.fillRect(7 + sway, -24, 3, 7);
-      // Weapon: Tower Shield + Runeblade
-      ctx.fillStyle = '#475569';
-      ctx.fillRect(10 + sway, -8, 6, 20); // Shield
-      ctx.fillStyle = '#38BDF8';
-      ctx.fillRect(12 + sway, -4, 2, 12); // Frost rune line
-      break;
-    }
-    case 'DRUID': {
-      // Leather tunic with nature leafy mantle
-      ctx.fillStyle = '#272018';
-      ctx.fillRect(-8 + sway, -12, 16, 22);
-      ctx.fillStyle = '#15803D'; // Green foliage cape
-      ctx.fillRect(-9 + sway, -10, 18, 6);
-      // Head
-      ctx.fillStyle = '#FF7D0A';
-      ctx.beginPath();
-      ctx.arc(0 + sway, -17, 7, 0, Math.PI * 2);
-      ctx.fill();
-      // Wooden Antlers with emerald glow
-      ctx.strokeStyle = '#B45309';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(-4 + sway, -23);
-      ctx.lineTo(-8 + sway, -28);
-      ctx.lineTo(-12 + sway, -31);
-      ctx.moveTo(4 + sway, -23);
-      ctx.lineTo(8 + sway, -28);
-      ctx.lineTo(12 + sway, -31);
-      ctx.stroke();
-      // Nature Staff with emerald crystal
-      ctx.fillStyle = '#78350F';
-      ctx.fillRect(9 + sway, -22, 3, 30);
-      ctx.fillStyle = '#22C55E';
-      ctx.beginPath();
-      ctx.arc(10.5 + sway, -24, 4.5, 0, Math.PI * 2);
-      ctx.fill();
-      break;
-    }
-    case 'SHAMAN': {
-      // Mail Armor & Wolf Cowl
-      ctx.fillStyle = '#1e293b';
-      ctx.fillRect(-9 + sway, -12, 18, 22);
-      ctx.fillStyle = '#0070DE';
-      ctx.fillRect(-7 + sway, -10, 14, 8);
-      // Wolf Cowl
-      ctx.fillStyle = '#334155';
-      ctx.beginPath();
-      ctx.arc(0 + sway, -17, 8, 0, Math.PI * 2);
-      ctx.fill();
-      // Pointed Wolf ears
-      ctx.fillStyle = '#0284c7';
-      ctx.beginPath();
-      ctx.moveTo(-7 + sway, -23);
-      ctx.lineTo(-4 + sway, -29);
-      ctx.lineTo(-1 + sway, -23);
-      ctx.moveTo(1 + sway, -23);
-      ctx.lineTo(4 + sway, -29);
-      ctx.lineTo(7 + sway, -23);
-      ctx.fill();
-      // Lightning Mace + Shield
-      ctx.fillStyle = '#94A3B8';
-      ctx.fillRect(9 + sway, -16, 4, 22);
-      ctx.fillStyle = '#38BDF8';
-      ctx.fillRect(7 + sway, -18, 8, 5); // Mace head
-      break;
-    }
-    case 'MAGE': {
-      // Kirin Tor Wizard Robe
-      ctx.fillStyle = '#1e1b4b';
-      ctx.fillRect(-8 + sway, -12, 16, 24);
-      ctx.fillStyle = '#40C7EB';
-      ctx.fillRect(-6 + sway, -10, 12, 7);
-      // Wizard Hood / Head
-      ctx.fillStyle = '#312e81';
-      ctx.beginPath();
-      ctx.arc(0 + sway, -17, 7, 0, Math.PI * 2);
-      ctx.fill();
-      // Arcane Wizard Wand with glowing fireball orb
-      ctx.fillStyle = '#E2E8F0';
-      ctx.fillRect(9 + sway, -18, 2.5, 24);
-      ctx.fillStyle = '#F97316';
-      ctx.beginPath();
-      ctx.arc(10.5 + sway, -20, 4, 0, Math.PI * 2);
-      ctx.fill();
-      break;
-    }
-    case 'ROGUE': {
-      // Stealth Leather Armor & Hood
-      ctx.fillStyle = '#18181b';
-      ctx.fillRect(-8 + sway, -12, 16, 22);
-      ctx.fillStyle = '#27272a';
-      ctx.fillRect(-7 + sway, -10, 14, 8);
-      // Assassin Hood covering face
-      ctx.fillStyle = '#3f3f46';
-      ctx.beginPath();
-      ctx.arc(0 + sway, -17, 7, 0, Math.PI * 2);
-      ctx.fill();
-      // Yellow glowing assassin slits
-      ctx.fillStyle = '#FFF569';
-      ctx.fillRect(-4 + sway, -18, 2.5, 2);
-      ctx.fillRect(2 + sway, -18, 2.5, 2);
-      // Dual Poison Daggers
-      ctx.fillStyle = '#71717a';
-      ctx.fillRect(8 + sway, -14, 3, 18);
-      ctx.fillRect(-11 + sway, -14, 3, 18);
-      ctx.fillStyle = '#84CC16'; // Dripping venom
-      ctx.fillRect(7 + sway, -16, 5, 3);
-      ctx.fillRect(-12 + sway, -16, 5, 3);
-      break;
-    }
-    case 'WARRIOR': {
-      // Heavy Steel Plate Armor & Shoulder Pauldrons
-      ctx.fillStyle = '#3f2e21';
-      ctx.fillRect(-10 + sway, -13, 20, 23);
-      ctx.fillStyle = '#C79C6E'; // Warrior bronze/steel trim
-      ctx.fillRect(-11 + sway, -13, 22, 6);
-      // Horned Gladiator Helm
-      ctx.fillStyle = '#64748b';
-      ctx.beginPath();
-      ctx.arc(0 + sway, -18, 7.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = '#ef4444'; // Crimson visor plume
-      ctx.fillRect(-2 + sway, -27, 4, 5);
-      ctx.fillStyle = '#f8fafc';
-      ctx.fillRect(-4 + sway, -19, 8, 2);
-      // Greatsword / Tower Shield
-      if (u.role === 'TANK') {
-        ctx.fillStyle = '#78350f';
-        ctx.fillRect(10 + sway, -9, 6, 20);
-        ctx.fillStyle = '#facc15';
-        ctx.fillRect(12 + sway, -5, 2, 12);
-      } else {
-        ctx.fillStyle = '#cbd5e1';
-        ctx.fillRect(10 + sway, -24, 3.5, 28);
-        ctx.fillStyle = '#b45309';
-        ctx.fillRect(8 + sway, -4, 7.5, 3);
-      }
-      break;
-    }
-    case 'PALADIN': {
-      // Radiant Golden/Silver Plate Armor
-      ctx.fillStyle = '#1e293b';
-      ctx.fillRect(-10 + sway, -13, 20, 23);
-      ctx.fillStyle = '#F58CBA'; // Paladin class trim
-      ctx.fillRect(-8 + sway, -11, 16, 7);
-      ctx.fillStyle = '#FACC15'; // Golden Holy Tabard Cross
-      ctx.fillRect(-1.5 + sway, -10, 3, 14);
-      ctx.fillRect(-5 + sway, -6, 10, 3);
-      // Golden Crowned Helm
-      ctx.fillStyle = '#eab308';
-      ctx.beginPath();
-      ctx.arc(0 + sway, -18, 7.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = '#fef08a';
-      ctx.fillRect(-4 + sway, -20, 2.5, 2);
-      ctx.fillRect(2 + sway, -20, 2.5, 2);
-      // Radiant Hammer or Shield
-      ctx.fillStyle = '#94a3b8';
-      ctx.fillRect(10 + sway, -18, 3, 24);
-      ctx.fillStyle = '#fde047';
-      ctx.fillRect(7 + sway, -21, 9, 6);
-      break;
-    }
-    case 'HUNTER': {
-      // Emerald Mail & Ranger Cloak
-      ctx.fillStyle = '#1a2e05';
-      ctx.fillRect(-8 + sway, -12, 16, 22);
-      ctx.fillStyle = '#ABD473';
-      ctx.fillRect(-7 + sway, -10, 14, 7);
-      // Ranger Hood
-      ctx.fillStyle = '#365314';
-      ctx.beginPath();
-      ctx.arc(0 + sway, -17, 7, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = '#bef264';
-      ctx.fillRect(-3.5 + sway, -18, 2, 2);
-      ctx.fillRect(1.5 + sway, -18, 2, 2);
-      // Longbow
-      ctx.strokeStyle = '#d97706';
-      ctx.lineWidth = 2.2;
-      ctx.beginPath();
-      ctx.arc(9 + sway, -6, 12, -Math.PI / 2.2, Math.PI / 2.2);
-      ctx.stroke();
-      ctx.strokeStyle = '#e2e8f0';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(10 + sway, -17);
-      ctx.lineTo(10 + sway, 5);
-      ctx.stroke();
-      break;
-    }
-    case 'PRIEST': {
-      // White/Gold Vestments (or Shadowform Violet for Shadow DPS)
-      const isShadow = u.role === 'DPS';
-      ctx.fillStyle = isShadow ? '#2e1065' : '#e2e8f0';
-      ctx.fillRect(-8 + sway, -12, 16, 24);
-      ctx.fillStyle = isShadow ? '#9333ea' : '#facc15';
-      ctx.fillRect(-6 + sway, -10, 12, 6);
-      // Head + Halo
-      ctx.fillStyle = isShadow ? '#4c1d95' : '#f8fafc';
-      ctx.beginPath();
-      ctx.arc(0 + sway, -17, 7, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = isShadow ? '#c084fc' : '#fde047';
-      ctx.lineWidth = 1.6;
-      ctx.beginPath();
-      ctx.ellipse(0 + sway, -26, 6, 2.2, 0, 0, Math.PI * 2);
-      ctx.stroke();
-      // Benediction Staff
-      ctx.fillStyle = isShadow ? '#7e22ce' : '#eab308';
-      ctx.fillRect(9 + sway, -20, 2.5, 28);
-      ctx.fillStyle = isShadow ? '#e879f9' : '#fef08a';
-      ctx.beginPath();
-      ctx.arc(10.2 + sway, -22, 4, 0, Math.PI * 2);
-      ctx.fill();
-      break;
-    }
-    case 'WARLOCK': {
-      // Fel-trimmed Dark Demonologist Robes
-      ctx.fillStyle = '#1e1033';
-      ctx.fillRect(-8 + sway, -12, 16, 24);
-      ctx.fillStyle = '#9482C9';
-      ctx.fillRect(-6 + sway, -10, 12, 6);
-      // Horned Fel Cowl
-      ctx.fillStyle = '#3b0764';
-      ctx.beginPath();
-      ctx.arc(0 + sway, -17, 7, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = '#a3e635'; // Fel green eyes
-      ctx.fillRect(-3.5 + sway, -18, 2.2, 2);
-      ctx.fillRect(1.5 + sway, -18, 2.2, 2);
-      // Fel Staff & Soul Shard Orb
-      ctx.fillStyle = '#581c87';
-      ctx.fillRect(9 + sway, -19, 2.5, 26);
-      ctx.fillStyle = '#84cc16';
-      ctx.beginPath();
-      ctx.arc(10.2 + sway, -21, 4.2, 0, Math.PI * 2);
-      ctx.fill();
-      break;
-    }
-    default: {
-      ctx.fillStyle = classColor;
-      ctx.fillRect(-8 + sway, -12, 16, 22);
-      ctx.beginPath();
-      ctx.arc(0 + sway, -16, 7, 0, Math.PI * 2);
-      ctx.fill();
-    }
+  // 2. Class eight-dir body (facing: move dir or cast/attack target)
+  drawClassEightDirBody(ctx, u, sway, facingDir);
+
+  // Name-only overhead (when HP also on, name is drawn inside drawUnitHpBar)
+  if (showName) {
+    const barH = 10;
+    const fontPx = Math.max(7, Math.round(barH * 0.85));
+    const label = isPlayer ? `★ ${u.name}` : u.name;
+    const y = u.isPet ? -22 : -34;
+    ctx.fillStyle = '#FFFFFF';
+    ctx.font = `bold ${fontPx}px sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineWidth = Math.max(2, fontPx * 0.22);
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.85)';
+    ctx.strokeText(label, 0, y + barH / 2);
+    ctx.fillText(label, 0, y + barH / 2);
+    ctx.textBaseline = 'alphabetic';
   }
 
-  // Small Name Bar
-  ctx.fillStyle = '#FFFFFF';
-  ctx.font = 'bold 10px sans-serif';
+  ctx.restore();
+}
+
+/** Fit label into bar width; font height tracks barH. */
+function fitNameplateLabel(
+  ctx: CanvasRenderingContext2D,
+  raw: string,
+  maxWidth: number,
+  fontPx: number
+): string {
+  ctx.font = `bold ${fontPx}px sans-serif`;
+  if (ctx.measureText(raw).width <= maxWidth) return raw;
+  let s = raw;
+  while (s.length > 1 && ctx.measureText(s + '…').width > maxWidth) {
+    s = s.slice(0, -1);
+  }
+  return s.length < raw.length ? s + '…' : s;
+}
+
+function drawNameInsideBar(
+  ctx: CanvasRenderingContext2D,
+  label: string,
+  barW: number,
+  barH: number,
+  y: number,
+  color = '#FFFFFF'
+) {
+  const fontPx = Math.max(6, Math.round(barH * 0.85 * 0.9)); // 血条内名字小 10%
+  const text = fitNameplateLabel(ctx, label, barW - 4, fontPx);
+  ctx.fillStyle = color;
+  ctx.font = `bold ${fontPx}px sans-serif`;
   ctx.textAlign = 'center';
-  ctx.fillText(isPlayer ? `★ ${u.name} (我)` : u.name, 0, 24);
+  ctx.textBaseline = 'middle';
+  ctx.lineWidth = Math.max(2, fontPx * 0.22);
+  ctx.strokeStyle = 'rgba(0, 0, 0, 0.85)';
+  ctx.strokeText(text, 0, y + barH / 2);
+  ctx.fillText(text, 0, y + barH / 2);
+  ctx.textBaseline = 'alphabetic';
+}
 
-  // Small HP Bar
-  const hpPct = Math.max(0, Math.min(1, u.hp / u.maxHp));
-  ctx.fillStyle = '#222';
-  ctx.fillRect(-16, 28, 32, 4);
+/** Name-only plate above head (same anchor as HP bar). */
+function drawOverheadNameOnly(
+  ctx: CanvasRenderingContext2D,
+  pos: { x: number; y: number },
+  label: string,
+  opts?: { scale?: number; color?: string; barW?: number; barH?: number; y?: number }
+) {
+  const scale = opts?.scale ?? 1;
+  const barW = (opts?.barW ?? 48) * scale;
+  const barH = (opts?.barH ?? 10) * scale;
+  const y = (opts?.y ?? -34) * scale;
+  ctx.save();
+  ctx.translate(pos.x, pos.y);
+  drawNameInsideBar(ctx, label, barW, barH, y, opts?.color ?? '#FFFFFF');
+  ctx.restore();
+}
+
+/** Friendly / pet HP bar — above head; optional name drawn inside the bar. */
+function drawUnitHpBar(
+  ctx: CanvasRenderingContext2D,
+  u: Unit,
+  pos: { x: number; y: number },
+  opts?: { scale?: number; name?: string | null }
+) {
+  if (!((u.isAlive ?? u.alive) && u.hp > 0)) return;
+  const scale = opts?.scale ?? 1;
+  const classColor = CLASS_COLORS[u.classId as any] || '#888';
+  const hpPct = Math.max(0, Math.min(1, u.hp / Math.max(1, u.maxHp)));
+  const hasName = !!(opts?.name && opts.name.trim());
+  const barW = (u.isPet ? (hasName ? 36 : 24) : hasName ? 52 : 32) * scale;
+  const barH = (u.isPet ? (hasName ? 8 : 3) : hasName ? 10 : 4) * scale;
+  const y = (u.isPet ? -22 : -34) * scale;
+  ctx.save();
+  ctx.translate(pos.x, pos.y);
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+  ctx.fillRect(-barW / 2 - 1, y - 1, barW + 2, barH + 2);
+  ctx.fillStyle = '#1a1a1a';
+  ctx.fillRect(-barW / 2, y, barW, barH);
   ctx.fillStyle = classColor;
-  ctx.fillRect(-16, 28, 32 * hpPct, 4);
+  ctx.fillRect(-barW / 2, y, barW * hpPct, barH);
+  ctx.strokeStyle = 'rgba(0, 0, 0, 0.85)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(-barW / 2, y, barW, barH);
+  if (hasName) {
+    const label = u.isPlayer ? `★ ${opts!.name}` : opts!.name!;
+    drawNameInsideBar(ctx, label, barW, barH, y);
+  }
+  ctx.restore();
+}
 
+/** Boss HP bar — bright red plate above model; optional name inside. */
+function drawBossHpBar(
+  ctx: CanvasRenderingContext2D,
+  boss: Unit,
+  pos: { x: number; y: number },
+  opts?: { name?: string | null }
+) {
+  if (!((boss.isAlive ?? boss.alive) && boss.hp > 0)) return;
+  const hpPct = Math.max(0, Math.min(1, boss.hp / Math.max(1, boss.maxHp)));
+  const hasName = !!(opts?.name && opts.name.trim());
+  const barW = hasName ? 110 : 88;
+  const barH = hasName ? 12 : 7;
+  const y = -78;
+  ctx.save();
+  ctx.translate(pos.x, pos.y);
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+  ctx.fillRect(-barW / 2 - 1.5, y - 1.5, barW + 3, barH + 3);
+  ctx.fillStyle = '#2a0000';
+  ctx.fillRect(-barW / 2, y, barW, barH);
+  ctx.fillStyle = '#FF1A1A';
+  ctx.fillRect(-barW / 2, y, barW * hpPct, barH);
+  ctx.fillStyle = 'rgba(255, 120, 120, 0.45)';
+  ctx.fillRect(-barW / 2, y, barW * hpPct, Math.max(2, barH * 0.35));
+  ctx.strokeStyle = '#7F0000';
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(-barW / 2, y, barW, barH);
+  if (hasName) {
+    drawNameInsideBar(ctx, `💀 ${opts!.name}`, barW, barH, y, '#FFE08A');
+  }
   ctx.restore();
 }
 
@@ -1300,12 +1284,14 @@ function computePathGeometry(waypoints: Array<{ x: number; y: number }>) {
 }
 
 function makeTrashMob(
-  partial: Omit<TrashMob, 'baseX' | 'baseY' | 'visualHp' | 'isDead' | 'isTombstone' | 'dissipateAlpha' | 'hp'> & {
+  partial: Omit<TrashMob, 'baseX' | 'baseY' | 'visualHp' | 'isDead' | 'isTombstone' | 'dissipateAlpha' | 'hp' | 'isEncounter'> & {
     maxHp: number;
+    isEncounter?: boolean;
   }
 ): TrashMob {
   return {
     ...partial,
+    isEncounter: partial.isEncounter !== false,
     baseX: partial.x,
     baseY: partial.y,
     hp: partial.maxHp,
@@ -1425,8 +1411,17 @@ function killTrashMobAsTombstone(mob: TrashMob) {
   mob.y = mob.baseY;
 }
 
-function drawTrashTombstone(ctx: CanvasRenderingContext2D, mob: TrashMob) {
-  // Weathered grave marker left on the corridor after the fight
+/** Shared tombstone icon (maze trash + combat deaths). Base 0.3, +30%→0.39, +20%→0.468. */
+const TOMBSTONE_DRAW_SCALE = 0.468;
+
+function drawTombstoneIcon(
+  ctx: CanvasRenderingContext2D,
+  name: string,
+  scale: number = TOMBSTONE_DRAW_SCALE
+) {
+  ctx.save();
+  ctx.scale(scale, scale);
+
   ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
   ctx.beginPath();
   ctx.ellipse(0, 12, 14, 5, 0, 0, Math.PI * 2);
@@ -1456,17 +1451,31 @@ function drawTrashTombstone(ctx: CanvasRenderingContext2D, mob: TrashMob) {
 
   ctx.fillStyle = '#94a3b8';
   ctx.font = 'bold 8px sans-serif';
-  ctx.fillText(mob.name.length > 6 ? `${mob.name.slice(0, 5)}…` : mob.name, 0, 22);
+  ctx.fillText(name.length > 6 ? `${name.slice(0, 5)}…` : name, 0, 22);
+  ctx.restore();
 }
 
-function drawTrashMob(ctx: CanvasRenderingContext2D, mob: TrashMob, tickCount: number, is20Man: boolean) {
+function drawTrashTombstone(ctx: CanvasRenderingContext2D, mob: TrashMob, showName = true) {
+  drawTombstoneIcon(ctx, showName ? mob.name : '');
+}
+
+function drawTrashMob(
+  ctx: CanvasRenderingContext2D,
+  mob: TrashMob,
+  tickCount: number,
+  is20Man: boolean,
+  opts?: { scale?: number; showName?: boolean }
+) {
+  const scale = opts?.scale ?? 1;
+  const showName = opts?.showName ?? true;
   if (mob.isDead && !mob.isTombstone && mob.dissipateAlpha <= 0) return;
   ctx.save();
   ctx.globalAlpha = Math.max(0, Math.min(1, mob.isTombstone ? 1 : mob.dissipateAlpha));
   ctx.translate(mob.x, mob.y);
+  if (scale !== 1) ctx.scale(scale, scale);
 
   if (mob.isTombstone || (mob.isDead && mob.hp <= 0)) {
-    drawTrashTombstone(ctx, mob);
+    drawTrashTombstone(ctx, mob, showName);
     ctx.restore();
     return;
   }
@@ -1666,6 +1675,148 @@ function drawTrashMob(ctx: CanvasRenderingContext2D, mob: TrashMob, tickCount: n
       ctx.fillRect(8, -34, 12, 10);
       break;
     }
+    case 'DEFIAS_MINER': {
+      ctx.fillStyle = '#44403c';
+      ctx.fillRect(-10, -12, 20, 24);
+      ctx.fillStyle = '#a8a29e';
+      ctx.fillRect(-8, -10, 16, 10);
+      ctx.fillStyle = '#1c1917';
+      ctx.beginPath();
+      ctx.arc(0, -16, 8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#fbbf24';
+      ctx.fillRect(-7, -18, 14, 3);
+      ctx.fillStyle = '#78716c';
+      ctx.fillRect(8, -6, 4, 16);
+      break;
+    }
+    case 'GOBLIN_TECH': {
+      ctx.fillStyle = '#365314';
+      ctx.fillRect(-9, -10, 18, 20);
+      ctx.fillStyle = '#84cc16';
+      ctx.fillRect(-7, -8, 14, 10);
+      ctx.fillStyle = '#14532d';
+      ctx.beginPath();
+      ctx.arc(0, -14, 7, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#facc15';
+      ctx.fillRect(-4, -15, 3, 2);
+      ctx.fillRect(1, -15, 3, 2);
+      ctx.fillStyle = '#f97316';
+      ctx.beginPath();
+      ctx.arc(10, -8, 4 + Math.sin(tickCount * 0.25), 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
+    case 'SCARLET_FOOTMAN': {
+      ctx.fillStyle = '#7f1d1d';
+      ctx.fillRect(-10, -14, 20, 26);
+      ctx.fillStyle = '#f8fafc';
+      ctx.fillRect(-8, -12, 16, 10);
+      ctx.fillStyle = '#450a0a';
+      ctx.beginPath();
+      ctx.arc(0, -18, 8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#dc2626';
+      ctx.fillRect(-3, -20, 6, 2);
+      ctx.fillStyle = '#94a3b8';
+      ctx.fillRect(9, -18, 3, 28);
+      break;
+    }
+    case 'SCARLET_ACOLYTE': {
+      ctx.fillStyle = '#881337';
+      ctx.fillRect(-9, -12, 18, 24);
+      ctx.fillStyle = '#fecaca';
+      ctx.fillRect(-7, -10, 14, 12);
+      ctx.fillStyle = '#7f1d1d';
+      ctx.beginPath();
+      ctx.arc(0, -16, 7, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#fbbf24';
+      ctx.fillRect(8, -26, 3, 32);
+      const orb = Math.sin(tickCount * 0.2) * 1.5;
+      ctx.fillStyle = '#fef08a';
+      ctx.beginPath();
+      ctx.arc(9.5, -28, 4 + orb, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
+    case 'SCOURGE_ABOM': {
+      ctx.fillStyle = '#3f6212';
+      ctx.fillRect(-14, -14, 28, 28);
+      ctx.fillStyle = '#65a30d';
+      ctx.fillRect(-11, -10, 22, 14);
+      ctx.fillStyle = '#1a2e05';
+      ctx.beginPath();
+      ctx.arc(-4, -18, 7, 0, Math.PI * 2);
+      ctx.arc(5, -16, 6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#a3e635';
+      ctx.fillRect(-6, -18, 2, 2);
+      ctx.fillRect(4, -16, 2, 2);
+      break;
+    }
+    case 'GARGOYLE_SENTRY': {
+      const wing = Math.sin(tickCount * 0.18) * 4;
+      ctx.fillStyle = '#57534e';
+      ctx.beginPath();
+      ctx.moveTo(-16 - wing, -18);
+      ctx.lineTo(-4, -6);
+      ctx.lineTo(-12, 4);
+      ctx.moveTo(16 + wing, -18);
+      ctx.lineTo(4, -6);
+      ctx.lineTo(12, 4);
+      ctx.fill();
+      ctx.fillStyle = '#44403c';
+      ctx.fillRect(-8, -10, 16, 20);
+      ctx.fillStyle = '#292524';
+      ctx.beginPath();
+      ctx.arc(0, -14, 7, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#f97316';
+      ctx.fillRect(-3, -14, 6, 2);
+      break;
+    }
+    case 'TROLL_BERSERKER': {
+      ctx.fillStyle = '#166534';
+      ctx.fillRect(-11, -14, 22, 26);
+      ctx.fillStyle = '#22c55e';
+      ctx.fillRect(-9, -12, 18, 12);
+      ctx.fillStyle = '#14532d';
+      ctx.beginPath();
+      ctx.arc(0, -18, 8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#a3e635';
+      ctx.beginPath();
+      ctx.moveTo(-6, -24);
+      ctx.lineTo(-3, -32);
+      ctx.lineTo(0, -24);
+      ctx.moveTo(2, -24);
+      ctx.lineTo(5, -32);
+      ctx.lineTo(8, -24);
+      ctx.fill();
+      ctx.fillStyle = '#facc15';
+      ctx.fillRect(9, -20, 3, 30);
+      break;
+    }
+    case 'VENOM_WARLOCK': {
+      ctx.fillStyle = '#365314';
+      ctx.fillRect(-9, -12, 18, 24);
+      ctx.fillStyle = '#4d7c0f';
+      ctx.fillRect(-7, -10, 14, 14);
+      ctx.fillStyle = '#1a2e05';
+      ctx.beginPath();
+      ctx.arc(0, -16, 7, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#84cc16';
+      ctx.fillRect(8, -28, 3, 34);
+      const drip = Math.sin(tickCount * 0.22) * 2;
+      ctx.fillStyle = '#a3e635';
+      ctx.beginPath();
+      ctx.arc(9.5, -30 + drip, 4, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
   }
 
   // 3. Overhead Health Bar with Smooth Visual Chipping
@@ -1694,14 +1845,17 @@ function drawTrashMob(ctx: CanvasRenderingContext2D, mob: TrashMob, tickCount: n
   ctx.strokeRect(-barWidth / 2, -36, barWidth, 5);
 
   // Overhead Name & Level
-  ctx.fillStyle = is20Man ? '#e879f9' : '#f87171';
-  ctx.font = 'bold 9px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillText(mob.name, 0, -41);
+  if (showName) {
+    ctx.fillStyle = is20Man ? '#e879f9' : '#f87171';
+    ctx.font = 'bold 9px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(mob.name, 0, -41);
+  }
 
   // Overhead HP Numbers
   ctx.fillStyle = '#ffffff';
   ctx.font = '8px sans-serif';
+  ctx.textAlign = 'center';
   ctx.fillText(`${Math.ceil(mob.hp)}`, 0, -30);
 
   ctx.restore();
@@ -1710,72 +1864,93 @@ function drawTrashMob(ctx: CanvasRenderingContext2D, mob: TrashMob, tickCount: n
 /**
  * 全屏石质大殿地面：战术网格铺满整张画布，无中间矩形框/区域约束。
  */
-function drawArenaBackground(ctx: CanvasRenderingContext2D, width: number, height: number) {
-  // 1. Full-screen stone floor with soft center highlight
+/** Boss-room décor in fixed top-down world coords (canvas 780×360). */
+const ARENA_ROOM_CX = 390;
+const ARENA_ROOM_CY = 180;
+const ARENA_ROOM_PILLARS = [
+  { x: 50, y: 38 },
+  { x: 730, y: 38 },
+  { x: 50, y: 322 },
+  { x: 730, y: 322 },
+] as const;
+
+/**
+ * Arena floor in *world* space — call AFTER applyCanvasViewTransform.
+ * Grid yaw/pitch-deforms with the ground; rune rings stay at room center (not player).
+ */
+function drawArenaFloorWorld(
+  ctx: CanvasRenderingContext2D,
+  cam: ViewCamera,
+  canvasW: number,
+  canvasH: number
+) {
+  const aabb = worldAabbCoveringCanvas(cam, canvasW, canvasH, 96);
+  const { minX, minY, maxX, maxY } = aabb;
+  const span = Math.max(maxX - minX, maxY - minY, 1);
+
+  // 1. Floor fill + highlight at fixed room center
   const floorGrad = ctx.createRadialGradient(
-    width / 2,
-    height / 2,
+    ARENA_ROOM_CX,
+    ARENA_ROOM_CY,
     40,
-    width / 2,
-    height / 2,
-    Math.max(width, height) * 0.72
+    ARENA_ROOM_CX,
+    ARENA_ROOM_CY,
+    span * 0.55
   );
   floorGrad.addColorStop(0, '#15152a');
   floorGrad.addColorStop(0.55, '#111122');
   floorGrad.addColorStop(1, '#080812');
   ctx.fillStyle = floorGrad;
-  ctx.fillRect(0, 0, width, height);
+  ctx.fillRect(minX, minY, maxX - minX, maxY - minY);
 
-  // 2. Fine tactical grid across the entire viewport (30px)
+  // 2. Fine tactical grid (30px world)
+  const x0 = Math.floor(minX / 30) * 30;
+  const y0 = Math.floor(minY / 30) * 30;
   ctx.strokeStyle = '#1c1c38';
   ctx.lineWidth = 1;
-  for (let x = 0; x <= width; x += 30) {
+  for (let x = x0; x <= maxX; x += 30) {
     ctx.beginPath();
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, height);
+    ctx.moveTo(x, minY);
+    ctx.lineTo(x, maxY);
     ctx.stroke();
   }
-  for (let y = 0; y <= height; y += 30) {
+  for (let y = y0; y <= maxY; y += 30) {
     ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.lineTo(width, y);
+    ctx.moveTo(minX, y);
+    ctx.lineTo(maxX, y);
     ctx.stroke();
   }
 
-  // 3. Subtle major tile seams every 90px
+  // 3. Major tile seams every 90px
+  const x0m = Math.floor(minX / 90) * 90;
+  const y0m = Math.floor(minY / 90) * 90;
   ctx.strokeStyle = '#141428';
   ctx.lineWidth = 1.25;
-  for (let x = 0; x <= width; x += 90) {
+  for (let x = x0m; x <= maxX; x += 90) {
     ctx.beginPath();
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, height);
+    ctx.moveTo(x, minY);
+    ctx.lineTo(x, maxY);
     ctx.stroke();
   }
-  for (let y = 0; y <= height; y += 90) {
+  for (let y = y0m; y <= maxY; y += 90) {
     ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.lineTo(width, y);
+    ctx.moveTo(minX, y);
+    ctx.lineTo(maxX, y);
     ctx.stroke();
   }
 
-  // 4. Soft center rune rings (decorative only, no bounding box)
+  // 4. Rune rings at fixed room center — independent of camera pivot / player
   ctx.strokeStyle = 'rgba(99, 102, 241, 0.16)';
   ctx.lineWidth = 1.5;
   ctx.beginPath();
-  ctx.arc(width / 2, height / 2, 68, 0, Math.PI * 2);
+  ctx.arc(ARENA_ROOM_CX, ARENA_ROOM_CY, 68, 0, Math.PI * 2);
   ctx.stroke();
   ctx.beginPath();
-  ctx.arc(width / 2, height / 2, 74, 0, Math.PI * 2);
+  ctx.arc(ARENA_ROOM_CX, ARENA_ROOM_CY, 74, 0, Math.PI * 2);
   ctx.stroke();
 
-  // 5. Corner pillars + torch glow
-  const pillars = [
-    { x: 50, y: 38 },
-    { x: width - 50, y: 38 },
-    { x: 50, y: height - 38 },
-    { x: width - 50, y: height - 38 },
-  ];
-  for (const p of pillars) {
+  // 5. Pillars at fixed room corners
+  for (const p of ARENA_ROOM_PILLARS) {
     const torchGrad = ctx.createRadialGradient(p.x, p.y, 2, p.x, p.y, 45);
     torchGrad.addColorStop(0, 'rgba(251, 146, 60, 0.18)');
     torchGrad.addColorStop(0.4, 'rgba(251, 146, 60, 0.05)');
@@ -1784,15 +1959,20 @@ function drawArenaBackground(ctx: CanvasRenderingContext2D, width: number, heigh
     ctx.beginPath();
     ctx.arc(p.x, p.y, 45, 0, Math.PI * 2);
     ctx.fill();
-
     ctx.fillStyle = '#131322';
     ctx.strokeStyle = '#24243e';
     ctx.lineWidth = 1.5;
     ctx.fillRect(p.x - 7, p.y - 7, 14, 14);
     ctx.strokeRect(p.x - 7, p.y - 7, 14, 14);
   }
+}
 
-  // 6. Soft edge vignette (no hard arena rectangle)
+/** Screen-space vignette (after enterScreenSpaceFromIso, or before ISO transform). */
+function drawArenaVignetteScreen(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number
+) {
   const vignette = ctx.createRadialGradient(
     width / 2,
     height / 2,
@@ -1807,6 +1987,12 @@ function drawArenaBackground(ctx: CanvasRenderingContext2D, width: number, heigh
   ctx.fillRect(0, 0, width, height);
 }
 
+/** Canvas view zoom: default 1, clamped to ±50%. */
+const CANVAS_VIEW_ZOOM_DEFAULT = 1;
+const CANVAS_VIEW_ZOOM_MIN = CANVAS_VIEW_ZOOM_DEFAULT * 0.5;
+const CANVAS_VIEW_ZOOM_MAX = CANVAS_VIEW_ZOOM_DEFAULT * 1.5;
+const CANVAS_VIEW_ZOOM_STEP = 0.08;
+
 // ── Main CombatCanvas Component ───────────────────────────────────────────
 
 export const CombatCanvas: React.FC<Props> = ({
@@ -1818,11 +2004,13 @@ export const CombatCanvas: React.FC<Props> = ({
   runPhase,
   screenShake,
   selectedUnitId,
+  focusTargetId = null,
   dungeonTier = '5man',
+  dungeonId,
   targetBossName = '首领',
   currentBossIndex = 0,
   travelRemainingMs,
-  totalTravelMs = 12000,
+  totalTravelMs = 7000,
   isCorpseRunning = false,
   corpseRunRemainingMs = 0,
   onSelectUnit,
@@ -1839,18 +2027,124 @@ export const CombatCanvas: React.FC<Props> = ({
   onConfirmGroundTarget,
   onCancelGroundTarget,
   syncRemotePositions = false,
+  isNetworkGuest = false,
   onNetworkMoveReport,
+  autoNavActive = true,
+  onAutoNavChange,
+  combatDisplayPrefs = null,
 }) => {
+  const displayPrefs = resolveCombatDisplayPrefs(combatDisplayPrefs);
+  const displayPrefsRef = useRef(displayPrefs);
+  displayPrefsRef.current = displayPrefs;
+  const runPhaseRef = useRef(runPhase);
+  runPhaseRef.current = runPhase;
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const viewZoomRef = useRef(CANVAS_VIEW_ZOOM_DEFAULT);
+  /** ISO-only local yaw (radians) + pitch deg from horizontal. Never synced. */
+  const viewYawRadRef = useRef(0);
+  const viewPitchDegRef = useRef(ISO_PITCH_DEG_DEFAULT);
+  const orbitDragRef = useRef<{
+    active: boolean;
+    startClientX: number;
+    startClientY: number;
+    yawAtStart: number;
+    pitchDegAtStart: number;
+    movedPx: number;
+  } | null>(null);
 
   // Dynamic Positions (Centered in the 60% battle rectangle)
   const playerPosRef = useRef<{ x: number; y: number }>({ x: 230, y: 180 });
   const mouseCanvasPosRef = useRef<{ x: number; y: number } | null>(null);
+
+  // Drop orbit when leaving ISO pref, or while maze locks top-down
+  useEffect(() => {
+    if (displayPrefs.canvasViewMode !== 'ISO') {
+      viewYawRadRef.current = 0;
+      viewPitchDegRef.current = ISO_PITCH_DEG_DEFAULT;
+      orbitDragRef.current = null;
+    }
+  }, [displayPrefs.canvasViewMode]);
+
+  useEffect(() => {
+    if (runPhase === 'TRAVEL_RECOVERY') {
+      orbitDragRef.current = null;
+    }
+  }, [runPhase]);
+
+  /** Maze (TRAVEL_RECOVERY) always locked to top-down; ISO only outside maze. */
+  const isIsoViewAllowed = () =>
+    displayPrefsRef.current.canvasViewMode === 'ISO' &&
+    runPhaseRef.current !== 'TRAVEL_RECOVERY';
+
+  const getViewCamera = (width: number, height: number): ViewCamera => {
+    const mode = isIsoViewAllowed() ? 'ISO' : 'TOPDOWN';
+    const screenX = width / 2;
+    const screenY = height / 2;
+    const zoom = viewZoomRef.current;
+    if (mode === 'TOPDOWN') {
+      return {
+        mode: 'TOPDOWN',
+        yawRad: 0,
+        pivotX: screenX,
+        pivotY: screenY,
+        screenX,
+        screenY,
+        zoom,
+      };
+    }
+    const pivot = playerPosRef.current;
+    return {
+      mode: 'ISO',
+      yawRad: viewYawRadRef.current,
+      pivotX: pivot.x,
+      pivotY: pivot.y,
+      screenX,
+      screenY,
+      pitchSin: pitchDegToSin(viewPitchDegRef.current),
+      zoom,
+    };
+  };
+
+  /** ISO/TOPDOWN: upright billboard at projected feet; sprite scales with view zoom. */
+  const withUprightAt = (
+    ctx: CanvasRenderingContext2D,
+    cam: ViewCamera,
+    worldPos: { x: number; y: number },
+    draw: (screenPos: { x: number; y: number }) => void
+  ) => {
+    const screenPos = worldToView(worldPos.x, worldPos.y, cam);
+    const zoom = cam.zoom && cam.zoom > 0 ? cam.zoom : 1;
+    enterScreenSpaceFromIso(ctx, cam);
+    if (Math.abs(zoom - 1) >= 1e-6) {
+      ctx.translate(screenPos.x, screenPos.y);
+      ctx.scale(zoom, zoom);
+      ctx.translate(-screenPos.x, -screenPos.y);
+    }
+    draw(screenPos);
+    ctx.restore();
+  };
+
+  const clientToWorld = (clientX: number, clientY: number) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return { x: 0, y: 0 };
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width / rect.width;
+    const scaleY = canvas.height / rect.height;
+    const sx = (clientX - rect.left) * scaleX;
+    const sy = (clientY - rect.top) * scaleY;
+    return viewToWorld(sx, sy, getViewCamera(canvas.width, canvas.height));
+  };
   const bossPosRef = useRef<{ x: number; y: number }>({ x: 500, y: 180 });
   const lastBossIdRef = useRef<string | null>(null);
   const isBossMovingRef = useRef<boolean>(false);
+  /** Boss 上一帧移动方向（用于朝向：移动中用移动方向） */
+  const bossMoveDirRef = useRef<{ dx: number; dy: number }>({ dx: 0, dy: 0 });
+  /** 玩家 / AI 移动方向（八向建模） */
+  const playerMoveDirRef = useRef<{ dx: number; dy: number }>({ dx: 0, dy: 0 });
+  const lastPlayerPosForFacingRef = useRef<{ x: number; y: number } | null>(null);
+  const unitMoveDirRef = useRef<Record<string, { dx: number; dy: number }>>({});
   const companionPositionsRef = useRef<Record<string, { x: number; y: number }>>({});
-  /** AI 多动症：站桩计时 + 单次小幅踱步偏移（不改动拉怪/治疗圈等意图站位） */
+  /** AI 多动症：站桩计时 + 单次小幅踱步偏移（限制在走路区内且 ≤5 码） */
   const companionFidgetRef = useRef<Record<string, {
     idleMs: number;
     activeUntil: number;
@@ -1863,57 +2157,126 @@ export const CombatCanvas: React.FC<Props> = ({
 
   // Mouse Click-to-Move & Auto-Pathfinding in Maze
   const clickTargetRef = useRef<{ x: number; y: number; time: number } | null>(null);
-  const autoNavActiveRef = useRef<boolean>(true);
+  const autoNavActiveRef = useRef<boolean>(autoNavActive);
+  autoNavActiveRef.current = autoNavActive;
+  const onAutoNavChangeRef = useRef(onAutoNavChange);
+  onAutoNavChangeRef.current = onAutoNavChange;
+  const setAutoNav = (active: boolean) => {
+    autoNavActiveRef.current = active;
+    onAutoNavChangeRef.current?.(active);
+  };
   const mazeLeadDistRef = useRef<number>(0);
 
   // Approach pull animation timer — start poses captured so march ends on combat spots
   const approachElapsedRef = useRef<number>(0);
   const approachStartPositionsRef = useRef<Record<string, { x: number; y: number }>>({});
   const approachPullFiredRef = useRef(false);
+  /** Fire portal→boss transition once per travel segment (avoid spam / double snap). */
+  const portalEnterFiredRef = useRef(false);
   const prevCanvasPhaseRef = useRef<string | null>(null);
   const pullShoutRef = useRef<string | null>(null);
 
   // FX references
-  const projectilesRef = useRef<Projectile[]>([]);
-  const slashesRef = useRef<MeleeSlash[]>([]);
-  const beamsRef = useRef<HealingBeam[]>([]);
+  /** Fill-only AoE rings (instant + persistent), multi-stack via alpha */
+  const aoeRingsRef = useRef<AoeRingState[]>([]);
+  const aoeSeenActionIdsRef = useRef<Set<string>>(new Set());
+  const pendingAoeActionsRef = useRef<any[]>([]);
+  /** Instant AoE class-color feathered pulse (above terrain rings, below boss) */
+  const classAoePulsesRef = useRef<ClassAoePulseState>(createClassAoePulseState());
+  const classAoePulseSeenIdsRef = useRef<Set<string>>(new Set());
+  const hitFxRef = useRef<HitFxState>(createHitFxState());
+  const hitFxSeenIdsRef = useRef<Set<string>>(new Set());
 
   // Diablo Dungeon Exploration: Corridor Trash Mobs State Machine
+  const resolveDungeonId = useCallback(() => {
+    if (dungeonId) return dungeonId;
+    return dungeonTier === '20man' ? 'dragon_soul' : 'shadowfang_keep';
+  }, [dungeonId, dungeonTier]);
+
+  const mazeLayoutRef = useRef<MazeLayout | null>(null);
+
+  // Live props for the RAF loop — travelRemainingMs was previously closed over stale
+  // values (not in effect deps), so elapsed froze until a restart then jumped:
+  // full-HP trash → instant tombstones, and party teleports on encounter.
+  const travelRemainingMsRef = useRef(travelRemainingMs);
+  const totalTravelMsRef = useRef(totalTravelMs);
+  const isNetworkGuestRef = useRef(isNetworkGuest);
+  const dungeonTierRef = useRef(dungeonTier);
+  const runPhaseLiveRef = useRef(runPhase);
+  travelRemainingMsRef.current = travelRemainingMs;
+  totalTravelMsRef.current = totalTravelMs;
+  isNetworkGuestRef.current = isNetworkGuest;
+  dungeonTierRef.current = dungeonTier;
+  runPhaseLiveRef.current = runPhase;
+
+  /** Accumulators for maze trash DPS (stable cadence, not re-rolled every frame). */
+  const mazeDpsAccMsRef = useRef(0);
+  const mazeDpsNextMsRef = useRef(50);
+  const mazeRetaliateAccMsRef = useRef(0);
+  const mazeHealAccMsRef = useRef(0);
+
+  const refreshMazeLayout = useCallback((): MazeLayout => {
+    const did = resolveDungeonId();
+    const stage = typeof currentBossIndex === 'number' ? currentBossIndex : 0;
+    // Match canvas logical size (780×360) — mismatched 800×400 caused exit-path clamp twitch
+    const layout = getMazeLayoutSync(did, stage);
+    mazeLayoutRef.current = layout;
+    // Best-effort server persist / fetch (async)
+    void ensureMazeLayout(did, stage).then((remote) => {
+      if (remote && remote.seed === layout.seed) mazeLayoutRef.current = remote;
+    });
+    return layout;
+  }, [resolveDungeonId, currentBossIndex]);
+
   const initTrashMobs = useCallback((): TrashMob[] => {
-    const is20 = dungeonTier === '20man';
-    const waypoints = is20 ? DRAGON_SOUL_WAYPOINTS : SHADOWFANG_WAYPOINTS;
-    const { getPoint, totalLen } = computePathGeometry(waypoints);
-    return createDungeonTrashMobs(dungeonTier, getPoint, totalLen);
-  }, [dungeonTier]);
+    const layout = refreshMazeLayout();
+    const { getPoint, totalLen } = computePathGeometry(layout.waypoints);
+    const specs = trashSpawnsToMobs(layout.trashSpawns, getPoint, totalLen);
+    return specs.map((s) =>
+      makeTrashMob({
+        id: s.id,
+        name: s.name,
+        mobModel: s.mobModel as TrashMob['mobModel'],
+        packIndex: s.packIndex,
+        isEncounter: s.isEncounter,
+        distAlongMaze: s.distAlongMaze,
+        x: s.x,
+        y: s.y,
+        maxHp: s.maxHp,
+      })
+    );
+  }, [refreshMazeLayout]);
 
   const trashMobsRef = useRef<TrashMob[]>(initTrashMobs());
   const lastDungeonTierRef = useRef<string>(dungeonTier);
   const lastTargetBossRef = useRef<string>(targetBossName);
   /** Tracks phase for maze refresh — re-entering TRAVEL must revive trash (no leftover tombstones). */
   const lastPhaseForTrashResetRef = useRef<string | null>(null);
+  /** Last travel elapsed used to detect clock rewind on new dungeon segment */
+  const lastTravelElapsedRef = useRef<number>(0);
   const isEncounteringRef = useRef<boolean>(false);
   const currentEncounterPackRef = useRef<number>(0);
   const encounterTimerMsRef = useRef<number>(0);
   const encounterSCTRef = useRef<EncounterSCTItem[]>([]);
   /** Elapsed-ms when each pack was fully tombstoned — keeps early-clear march smooth. */
-  const packClearedAtElapsedRef = useRef<{ 1: number | null; 2: number | null }>({ 1: null, 2: null });
+  const packClearedAtElapsedRef = useRef<Record<number, number | null>>({ 1: null, 2: null, 3: null });
 
-  // Keyboard listeners for WASD & Arrow Keys & Alt+1~9 Target Switching
+  // Room / local AoE ring pulses (host emit + guest COMBAT_STATE.recentActions)
+  useEffect(() => {
+    const onActions = (ev: Event) => {
+      const detail = (ev as CustomEvent).detail;
+      const actions = detail?.actions;
+      if (!Array.isArray(actions) || actions.length === 0) return;
+      pendingAoeActionsRef.current.push(...actions);
+    };
+    window.addEventListener('cata_combat_actions', onActions as EventListener);
+    return () => window.removeEventListener('cata_combat_actions', onActions as EventListener);
+  }, []);
+
+  // Keyboard listeners for WASD & Arrow Keys (Alt+1~5 squad targeting lives in App)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
-
-      // Alt + 1 ~ 9 quick target switching matching RaidFrames order!
-      if (e.altKey && e.key >= '1' && e.key <= '9') {
-        e.preventDefault();
-        const targetIdx = parseInt(e.key, 10) - 1;
-        const rolePriority: Record<string, number> = { TANK: 0, HEALER: 1, DPS: 2 };
-        const sorted = [...units].sort((a, b) => (rolePriority[a.role] ?? 99) - (rolePriority[b.role] ?? 99));
-        if (targetIdx >= 0 && targetIdx < sorted.length) {
-          onSelectUnit(sorted[targetIdx].id);
-        }
-        return;
-      }
 
       if (e.key === 'Escape') {
         if (groundTargetState) {
@@ -1934,7 +2297,7 @@ export const CombatCanvas: React.FC<Props> = ({
       if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) {
         keysPressedRef.current.add(key);
         // Pressing WASD turns off auto-pathfinding and click-to-move
-        autoNavActiveRef.current = false;
+        setAutoNav(false);
         clickTargetRef.current = null;
         if (onPlayerMove) onPlayerMove();
       }
@@ -1950,7 +2313,8 @@ export const CombatCanvas: React.FC<Props> = ({
     };
 
     const handleWindowMouseDown = (e: MouseEvent) => {
-      if (e.button === 2 && groundTargetState) {
+      // Top-down: RMB cancels ground target. ISO uses canvas pointer handlers instead.
+      if (e.button === 2 && groundTargetState && !isIsoViewAllowed()) {
         if (onCancelGroundTarget) onCancelGroundTarget();
       }
     };
@@ -1967,27 +2331,99 @@ export const CombatCanvas: React.FC<Props> = ({
     };
   }, [units, onSelectUnit, groundTargetState, onCancelGroundTarget]);
 
+  const updatePointerView = (clientX: number, clientY: number, buttons?: number) => {
+    // Store WORLD coords so reticle/logic stay correct under ISO view transform
+    mouseCanvasPosRef.current = clientToWorld(clientX, clientY);
+    const drag = orbitDragRef.current;
+    const rmbHeld = drag?.active || ((buttons ?? 0) & 2) !== 0;
+    if (rmbHeld && drag && isIsoViewAllowed()) {
+      const dx = clientX - drag.startClientX;
+      const dy = clientY - drag.startClientY;
+      drag.movedPx = Math.max(drag.movedPx, Math.hypot(dx, dy));
+      // Horizontal → yaw; vertical → pitch (20°↔90°). Sens from prefs (±50% of 1.0).
+      const orbitSens = displayPrefsRef.current.isoOrbitSensitivity || 1;
+      const pitchSens = displayPrefsRef.current.isoPitchSensitivity || 1;
+      // Drag right → yaw positive (mirrored from prior sign)
+      viewYawRadRef.current =
+        drag.yawAtStart + dx * orbitRadiansPerPixel(ISO_ORBIT_PX_PER_TURN) * orbitSens;
+      viewPitchDegRef.current = pitchDegFromOrbitDrag(
+        drag.pitchDegAtStart,
+        dy * pitchSens
+      );
+    }
+  };
+
   const handleCanvasMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    mouseCanvasPosRef.current = {
-      x: (e.clientX - rect.left) * scaleX,
-      y: (e.clientY - rect.top) * scaleY,
-    };
+    updatePointerView(e.clientX, e.clientY, e.buttons);
+  };
+
+  const handleCanvasPointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    updatePointerView(e.clientX, e.clientY, e.buttons);
   };
 
   const handleCanvasMouseLeave = () => {
     mouseCanvasPosRef.current = null;
   };
 
-  const handleCanvasContextMenu = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (groundTargetState) {
+  // Mouse wheel zooms the view camera (±50%); textures stay screen-fixed / full-bleed
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const onWheel = (e: WheelEvent) => {
       e.preventDefault();
-      if (onCancelGroundTarget) onCancelGroundTarget();
+      const dir = e.deltaY > 0 ? 1 : e.deltaY < 0 ? -1 : 0;
+      if (!dir) return;
+      const z = viewZoomRef.current + dir * CANVAS_VIEW_ZOOM_STEP;
+      viewZoomRef.current = Math.min(
+        CANVAS_VIEW_ZOOM_MAX,
+        Math.max(CANVAS_VIEW_ZOOM_MIN, z)
+      );
+    };
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+    return () => canvas.removeEventListener('wheel', onWheel);
+  }, []);
+
+  const handleCanvasContextMenu = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    // Always absorb right-click so the browser context menu never appears over combat.
+    e.preventDefault();
+  };
+
+  const handleCanvasPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (e.button !== 2) return;
+    e.preventDefault();
+    if (!isIsoViewAllowed()) {
+      // Top-down / maze: right-click still cancels ground targeting (no orbit)
+      if (groundTargetState && onCancelGroundTarget) onCancelGroundTarget();
       return;
+    }
+    orbitDragRef.current = {
+      active: true,
+      startClientX: e.clientX,
+      startClientY: e.clientY,
+      yawAtStart: viewYawRadRef.current,
+      pitchDegAtStart: viewPitchDegRef.current,
+      movedPx: 0,
+    };
+    try {
+      (e.currentTarget as HTMLCanvasElement).setPointerCapture(e.pointerId);
+    } catch {}
+  };
+
+  const handleCanvasPointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (e.button !== 2) return;
+    const drag = orbitDragRef.current;
+    orbitDragRef.current = null;
+    try {
+      (e.currentTarget as HTMLCanvasElement).releasePointerCapture(e.pointerId);
+    } catch {}
+    // Short click with almost no drag → cancel ground target (ISO & top-down via other path)
+    if (
+      isIsoViewAllowed() &&
+      groundTargetState &&
+      onCancelGroundTarget &&
+      (!drag || drag.movedPx < 8)
+    ) {
+      onCancelGroundTarget();
     }
   };
 
@@ -1997,11 +2433,7 @@ export const CombatCanvas: React.FC<Props> = ({
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    const clickX = (e.clientX - rect.left) * scaleX;
-    const clickY = (e.clientY - rect.top) * scaleY;
+    const { x: clickX, y: clickY } = clientToWorld(e.clientX, e.clientY);
 
     // 0. Ground Target Placement Confirmation
     if (groundTargetState) {
@@ -2014,13 +2446,6 @@ export const CombatCanvas: React.FC<Props> = ({
           onConfirmGroundTarget(groundTargetState.slotIdx, groundTargetState.spellId, clickX, clickY);
         }
       }
-      return;
-    }
-
-    // Toggle Auto-Nav Button Click (in Maze phase, top-center banner)
-    if (runPhase === 'TRAVEL_RECOVERY' && clickX >= 220 && clickX <= 560 && clickY >= 14 && clickY <= 50) {
-      autoNavActiveRef.current = !autoNavActiveRef.current;
-      clickTargetRef.current = null;
       return;
     }
 
@@ -2054,9 +2479,9 @@ export const CombatCanvas: React.FC<Props> = ({
       }
     }
 
-    // 3. Direct Target Selection: Click on AI Companion
+    // 3. Direct Target Selection: Click on AI Companion (图腾单位不可选)
     for (const u of units) {
-      if (u.isPlayer) continue;
+      if (u.isPlayer || isTotemUnit(u)) continue;
       const pos = companionPositionsRef.current[u.id];
       if (pos && Math.hypot(clickX - pos.x, clickY - pos.y) <= 28) {
         handleSelectOrFocus(u.id);
@@ -2068,7 +2493,7 @@ export const CombatCanvas: React.FC<Props> = ({
     // 4. Click on empty ground: Navigate/walk player to clicked position (only if alive!)
     if (pUnit && (pUnit.isAlive ?? pUnit.alive) && pUnit.hp > 0) {
       clickTargetRef.current = { x: clickX, y: clickY, time: Date.now() };
-      autoNavActiveRef.current = false;
+      setAutoNav(false);
     }
   };
 
@@ -2076,11 +2501,7 @@ export const CombatCanvas: React.FC<Props> = ({
   const handleCanvasDoubleClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
     const canvas = canvasRef.current;
     if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    const clickX = (e.clientX - rect.left) * scaleX;
-    const clickY = (e.clientY - rect.top) * scaleY;
+    const { x: clickX, y: clickY } = clientToWorld(e.clientX, e.clientY);
 
     const handleSelectOrFocus = (id: string) => {
       if (e.shiftKey) {
@@ -2110,9 +2531,9 @@ export const CombatCanvas: React.FC<Props> = ({
       }
     }
 
-    // 3. Double click on AI Companions
+    // 3. Double click on AI Companions (图腾单位不可选)
     for (const u of units) {
-      if (u.isPlayer) continue;
+      if (u.isPlayer || isTotemUnit(u)) continue;
       const pos = companionPositionsRef.current[u.id];
       if (pos && Math.hypot(clickX - pos.x, clickY - pos.y) <= 30) {
         handleSelectOrFocus(u.id);
@@ -2148,9 +2569,14 @@ export const CombatCanvas: React.FC<Props> = ({
       isEncounteringRef.current = false;
       currentEncounterPackRef.current = 0;
       encounterTimerMsRef.current = 0;
-      packClearedAtElapsedRef.current = { 1: null, 2: null };
+      packClearedAtElapsedRef.current = { 1: null, 2: null, 3: null };
       mazeLeadDistRef.current = 0;
-      const startWp = (dungeonTier === '20man' ? DRAGON_SOUL_WAYPOINTS : SHADOWFANG_WAYPOINTS)[0];
+      lastTravelElapsedRef.current = 0;
+      mazeDpsAccMsRef.current = 0;
+      mazeDpsNextMsRef.current = 50;
+      mazeRetaliateAccMsRef.current = 0;
+      mazeHealAccMsRef.current = 0;
+      const startWp = (mazeLayoutRef.current || refreshMazeLayout()).waypoints[0] || { x: 60, y: 80 };
       playerPosRef.current = { x: startWp.x, y: startWp.y };
       companionPositionsRef.current = {};
       companionFidgetRef.current = {};
@@ -2160,12 +2586,28 @@ export const CombatCanvas: React.FC<Props> = ({
       tickCount++;
       const width = canvas.width;
       const height = canvas.height;
+      const prefs = displayPrefsRef.current;
+      const localPlayerId = units.find((u) => u.isPlayer)?.id ?? null;
+      const hitFxFilter = {
+        showFriendlyProjectiles: prefs.showFriendlyProjectiles,
+        showFriendlySlash: prefs.showFriendlySlash,
+        showEnemyProjectiles: prefs.showEnemyProjectiles,
+        showEnemySlash: prefs.showEnemySlash,
+      };
+      const showAoeTone = (tone: string) => {
+        if (tone === 'HEAL') return prefs.showHealTerrain;
+        if (tone === 'FRIENDLY') return prefs.showBuffTerrain;
+        return prefs.showDamageTerrain;
+      };
 
       // Entering PULL_APPROACH: always reset march clock (skip-travel can bypass TRAVEL frames)
       if (runPhase === 'PULL_APPROACH' && prevCanvasPhaseRef.current !== 'PULL_APPROACH') {
         approachElapsedRef.current = 0;
         approachPullFiredRef.current = false;
         approachStartPositionsRef.current = {};
+      }
+      if (runPhase === 'TRAVEL_RECOVERY' && prevCanvasPhaseRef.current !== 'TRAVEL_RECOVERY') {
+        portalEnterFiredRef.current = false;
       }
       prevCanvasPhaseRef.current = runPhase;
 
@@ -2196,6 +2638,10 @@ export const CombatCanvas: React.FC<Props> = ({
         ctx.translate(shakeX, shakeY);
       }
 
+      // Arena floor is drawn in world space under the view transform (yaw/pitch).
+      // Maze ambience stays screen-fixed (TOPDOWN-locked). Pivot = player feet in ISO.
+      const viewCam = getViewCamera(width, height);
+
       // Check dead members in party
       const deadMembers = units.filter(u => (!u.alive && !u.isAlive) || u.hp <= 0);
       const hasDeadMembers = deadMembers.length > 0;
@@ -2215,138 +2661,280 @@ export const CombatCanvas: React.FC<Props> = ({
       const canMove = !(runPhase === 'TRAVEL_RECOVERY' && hasDeadMembers) && isPlayerAlive;
 
       // ── Dungeon Labyrinth Corridors (Different Mazes per Dungeon Tier) ──
-      const is20Man = dungeonTier === '20man';
-      const mazeWaypoints = is20Man ? DRAGON_SOUL_WAYPOINTS : SHADOWFANG_WAYPOINTS;
+      const is20Man = dungeonTierRef.current === '20man';
+      /** 20 人本战斗：人物 / 小怪精灵统一 70% 体积 */
+      const combatSpriteScale = is20Man ? 0.7 : 1;
+      const isNetworkGuestLive = isNetworkGuestRef.current;
+      const mazeLayout = mazeLayoutRef.current || refreshMazeLayout();
+      const mazeWaypoints = mazeLayout.waypoints.length
+        ? mazeLayout.waypoints
+        : is20Man
+          ? DRAGON_SOUL_WAYPOINTS
+          : SHADOWFANG_WAYPOINTS;
+      const mazeTheme = mazeLayout.theme;
       const { segLens, totalLen: totalMazeLen, getPoint: getPointAlongMaze } = computePathGeometry(mazeWaypoints);
 
-      // ── Synchronized Timeline Calculation ──
-      const totalT = totalTravelMs && totalTravelMs > 0 ? totalTravelMs : 12000;
-      const rem = travelRemainingMs !== undefined ? travelRemainingMs : 12000;
+      // ── Synchronized Timeline Calculation (always read live refs) ──
+      const totalTProp = totalTravelMsRef.current;
+      const totalT = totalTProp && totalTProp > 0 ? totalTProp : (is20Man ? 14000 : 7000);
+      const remProp = travelRemainingMsRef.current;
+      const rem = remProp !== undefined ? remProp : totalT;
       const elapsed = Math.max(0, Math.min(totalT, totalT - rem));
 
-      // Synchronized Milestones along totalT:
-      // Pack 1 at 32% distance:
-      //   0 ~ 18% totalT: Marching from entrance to Pack 1
-      //   18% ~ 38% totalT: Combat with Pack 1 (HP decreases smoothly to 0)
-      //   38% ~ 44% totalT: Pack 1 soul dissipation & death fade out
-      // Pack 2 at 72% distance:
-      //   44% ~ 64% totalT: Marching from Pack 1 to Pack 2
-      //   64% ~ 84% totalT: Combat with Pack 2 (HP decreases smoothly to 0)
-      //   84% ~ 90% totalT: Pack 2 soul dissipation & death fade out
-      // Exit Portal:
-      //   90% ~ 100% totalT: Sprinting to Exit Portal!
-      // Exactly at 100% (elapsed == totalT), party arrives at the exit portal door!
-      const tP1Start = 0.18 * totalT;
-      const tP1HpZero = 0.38 * totalT;
-      const tP1Clear = 0.44 * totalT;
-      const tP2Start = 0.64 * totalT;
-      const tP2HpZero = 0.84 * totalT;
-      const tP2Clear = 0.90 * totalT;
+      // New dungeon / wipe-retry: travel clock rewound → hard-reset trash (drop prior tombstones)
+      if (runPhase === 'TRAVEL_RECOVERY' && elapsed + 400 < lastTravelElapsedRef.current) {
+        trashMobsRef.current = initTrashMobs();
+        packClearedAtElapsedRef.current = { 1: null, 2: null, 3: null };
+        mazeLeadDistRef.current = 0;
+        mazeDpsAccMsRef.current = 0;
+        mazeDpsNextMsRef.current = 50;
+        mazeRetaliateAccMsRef.current = 0;
+        mazeHealAccMsRef.current = 0;
+      }
+      lastTravelElapsedRef.current = elapsed;
 
-      const stopDist1 = totalMazeLen * 0.32 - 48;
-      const stopDist2 = totalMazeLen * 0.72 - 48;
-
-      const packStillAlive = (packIndex: 1 | 2) =>
-        trashMobsRef.current.some(m => m.packIndex === packIndex && !m.isDead && !m.isTombstone);
-
-      // Latch the moment each pack falls so early clears don't snap the lead forward
-      if (elapsed < tP1Start) {
-        packClearedAtElapsedRef.current[1] = null;
-        packClearedAtElapsedRef.current[2] = null;
-      } else {
-        if (!packStillAlive(1) && packClearedAtElapsedRef.current[1] === null) {
-          packClearedAtElapsedRef.current[1] = elapsed;
+      // Guest: mirror host trash + lead BEFORE packStillAlive / draw decisions
+      if (isNetworkGuestLive) {
+        const guestMaze = readGuestMazeSync();
+        if (guestMaze) {
+          if (typeof guestMaze.mazeLeadDist === 'number') {
+            // Soft follow host lead (avoid guest-side teleport when snapshot jumps)
+            const cur = mazeLeadDistRef.current;
+            const want = guestMaze.mazeLeadDist;
+            const d = want - cur;
+            const step = Math.max(3.8 * MAZE_TRAVERSE_SPEED_SCALE, Math.abs(d) * 0.28 * MAZE_TRAVERSE_SPEED_SCALE);
+            mazeLeadDistRef.current =
+              Math.abs(d) <= step ? want : cur + Math.sign(d) * step;
+          }
+          if (guestMaze.mazeTrash?.length) {
+            const byId = new Map(guestMaze.mazeTrash.map((x) => [x.id, x]));
+            for (const mob of trashMobsRef.current) {
+              const sn = byId.get(mob.id);
+              if (!sn) continue;
+              mob.hp = sn.hp;
+              mob.maxHp = sn.maxHp;
+              // Keep visualHp lagging so bars chip smoothly (don't snap to snapshot)
+              if (sn.isDead || sn.isTombstone) mob.visualHp = 0;
+              mob.isDead = sn.isDead;
+              mob.isTombstone = sn.isTombstone;
+              if (typeof sn.dissipateAlpha === 'number') mob.dissipateAlpha = sn.dissipateAlpha;
+            }
+          }
+          // Merge host maze floating numbers by id
+          if (guestMaze.sctEvents?.length) {
+            const seen = new Set(encounterSCTRef.current.map((s) => s.id));
+            for (const ev of guestMaze.sctEvents) {
+              if (!ev?.id || seen.has(ev.id)) continue;
+              seen.add(ev.id);
+              encounterSCTRef.current.push({
+                id: ev.id,
+                text: ev.text,
+                x: ev.x,
+                y: ev.y,
+                color: ev.color,
+                createdAt: ev.createdAt || Date.now(),
+                isCrit: !!ev.isCrit,
+              });
+            }
+          }
         }
-        if (elapsed >= tP2Start && !packStillAlive(2) && packClearedAtElapsedRef.current[2] === null) {
-          packClearedAtElapsedRef.current[2] = elapsed;
+      }
+
+      // Prim 迷宫：场景可刷 ≥6 堆，时间线只打 isEncounter 的 2–3 堆
+      const encounterPackIndices = [
+        ...new Set(
+          mazeLayout.trashSpawns
+            .filter((s) => s.isEncounter !== false)
+            .map((s) => s.packIndex)
+        ),
+      ].sort((a, b) => a - b);
+      const fallbackEncounterCount = Math.max(0, mazeLayout.packCount ?? 0);
+      const encounterList =
+        encounterPackIndices.length > 0
+          ? encounterPackIndices
+          : Array.from({ length: fallbackEncounterCount }, (_, i) => i + 1);
+      const packCount = encounterList.length;
+      const packWindows = encounterList.map((packIndex, i) => {
+        const pathT =
+          mazeLayout.trashSpawns.find((s) => s.packIndex === packIndex && s.isEncounter !== false)
+            ?.pathT ??
+          mazeLayout.trashSpawns.find((s) => s.packIndex === packIndex)?.pathT ??
+          ((i + 1) / (packCount + 1)) * 0.85 + 0.08;
+        const stopDist = Math.max(0, totalMazeLen * pathT - 48);
+        const segStart = packCount > 0 ? (i / packCount) * 0.88 * totalT : 0;
+        const segEnd = packCount > 0 ? ((i + 1) / packCount) * 0.88 * totalT : 0;
+        const segLen = Math.max(1, segEnd - segStart);
+        return {
+          packIndex,
+          stopDist,
+          // 打怪更快：更早开战、更早清完
+          fightStart: segStart + segLen * 0.22,
+          forceKillAt: segStart + segLen * 0.58,
+          clearAt: segEnd,
+        };
+      });
+      const exitSprintStart = 0.9 * totalT;
+
+      const packStillAlive = (packIndex: number) =>
+        trashMobsRef.current.some(
+          (m) => m.isEncounter && m.packIndex === packIndex && !m.isDead && !m.isTombstone
+        );
+
+      if (elapsed < (packWindows[0]?.fightStart ?? 0)) {
+        for (const p of encounterList) packClearedAtElapsedRef.current[p] = null;
+      } else {
+        for (const w of packWindows) {
+          if (
+            elapsed >= w.fightStart &&
+            !packStillAlive(w.packIndex) &&
+            packClearedAtElapsedRef.current[w.packIndex] == null
+          ) {
+            packClearedAtElapsedRef.current[w.packIndex] = elapsed;
+          }
         }
       }
 
       let targetLeadDist = 0;
       let currentEncounterPack = 0;
 
-      if (elapsed < tP1Start) {
-        targetLeadDist = (elapsed / tP1Start) * stopDist1;
-      } else if (elapsed < tP2Start) {
-        if (packStillAlive(1)) {
-          targetLeadDist = stopDist1;
-          currentEncounterPack = 1;
-        } else {
-          const marchT0 = packClearedAtElapsedRef.current[1] ?? tP1Clear;
-          const denom = Math.max(1, tP2Start - marchT0);
-          const ratio = Math.max(0, Math.min(1, (elapsed - marchT0) / denom));
-          targetLeadDist = stopDist1 + ratio * (stopDist2 - stopDist1);
-        }
-      } else if (elapsed < totalT) {
-        if (packStillAlive(2)) {
-          targetLeadDist = stopDist2;
-          currentEncounterPack = 2;
-        } else {
-          const marchT0 = packClearedAtElapsedRef.current[2] ?? tP2Clear;
-          const denom = Math.max(1, totalT - marchT0);
-          const ratio = Math.max(0, Math.min(1, (elapsed - marchT0) / denom));
-          targetLeadDist = stopDist2 + ratio * (totalMazeLen - stopDist2);
-        }
-      } else {
+      if (elapsed >= totalT) {
         targetLeadDist = totalMazeLen;
+      } else {
+        let handled = false;
+        for (let i = 0; i < packWindows.length; i++) {
+          const w = packWindows[i];
+          const prevStop = i === 0 ? 0 : packWindows[i - 1].stopDist;
+          const nextFight = i + 1 < packWindows.length ? packWindows[i + 1].fightStart : exitSprintStart;
+          if (elapsed < w.fightStart) {
+            const marchStart = i === 0 ? 0 : packWindows[i - 1].clearAt;
+            const denom = Math.max(1, w.fightStart - marchStart);
+            const ratio = Math.max(0, Math.min(1, (elapsed - marchStart) / denom));
+            targetLeadDist = prevStop + ratio * (w.stopDist - prevStop);
+            handled = true;
+            break;
+          }
+          if (packStillAlive(w.packIndex)) {
+            targetLeadDist = w.stopDist;
+            currentEncounterPack = w.packIndex;
+            handled = true;
+            break;
+          }
+          // cleared — march toward next stop / exit until next fight window
+          if (elapsed < nextFight) {
+            const marchT0 = packClearedAtElapsedRef.current[w.packIndex] ?? w.clearAt;
+            const nextStop =
+              i + 1 < packWindows.length ? packWindows[i + 1].stopDist : totalMazeLen;
+            const denom = Math.max(1, nextFight - marchT0);
+            const ratio = Math.max(0, Math.min(1, (elapsed - marchT0) / denom));
+            targetLeadDist = w.stopDist + ratio * (nextStop - w.stopDist);
+            handled = true;
+            break;
+          }
+        }
+        if (!handled) {
+          if (packWindows.length === 0) {
+            // 无遭遇：全程赶路到出口
+            targetLeadDist = totalMazeLen * Math.min(1, elapsed / Math.max(1, totalT));
+          } else {
+            const last = packWindows[packWindows.length - 1];
+            const marchT0 = packClearedAtElapsedRef.current[last.packIndex] ?? last.clearAt;
+            const denom = Math.max(1, totalT - marchT0);
+            const ratio = Math.max(0, Math.min(1, (elapsed - marchT0) / denom));
+            targetLeadDist = last.stopDist + ratio * (totalMazeLen - last.stopDist);
+          }
+        }
       }
 
       isEncounteringRef.current = currentEncounterPack > 0;
       currentEncounterPackRef.current = currentEncounterPack;
 
-      // Reset living packs before their fight window; never erase tombstones after clear
-      trashMobsRef.current.forEach(mob => {
-        const fightStart = mob.packIndex === 1 ? tP1Start : tP2Start;
-        const forceKillAt = mob.packIndex === 1 ? tP1HpZero : tP2HpZero;
-        if (elapsed < fightStart && !mob.isTombstone) {
-          mob.hp = mob.maxHp;
-          mob.visualHp = mob.maxHp;
-          mob.isDead = false;
-          mob.isTombstone = false;
-          mob.dissipateAlpha = 1.0;
-          mob.x = mob.baseX;
-          mob.y = mob.baseY;
-        } else if (!mob.isDead && !mob.isTombstone && elapsed >= forceKillAt) {
-          // Soft deadline so the march can resume even if DPS RNG was unlucky
-          killTrashMobAsTombstone(mob);
-        } else if (!mob.isDead && currentEncounterPack === mob.packIndex) {
-          // Mild combat bob so the pack doesn't look frozen
-          const bob = Math.sin(tickCount * 0.12 + mob.baseX * 0.05) * 2.2;
-          const sway = Math.cos(tickCount * 0.09 + mob.baseY * 0.04) * 1.6;
-          mob.x = mob.baseX + sway;
-          mob.y = mob.baseY + bob;
-        }
-      });
+      // Host/solo: revive before fight / soft deadline kill. Guests only mirror host trash.
+      // Ambient (non-encounter) packs stay as scenery and are never force-killed.
+      if (!isNetworkGuestLive) {
+        trashMobsRef.current.forEach((mob) => {
+          if (!mob.isEncounter) return;
+          const win = packWindows.find((w) => w.packIndex === mob.packIndex);
+          if (!win) return;
+          const fightStart = win.fightStart;
+          const forceKillAt = win.forceKillAt;
+          if (elapsed < fightStart) {
+            mob.hp = mob.maxHp;
+            mob.visualHp = mob.maxHp;
+            mob.isDead = false;
+            mob.isTombstone = false;
+            mob.dissipateAlpha = 1.0;
+            mob.x = mob.baseX;
+            mob.y = mob.baseY;
+          } else if (!mob.isDead && !mob.isTombstone && elapsed >= fightStart) {
+            // Timeline floor: HP must visibly drain toward 0 by forceKillAt (never full→tombstone)
+            const span = Math.max(1, forceKillAt - fightStart);
+            const t = Math.max(0, Math.min(1.05, (elapsed - fightStart) / span));
+            const floorHp = Math.max(0, Math.round(mob.maxHp * (1 - t)));
+            if (mob.hp > floorHp) mob.hp = floorHp;
+            if (elapsed >= forceKillAt || mob.hp <= 0) {
+              killTrashMobAsTombstone(mob);
+            } else if (currentEncounterPack === mob.packIndex) {
+              const bob = Math.sin(tickCount * 0.12 + mob.baseX * 0.05) * 2.2;
+              const sway = Math.cos(tickCount * 0.09 + mob.baseY * 0.04) * 1.6;
+              mob.x = mob.baseX + sway;
+              mob.y = mob.baseY + bob;
+            }
+          }
+        });
+      } else {
+        trashMobsRef.current.forEach((mob) => {
+          if (!mob.isEncounter) return;
+          if (!mob.isDead && currentEncounterPack === mob.packIndex) {
+            const bob = Math.sin(tickCount * 0.12 + mob.baseX * 0.05) * 2.2;
+            const sway = Math.cos(tickCount * 0.09 + mob.baseY * 0.04) * 1.6;
+            mob.x = mob.baseX + sway;
+            mob.y = mob.baseY + bob;
+          }
+        });
+      }
 
       // Discrete party ↔ trash combat (chip HP + light return damage). No auto-fade corpses.
+      // Publish happens AFTER this block so guests see chipped HP, not only tombstones.
       if (currentEncounterPack > 0) {
         const activePackMobs = trashMobsRef.current.filter(
-          m => m.packIndex === currentEncounterPack && !m.isDead && !m.isTombstone
+          m =>
+            m.isEncounter &&
+            m.packIndex === currentEncounterPack &&
+            !m.isDead &&
+            !m.isTombstone
         );
         const livingAllies = units.filter(u => (u.isAlive ?? u.alive) && u.hp > 0);
 
-        // Party hits trash — staggered so each mob dies on its own rhythm
-        if (activePackMobs.length > 0 && tickCount % 8 === 0) {
+        // Maze combat cadence scaled with path width so fight windows still clear in targetTravelMs
+        const frameMs = 16;
+        mazeDpsAccMsRef.current += frameMs;
+        mazeRetaliateAccMsRef.current += frameMs;
+        mazeHealAccMsRef.current += frameMs;
+
+        if (!isNetworkGuestLive && activePackMobs.length > 0 && mazeDpsAccMsRef.current >= mazeDpsNextMsRef.current) {
+          mazeDpsAccMsRef.current = 0;
+          const dpsGap = Math.round((50 + Math.floor(Math.random() * 50)) / MAZE_TRAVERSE_SPEED_SCALE);
+          mazeDpsNextMsRef.current = Math.max(28, dpsGap);
           const targetMob = activePackMobs[Math.floor(Math.random() * activePackMobs.length)];
           const isCrit = Math.random() > 0.55;
+          const burst = Math.random() < 0.18 ? 1.55 + Math.random() * 0.7 : 0.65 + Math.random() * 0.9;
           const baseHit = is20Man
-            ? (isCrit ? 9000 + Math.random() * 5000 : 4800 + Math.random() * 2800)
-            : (isCrit ? 5200 + Math.random() * 2800 : 2800 + Math.random() * 1600);
-          const dmg = Math.round(baseHit);
+            ? (isCrit ? 13000 + Math.random() * 7000 : 7000 + Math.random() * 4000)
+            : (isCrit ? 7500 + Math.random() * 4000 : 4000 + Math.random() * 2300);
+          const dmg = Math.round(baseHit * burst);
           targetMob.hp = Math.max(0, targetMob.hp - dmg);
 
-          slashesRef.current.push({
-            id: `slash_${Date.now()}_${Math.random()}`,
-            x: targetMob.x + (Math.random() - 0.5) * 20,
-            y: targetMob.y + (Math.random() - 0.5) * 16,
-            angle: (Math.random() - 0.5) * Math.PI,
-            color: isCrit ? '#FACC15' : '#EF4444',
-            elapsedMs: 0,
-            totalMs: 180,
-          });
-
-          const caster = units.find(
-            u =>
+          // Maze hit FX share combatHitFx (class color / boss dark red; ≤12×12, scale 0.5)
+          const meleeCaster = units.find(
+            (u) =>
+              (u.isAlive ?? u.alive) &&
+              (u.classId === 'ROGUE' ||
+                u.classId === 'DK' ||
+                u.classId === 'WARRIOR' ||
+                (u.classId === 'PALADIN' && u.role === 'DPS'))
+          );
+          const rangedCaster = units.find(
+            (u) =>
               (u.isAlive ?? u.alive) &&
               (u.classId === 'MAGE' ||
                 u.classId === 'SHAMAN' ||
@@ -2355,25 +2943,42 @@ export const CombatCanvas: React.FC<Props> = ({
                 u.classId === 'WARLOCK' ||
                 u.classId === 'PRIEST')
           );
-          if (caster && Math.random() > 0.35) {
-            const cPos = caster.isPlayer
+          if (meleeCaster && Math.random() > 0.4) {
+            const mPos = meleeCaster.isPlayer
               ? playerPosRef.current
-              : companionPositionsRef.current[caster.id] || playerPosRef.current;
-            const projColor =
-              caster.classId === 'MAGE' ? '#F97316' :
-              caster.classId === 'SHAMAN' ? '#38BDF8' :
-              caster.classId === 'HUNTER' ? '#ABD473' :
-              caster.classId === 'WARLOCK' ? '#A855F7' :
-              caster.classId === 'PRIEST' ? '#C084FC' : '#FBBF24';
-            projectilesRef.current.push({
-              id: `proj_${Date.now()}_${Math.random()}`,
+              : companionPositionsRef.current[meleeCaster.id] || meleeCaster.position || {
+                  x: targetMob.x - 20,
+                  y: targetMob.y,
+                };
+            const hand = meleeHandPose(mPos, { x: targetMob.x, y: targetMob.y }, 0.5);
+            spawnHitSlash(hitFxRef.current, {
+              x: hand.x,
+              y: hand.y,
+              angle: hand.angle,
+              color: CLASS_COLORS[meleeCaster.classId as keyof typeof CLASS_COLORS] || '#EF4444',
+              scale: 0.5,
+            });
+          } else if (rangedCaster) {
+            const cPos = rangedCaster.isPlayer
+              ? playerPosRef.current
+              : companionPositionsRef.current[rangedCaster.id] || playerPosRef.current;
+            spawnHitProjectile(hitFxRef.current, {
               fromX: cPos.x,
               fromY: cPos.y,
               toX: targetMob.x,
               toY: targetMob.y,
-              color: projColor,
-              kind: 'FIRE',
-              progress: 0,
+              classId: rangedCaster.classId,
+              scale: 0.5,
+            });
+          } else {
+            const fallbackFrom = playerPosRef.current;
+            const hand = meleeHandPose(fallbackFrom, { x: targetMob.x, y: targetMob.y }, 0.5);
+            spawnHitSlash(hitFxRef.current, {
+              x: hand.x,
+              y: hand.y,
+              angle: hand.angle,
+              color: isCrit ? '#FACC15' : '#EF4444',
+              scale: 0.5,
             });
           }
 
@@ -2402,19 +3007,22 @@ export const CombatCanvas: React.FC<Props> = ({
         }
 
         // Trash returns light damage onto the party (prefer tank, never lethal wipe)
-        if (activePackMobs.length > 0 && livingAllies.length > 0 && tickCount % 14 === 0) {
+        if (!isNetworkGuestLive && activePackMobs.length > 0 && livingAllies.length > 0 && mazeRetaliateAccMsRef.current >= Math.round(130 / MAZE_TRAVERSE_SPEED_SCALE)) {
+          mazeRetaliateAccMsRef.current = 0;
           const attacker = activePackMobs[Math.floor(Math.random() * activePackMobs.length)];
           const tank = livingAllies.find(u => u.role === 'TANK');
+          // 坦克优先吃伤害；迷宫环节永不致死
           const victim =
-            tank && Math.random() < 0.62
+            tank && Math.random() < 0.78
               ? tank
               : livingAllies[Math.floor(Math.random() * livingAllies.length)];
+          const spike = Math.random() < 0.22 ? 1.8 + Math.random() : 0.55 + Math.random() * 1.1;
           const hit = Math.round(
-            is20Man
+            (is20Man
               ? 900 + Math.random() * 1400
-              : 550 + Math.random() * 900
+              : 550 + Math.random() * 900) * spike
           );
-          const floorHp = Math.max(1, Math.round(victim.maxHp * 0.28));
+          const floorHp = Math.max(1, Math.round(victim.maxHp * 0.22));
           const applied = Math.min(hit, Math.max(0, victim.hp - floorHp));
           if (applied > 0) {
             victim.hp = Math.max(floorHp, victim.hp - applied);
@@ -2425,27 +3033,35 @@ export const CombatCanvas: React.FC<Props> = ({
                   y: victim.position?.y ?? attacker.y,
                 };
 
-            // Mob swipe / bolt toward victim
-            if (attacker.mobModel === 'SHADOW_CHANNELER' || attacker.mobModel === 'TWILIGHT_VOIDWEAVER') {
-              projectilesRef.current.push({
-                id: `mob_bolt_${Date.now()}_${Math.random()}`,
+            // Trash return: dark-red hit FX (same combatHitFx pipeline)
+            if (
+              attacker.mobModel === 'SHADOW_CHANNELER' ||
+              attacker.mobModel === 'TWILIGHT_VOIDWEAVER' ||
+              attacker.mobModel === 'SCARLET_ACOLYTE' ||
+              attacker.mobModel === 'VENOM_WARLOCK' ||
+              attacker.mobModel === 'GOBLIN_TECH'
+            ) {
+              spawnHitProjectile(hitFxRef.current, {
                 fromX: attacker.x,
                 fromY: attacker.y,
                 toX: vPos.x,
                 toY: vPos.y,
-                color: '#A855F7',
-                kind: 'FROST',
-                progress: 0,
+                color: BOSS_HIT_FX_COLOR,
+                shape: 'bolt',
+                scale: 0.5,
               });
             } else {
-              slashesRef.current.push({
-                id: `mob_slash_${Date.now()}_${Math.random()}`,
-                x: vPos.x + (Math.random() - 0.5) * 12,
-                y: vPos.y + (Math.random() - 0.5) * 10,
-                angle: Math.atan2(vPos.y - attacker.y, vPos.x - attacker.x),
-                color: '#F87171',
-                elapsedMs: 0,
-                totalMs: 200,
+              const hand = meleeHandPose(
+                { x: attacker.x, y: attacker.y },
+                vPos,
+                0.5
+              );
+              spawnHitSlash(hitFxRef.current, {
+                x: hand.x,
+                y: hand.y,
+                angle: hand.angle,
+                color: BOSS_HIT_FX_COLOR,
+                scale: 0.5,
               });
             }
 
@@ -2462,7 +3078,8 @@ export const CombatCanvas: React.FC<Props> = ({
         }
 
         // Light healer top-ups so the skirmish breathes (damage in, heal out)
-        if (livingAllies.length > 0 && tickCount % 18 === 0) {
+        if (!isNetworkGuestLive && livingAllies.length > 0 && mazeHealAccMsRef.current >= Math.round(160 / MAZE_TRAVERSE_SPEED_SCALE)) {
+          mazeHealAccMsRef.current = 0;
           const healer = livingAllies.find(u => u.role === 'HEALER');
           const hurt = [...livingAllies]
             .filter(u => u.hp < u.maxHp * 0.96)
@@ -2481,15 +3098,11 @@ export const CombatCanvas: React.FC<Props> = ({
               const tPos = hurt.isPlayer
                 ? playerPosRef.current
                 : companionPositionsRef.current[hurt.id] || hurt.position || hPos;
-              beamsRef.current.push({
-                id: `maze_heal_${Date.now()}_${Math.random()}`,
-                fromX: hPos.x,
-                fromY: hPos.y,
-                toX: tPos.x,
-                toY: tPos.y,
-                color: '#34D399',
-                elapsedMs: 0,
-                totalMs: 280,
+              spawnHealSnowBurst(hitFxRef.current, {
+                actorId: healer.id,
+                x: hPos.x,
+                y: hPos.y,
+                scale: 0.5,
               });
               encounterSCTRef.current.push({
                 id: `pheal_${Date.now()}_${Math.random()}`,
@@ -2505,14 +3118,51 @@ export const CombatCanvas: React.FC<Props> = ({
         }
       }
 
+      // Host/solo: publish AFTER HP chips so guests see bars drain (not full→tombstone)
+      if (!isNetworkGuestLive) {
+        const nowSct = Date.now();
+        const recentSct = encounterSCTRef.current
+          .filter((s) => nowSct - s.createdAt < 1200)
+          .slice(-24)
+          .map((s) => ({
+            id: s.id,
+            text: s.text,
+            x: s.x,
+            y: s.y,
+            color: s.color,
+            createdAt: s.createdAt,
+            isCrit: s.isCrit,
+          }));
+        publishHostMazeSync({
+          mazeSeed: mazeLayout.seed,
+          mazeDungeonId: mazeLayout.dungeonId,
+          mazeStageIndex: mazeLayout.stageIndex,
+          mazeLeadDist: mazeLeadDistRef.current,
+          mazeTrash: trashMobsRef.current.map((m) => ({
+            id: m.id,
+            hp: m.hp,
+            maxHp: m.maxHp,
+            isDead: m.isDead,
+            isTombstone: m.isTombstone,
+            dissipateAlpha: m.dissipateAlpha,
+          })),
+          sctEvents: recentSct,
+        });
+      }
+
       if ((moveX !== 0 || moveY !== 0) && canMove) {
-        // Continuous smooth WASD movement (Speed: 5.2 px/frame)
+        // Continuous smooth WASD: screen-intent → world (ISO), then normalize
         clickTargetRef.current = null;
-        autoNavActiveRef.current = false;
-        const len = Math.hypot(moveX, moveY);
-        const speed = 5.2;
-        playerPosRef.current.x += (moveX / len) * speed;
-        playerPosRef.current.y += (moveY / len) * speed;
+        setAutoNav(false);
+        const worldIntent = screenDirToWorld(moveX, moveY, viewCam);
+        const len = Math.hypot(worldIntent.x, worldIntent.y) || 1;
+        // WASD base speed −20% vs prior 8.5 / 5.2; scaled by prefs.moveSensitivity
+        const moveSens = displayPrefsRef.current.moveSensitivity || 1;
+        const speed =
+          (runPhase === 'TRAVEL_RECOVERY' ? 6.8 * MAZE_TRAVERSE_SPEED_SCALE : 4.16) * moveSens;
+        playerMoveDirRef.current = { dx: worldIntent.x / len, dy: worldIntent.y / len };
+        playerPosRef.current.x += (worldIntent.x / len) * speed;
+        playerPosRef.current.y += (worldIntent.y / len) * speed;
         playerPosRef.current.x = Math.max(30, Math.min(width - 30, playerPosRef.current.x));
         playerPosRef.current.y = Math.max(30, Math.min(height - 30, playerPosRef.current.y));
 
@@ -2520,6 +3170,7 @@ export const CombatCanvas: React.FC<Props> = ({
         if (playerUnit) {
           playerUnit.position.x = playerPosRef.current.x;
           playerUnit.position.y = playerPosRef.current.y;
+          (playerUnit as { isMoving?: boolean }).isMoving = true;
         }
         if (onPlayerMove) onPlayerMove();
         if (onNetworkMoveReport) {
@@ -2532,6 +3183,7 @@ export const CombatCanvas: React.FC<Props> = ({
         const dist = Math.hypot(dx, dy);
         if (dist > autoApproachTarget.desiredDist) {
           const speed = 4.8;
+          playerMoveDirRef.current = { dx: dx / dist, dy: dy / dist };
           playerPosRef.current.x += (dx / dist) * Math.min(speed, dist);
           playerPosRef.current.y += (dy / dist) * Math.min(speed, dist);
           playerPosRef.current.x = Math.max(30, Math.min(width - 30, playerPosRef.current.x));
@@ -2550,13 +3202,14 @@ export const CombatCanvas: React.FC<Props> = ({
           if (onApproachTargetReached) onApproachTargetReached();
         }
       } else if (clickTargetRef.current && canMove) {
-        // Mouse Click-to-Move (Speed: 5.2 px/frame)
+        // Mouse Click-to-Move (maze travel faster)
         const dest = clickTargetRef.current;
         const dx = dest.x - playerPosRef.current.x;
         const dy = dest.y - playerPosRef.current.y;
         const dist = Math.hypot(dx, dy);
         if (dist > 4) {
-          const speed = 5.2;
+          const speed = runPhase === 'TRAVEL_RECOVERY' ? 8.5 * MAZE_TRAVERSE_SPEED_SCALE : 5.2;
+          playerMoveDirRef.current = { dx: dx / dist, dy: dy / dist };
           playerPosRef.current.x += (dx / dist) * Math.min(speed, dist);
           playerPosRef.current.y += (dy / dist) * Math.min(speed, dist);
           playerPosRef.current.x = Math.max(30, Math.min(width - 30, playerPosRef.current.x));
@@ -2573,30 +3226,471 @@ export const CombatCanvas: React.FC<Props> = ({
           }
         } else {
           clickTargetRef.current = null;
+          playerMoveDirRef.current = { dx: 0, dy: 0 };
         }
-      } else if (runPhase === 'TRAVEL_RECOVERY' && autoNavActiveRef.current && canMove) {
-        // High-precision timeline synchronized lead distance
-        mazeLeadDistRef.current = targetLeadDist;
+      } else if (
+        runPhase === 'TRAVEL_RECOVERY' &&
+        autoNavActiveRef.current &&
+        canMove &&
+        !isNetworkGuestLive
+      ) {
+        // Host/solo: smooth lead chase — never snap when encounter stopDist engages
+        // Guests already soft-follow host mazeLeadDist above
+        const cur = mazeLeadDistRef.current;
+        const delta = targetLeadDist - cur;
+        const maxStep = Math.max(3.8 * MAZE_TRAVERSE_SPEED_SCALE, Math.abs(delta) * 0.2 * MAZE_TRAVERSE_SPEED_SCALE);
+        if (Math.abs(delta) <= maxStep) mazeLeadDistRef.current = targetLeadDist;
+        else mazeLeadDistRef.current = cur + Math.sign(delta) * maxStep;
       }
 
-      // If in TRAVEL_RECOVERY and lead reaches Exit Portal:
+      // If in TRAVEL_RECOVERY and lead reaches Exit Portal (once per segment):
       const exitPoint = mazeWaypoints[mazeWaypoints.length - 1];
       if (
         runPhase === 'TRAVEL_RECOVERY' &&
+        !portalEnterFiredRef.current &&
         Math.hypot(playerPosRef.current.x - exitPoint.x, playerPosRef.current.y - exitPoint.y) <= 30
       ) {
+        portalEnterFiredRef.current = true;
         if (onFastForwardTravel) onFastForwardTravel();
       }
 
       // Proximity pull is handled inside STAGE B after entry snap + boss draw (avoid pre-snap false pulls)
 
-      // ── STAGE A: TRAVEL_RECOVERY (Random Procedural Guaranteed-Passable Maze) ──
+
+      // 玩家只走迷宫通路
+      if (runPhase === 'TRAVEL_RECOVERY' && mazeLayoutRef.current) {
+        const clamped = clampToMazePath(mazeLayoutRef.current, playerPosRef.current.x, playerPosRef.current.y, width, height);
+        // Soft pull toward path center (keep some control feel)
+        playerPosRef.current = {
+          x: playerPosRef.current.x * 0.35 + clamped.x * 0.65,
+          y: playerPosRef.current.y * 0.35 + clamped.y * 0.65,
+        };
+      }
+
+      // ── STAGE A: TRAVEL_RECOVERY (Prim maze) ──
       if (runPhase === 'TRAVEL_RECOVERY') {
+      /**
+       * Prim topology unchanged. Visual = cloud-like cavities squeezed along the graph.
+       * When a squeeze needs room, floor blobs are allowed to eat into neighboring walls.
+       * Shapes are irregular / rounded (云朵), not neat ellipses.
+       */
+      const drawPrimWalls = (layout: MazeLayout, theme: MazeLayout['theme']) => {
+        const { originX, originY } = getMazeDrawOrigin(layout, width, height);
+        const { cols, rows, grid, cellSize: cs, seed } = layout;
+        const isPath = (c: number, r: number) =>
+          c >= 0 && r >= 0 && c < cols && r < rows && !!grid[r * cols + c];
+
+        const u01 = (c: number, r: number, k: number) => {
+          let s =
+            ((seed >>> 0) ^
+              Math.imul(c + 3, 374761393) ^
+              Math.imul(r + 7, 668265263) ^
+              Math.imul(k + 1, 2147483647)) >>>
+            0;
+          s = Math.imul(s ^ (s >>> 15), 2246822519) >>> 0;
+          s = Math.imul(s ^ (s >>> 13), 3266489917) >>> 0;
+          return ((s ^ (s >>> 16)) >>> 0) / 4294967296;
+        };
+
+        /**
+         * Cloud blob: several overlapping lobed outlines with strong radial jitter
+         * + light quadratic smoothing feel (dense samples, rounded corners).
+         */
+        const fillCloud = (
+          cx: number,
+          cy: number,
+          baseR: number,
+          c: number,
+          r: number,
+          salt: number,
+          opts?: { stretchX?: number; stretchY?: number; rot?: number; puffs?: number }
+        ) => {
+          const stretchX = opts?.stretchX ?? 1;
+          const stretchY = opts?.stretchY ?? 1;
+          const rot = opts?.rot ?? 0;
+          const puffs = opts?.puffs ?? 3;
+          const cos = Math.cos(rot);
+          const sin = Math.sin(rot);
+          for (let p = 0; p < puffs; p++) {
+            const ox = (u01(c, r, salt + p * 3) - 0.5) * baseR * 0.55;
+            const oy = (u01(c, r, salt + p * 3 + 1) - 0.5) * baseR * 0.55;
+            const pr = baseR * (0.55 + 0.55 * u01(c, r, salt + p * 3 + 2));
+            const lobes = 12 + Math.floor(u01(c, r, salt + 40 + p) * 6);
+            ctx.beginPath();
+            for (let i = 0; i <= lobes; i++) {
+              const t = (i / lobes) * Math.PI * 2;
+              // 云朵起伏：大幅径向抖动，边角仍因采样密而圆润
+              const jig = 0.55 + 0.7 * u01(c, r, salt + 80 + p * 20 + i);
+              const bump = 1 + 0.22 * Math.sin(t * (2 + (p % 3)) + u01(c, r, salt + 5) * 6);
+              const px = Math.cos(t) * pr * jig * bump * stretchX;
+              const py = Math.sin(t) * pr * jig * bump * stretchY;
+              const x = cx + ox + px * cos - py * sin;
+              const y = cy + oy + px * sin + py * cos;
+              if (i === 0) ctx.moveTo(x, y);
+              else ctx.lineTo(x, y);
+            }
+            ctx.closePath();
+            ctx.fill();
+          }
+        };
+
+        const cellCenter = (c: number, r: number) => ({
+          x: originX + c * cs + cs / 2,
+          y: originY + r * cs + cs / 2,
+        });
+
+        // Entrance / exit stay stable; silhouette noise only elsewhere
+        const entC = layout.entrance?.col ?? 1;
+        const entR = layout.entrance?.row ?? 1;
+        const exC = layout.exit?.col ?? cols - 2;
+        const exR = layout.exit?.row ?? rows - 2;
+        const nearPortal = (c: number, r: number, rad = 3.2) =>
+          Math.max(Math.abs(c - entC), Math.abs(r - entR)) <= rad ||
+          Math.max(Math.abs(c - exC), Math.abs(r - exR)) <= rad;
+        const onOuterBand = (c: number, r: number) =>
+          c <= 1 || r <= 1 || c >= cols - 2 || r >= rows - 2;
+
+        // ── 1) Lumpy rock hull near path (no square AABB) ──
+        ctx.fillStyle = theme.wallColor;
+        for (let r = 0; r < rows; r++) {
+          for (let c = 0; c < cols; c++) {
+            if (!isPath(c, r)) {
+              const touch =
+                isPath(c + 1, r) ||
+                isPath(c - 1, r) ||
+                isPath(c, r + 1) ||
+                isPath(c, r - 1) ||
+                isPath(c + 1, r + 1) ||
+                isPath(c - 1, r + 1) ||
+                isPath(c + 1, r - 1) ||
+                isPath(c - 1, r - 1);
+              if (!touch) continue;
+              // 吃：外沿远离出入口的岩体随机抽薄，打破长方形外轮廓
+              if (onOuterBand(c, r) && !nearPortal(c, r) && u01(c, r, 200) < 0.42) continue;
+            }
+            const { x, y } = cellCenter(c, r);
+            const path = isPath(c, r);
+            // 外沿岩体半径也抖动，避免齐平边
+            const edgeScale =
+              onOuterBand(c, r) && !nearPortal(c, r) ? 0.75 + 0.55 * u01(c, r, 201) : 1;
+            fillCloud(
+              x,
+              y,
+              cs * (path ? 1.35 : 1.15) * (0.9 + 0.25 * u01(c, r, 1)) * edgeScale,
+              c,
+              r,
+              10,
+              {
+                stretchX: 0.85 + 0.35 * u01(c, r, 2),
+                stretchY: 0.85 + 0.35 * u01(c, r, 3),
+                rot: (u01(c, r, 4) - 0.5) * 1.4,
+                puffs: path ? 3 : 2,
+              }
+            );
+          }
+        }
+
+        // ── 1b) 补：外轮廓向外鼓出的岩云（出入口附近不补）──
+        ctx.fillStyle = theme.wallColor;
+        for (let r = 0; r < rows; r++) {
+          for (let c = 0; c < cols; c++) {
+            if (!onOuterBand(c, r) || nearPortal(c, r)) continue;
+            if (!isPath(c, r)) {
+              const touch =
+                isPath(c + 1, r) ||
+                isPath(c - 1, r) ||
+                isPath(c, r + 1) ||
+                isPath(c, r - 1);
+              if (!touch && u01(c, r, 210) > 0.35) continue;
+            }
+            if (u01(c, r, 211) > 0.62) continue; // 稀疏补凸
+            const { x, y } = cellCenter(c, r);
+            // 沿外法线往外推一点，打破 AABB 齐边
+            const nx = c <= 1 ? -1 : c >= cols - 2 ? 1 : 0;
+            const ny = r <= 1 ? -1 : r >= rows - 2 ? 1 : 0;
+            const push = cs * (0.55 + 0.9 * u01(c, r, 212));
+            fillCloud(
+              x + nx * push + (u01(c, r, 213) - 0.5) * cs * 0.4,
+              y + ny * push + (u01(c, r, 214) - 0.5) * cs * 0.4,
+              cs * (0.7 + 0.65 * u01(c, r, 215)),
+              c,
+              r,
+              220,
+              {
+                stretchX: 0.7 + 0.6 * u01(c, r, 216),
+                stretchY: 0.7 + 0.6 * u01(c, r, 217),
+                rot: (u01(c, r, 218) - 0.5) * Math.PI,
+                puffs: 2 + (u01(c, r, 219) > 0.5 ? 1 : 0),
+              }
+            );
+          }
+        }
+
+        // ── 2) Carve cloud cavities on path (+ optional bite into walls) ──
+        ctx.fillStyle = theme.floorColor;
+        for (let r = 0; r < rows; r++) {
+          for (let c = 0; c < cols; c++) {
+            if (!isPath(c, r)) continue;
+            const { x, y } = cellCenter(c, r);
+            const deg =
+              (isPath(c + 1, r) ? 1 : 0) +
+              (isPath(c - 1, r) ? 1 : 0) +
+              (isPath(c, r + 1) ? 1 : 0) +
+              (isPath(c, r - 1) ? 1 : 0);
+            const chamber = deg >= 3 ? 1.35 : deg <= 1 ? 1.15 : 1;
+            const caveR = cs * (0.55 + 0.28 * u01(c, r, 6)) * chamber;
+            fillCloud(x, y, caveR, c, r, 20, {
+              stretchX: 0.75 + 0.5 * u01(c, r, 7),
+              stretchY: 0.7 + 0.55 * u01(c, r, 8),
+              rot: (u01(c, r, 9) - 0.5) * Math.PI,
+              puffs: 3 + (u01(c, r, 10) > 0.55 ? 1 : 0),
+            });
+
+            // Squeeze needs room → punch cloud bites into adjacent wall cells
+            const dirs = [
+              [1, 0],
+              [-1, 0],
+              [0, 1],
+              [0, -1],
+              [1, 1],
+              [-1, 1],
+              [1, -1],
+              [-1, -1],
+            ] as const;
+            for (let di = 0; di < dirs.length; di++) {
+              const [dc, dr] = dirs[di];
+              const nc = c + dc;
+              const nr = r + dr;
+              if (isPath(nc, nr)) continue;
+              if (nc < 0 || nr < 0 || nc >= cols || nr >= rows) continue;
+              // Not every wall — only when RNG says the cavity is cramped / needs a bite
+              const biteChance = deg <= 2 ? 0.55 : 0.28;
+              if (u01(c, r, 50 + di) > biteChance) continue;
+              const wall = cellCenter(nc, nr);
+              const biteR = cs * (0.35 + 0.35 * u01(c, r, 60 + di));
+              // Pull bite center toward the path so it "breaks" the wall from the corridor
+              const bx = x * 0.35 + wall.x * 0.65;
+              const by = y * 0.35 + wall.y * 0.65;
+              fillCloud(bx, by, biteR, nc, nr, 70 + di, {
+                stretchX: 0.7 + 0.5 * u01(c, r, 80 + di),
+                stretchY: 0.7 + 0.5 * u01(c, r, 90 + di),
+                rot: (u01(c, r, 100 + di) - 0.5) * Math.PI,
+                puffs: 2,
+              });
+            }
+
+            // ── 3) Edge connectors: squeezed clouds between path neighbors ──
+            if (isPath(c + 1, r)) {
+              const b = cellCenter(c + 1, r);
+              const mx = (x + b.x) / 2 + (u01(c, r, 12) - 0.5) * cs * 0.22;
+              const my = (y + b.y) / 2 + (u01(c, r, 13) - 0.5) * cs * 0.22;
+              const len = Math.hypot(b.x - x, b.y - y);
+              fillCloud(mx, my, len * (0.42 + 0.18 * u01(c, r, 14)), c, r, 30, {
+                stretchX: 1.35 + 0.4 * u01(c, r, 15),
+                stretchY: 0.45 + 0.35 * u01(c, r, 16),
+                rot: Math.atan2(b.y - y, b.x - x) + (u01(c, r, 17) - 0.5) * 0.5,
+                puffs: 2 + (u01(c, r, 18) > 0.5 ? 1 : 0),
+              });
+            }
+            if (isPath(c, r + 1)) {
+              const b = cellCenter(c, r + 1);
+              const mx = (x + b.x) / 2 + (u01(c, r, 19) - 0.5) * cs * 0.22;
+              const my = (y + b.y) / 2 + (u01(c, r, 20) - 0.5) * cs * 0.22;
+              const len = Math.hypot(b.x - x, b.y - y);
+              fillCloud(mx, my, len * (0.42 + 0.18 * u01(c, r, 21)), c, r, 35, {
+                stretchX: 1.35 + 0.4 * u01(c, r, 22),
+                stretchY: 0.45 + 0.35 * u01(c, r, 23),
+                rot: Math.atan2(b.y - y, b.x - x) + (u01(c, r, 24) - 0.5) * 0.5,
+                puffs: 2 + (u01(c, r, 25) > 0.5 ? 1 : 0),
+              });
+            }
+          }
+        }
+
+        // ── 4) 吃外轮廓：用氛围色挖凹，打破长方形齐边（出入口保护）──
+        ctx.fillStyle = theme.ambienceColor || '#080814';
+        for (let r = 0; r < rows; r++) {
+          for (let c = 0; c < cols; c++) {
+            if (!onOuterBand(c, r) || nearPortal(c, r)) continue;
+            if (u01(c, r, 230) > 0.5) continue;
+            const { x, y } = cellCenter(c, r);
+            const nx = c <= 1 ? -1 : c >= cols - 2 ? 1 : (u01(c, r, 231) - 0.5) * 2;
+            const ny = r <= 1 ? -1 : r >= rows - 2 ? 1 : (u01(c, r, 232) - 0.5) * 2;
+            const push = cs * (0.15 + 0.85 * u01(c, r, 233));
+            fillCloud(
+              x + nx * push,
+              y + ny * push,
+              cs * (0.55 + 0.7 * u01(c, r, 234)),
+              c,
+              r,
+              240,
+              {
+                stretchX: 0.65 + 0.7 * u01(c, r, 235),
+                stretchY: 0.65 + 0.7 * u01(c, r, 236),
+                rot: (u01(c, r, 237) - 0.5) * Math.PI,
+                puffs: 2,
+              }
+            );
+          }
+        }
+      };
+
+      const drawBlueExitPortal = (ex: number, ey: number) => {
+        const S = 0.3;
+        ctx.save();
+        ctx.translate(ex, ey);
+        ctx.scale(S, S);
+        const spin = (tickCount * 0.08) % (Math.PI * 2);
+        const glow = ctx.createRadialGradient(0, 0, 2, 0, 0, 30);
+        glow.addColorStop(0, 'rgba(125, 211, 252, 0.9)');
+        glow.addColorStop(0.45, 'rgba(37, 99, 235, 0.55)');
+        glow.addColorStop(1, 'rgba(30, 58, 138, 0)');
+        ctx.fillStyle = glow;
+        ctx.beginPath();
+        ctx.arc(0, 0, 30, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.rotate(spin);
+        ctx.strokeStyle = '#38BDF8';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, 22, 13, 0, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.rotate(-spin * 2.2);
+        ctx.strokeStyle = '#60A5FA';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, 14, 22, 0, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.rotate(spin * 0.6);
+        ctx.fillStyle = 'rgba(186, 230, 253, 0.85)';
+        ctx.beginPath();
+        ctx.arc(0, 0, 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      };
+
+      const drawEntranceMarker = (ex: number, ey: number, color: string) => {
+        // 0.1× former marker (radius 7 → 0.7); no label text
+        ctx.beginPath();
+        ctx.arc(ex, ey, 0.7, 0, Math.PI * 2);
+        ctx.fillStyle = color;
+        ctx.globalAlpha = 0.85;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      };
+
+      /** Wall cells bordering a path — sparse, evenly spaced candles (~40% of prior count). */
+      const collectMazeWallCandleSites = (layout: MazeLayout): Array<{ x: number; y: number }> => {
+        const { originX, originY } = getMazeDrawOrigin(layout, width, height);
+        const { cols, rows, cellSize, grid, seed } = layout;
+        const isWall = (c: number, r: number) =>
+          c >= 0 && r >= 0 && c < cols && r < rows && !grid[r * cols + c];
+        const bordersPath = (c: number, r: number) => {
+          const n = [
+            [c + 1, r],
+            [c - 1, r],
+            [c, r + 1],
+            [c, r - 1],
+          ];
+          return n.some(
+            ([nc, nr]) => nc >= 0 && nr >= 0 && nc < cols && nr < rows && !!grid[nr * cols + nc]
+          );
+        };
+        // Full map candidates (not left-half mirror) → more even coverage
+        const candidates: Array<{ c: number; r: number }> = [];
+        for (let r = 0; r < rows; r++) {
+          for (let c = 0; c < cols; c++) {
+            if (isWall(c, r) && bordersPath(c, r)) candidates.push({ c, r });
+          }
+        }
+        let s = (seed >>> 0) || 1;
+        const rand = () => {
+          s = (Math.imul(1664525, s) + 1013904223) >>> 0;
+          return s / 0x100000000;
+        };
+        for (let i = candidates.length - 1; i > 0; i--) {
+          const j = Math.floor(rand() * (i + 1));
+          [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
+        }
+        // 数量减少六成 → 保留约 40%；随机洗牌后再按最小间距均匀抽取
+        const pickN = Math.max(2, Math.min(8, Math.floor(candidates.length / 18)));
+        const minDist = Math.max(4, Math.floor(Math.sqrt((cols * rows) / Math.max(1, pickN * 3))));
+        const picked: Array<{ c: number; r: number }> = [];
+        for (const cand of candidates) {
+          if (picked.length >= pickN) break;
+          if (
+            picked.every(
+              (p) => Math.hypot(p.c - cand.c, p.r - cand.r) >= minDist
+            )
+          ) {
+            picked.push(cand);
+          }
+        }
+        // If spacing rejected too many, fill remaining without minDist
+        for (const cand of candidates) {
+          if (picked.length >= pickN) break;
+          if (picked.some((p) => p.c === cand.c && p.r === cand.r)) continue;
+          picked.push(cand);
+        }
+        const sites: Array<{ x: number; y: number }> = [];
+        for (const p of picked) {
+          sites.push({
+            x: originX + p.c * cellSize + cellSize / 2,
+            y: originY + p.r * cellSize + cellSize * 0.35,
+          });
+        }
+        return sites;
+      };
+
+      /** Candles at 30% of the old hardcoded torch size. */
+      const drawMazeWallCandle = (
+        x: number,
+        y: number,
+        torchColor: string,
+        style: 'amber' | 'violet'
+      ) => {
+        const S = 0.3;
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.scale(S, S);
+        if (style === 'violet') {
+          ctx.fillStyle = '#1e1b2e';
+          ctx.fillRect(-3, -8, 6, 14);
+          const flicker = Math.sin(tickCount * 0.25 + x) * 3;
+          ctx.fillStyle = 'rgba(192, 38, 211, 0.28)';
+          ctx.beginPath();
+          ctx.arc(0, 0, 16 + flicker, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = '#c026d3';
+          ctx.beginPath();
+          ctx.arc(0, 0, 4, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = '#f43f5e';
+          ctx.beginPath();
+          ctx.arc(0, 0, 2, 0, Math.PI * 2);
+          ctx.fill();
+        } else {
+          ctx.fillStyle = '#8B4513';
+          ctx.fillRect(-2, -6, 4, 12);
+          const flicker = Math.sin(tickCount * 0.2 + x) * 2;
+          ctx.fillStyle = 'rgba(245, 158, 11, 0.25)';
+          ctx.beginPath();
+          ctx.arc(0, 0, 14 + flicker, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = torchColor || '#F59E0B';
+          ctx.beginPath();
+          ctx.arc(0, 0, 3.5, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.restore();
+      };
+
         approachElapsedRef.current = 0;
 
         if (is20Man) {
           // ── Dragon Soul (20-man Obsidian & Molten Magma) ──
-          ctx.fillStyle = '#110508';
+          // Screen-fixed ambience / texture (does not yaw with ISO camera)
+          ctx.fillStyle = mazeTheme?.ambienceColor || '#110508';
           ctx.fillRect(0, 0, width, height);
 
           // Glowing lava fissure grid
@@ -2615,7 +3709,7 @@ export const CombatCanvas: React.FC<Props> = ({
             ctx.stroke();
           }
 
-          // Molten Magma Fissures
+          // Molten Magma Fissures (ambience only — no explicit maze path stroke)
           ctx.strokeStyle = 'rgba(249, 115, 22, 0.35)';
           ctx.lineWidth = 3;
           ctx.beginPath();
@@ -2624,87 +3718,22 @@ export const CombatCanvas: React.FC<Props> = ({
           ctx.quadraticCurveTo(550, 160, 750, 280);
           ctx.stroke();
 
-          // Obsidian Corridor Path (Width: 64px)
-          ctx.strokeStyle = '#220910';
-          ctx.lineWidth = 62;
-          ctx.lineCap = 'round';
-          ctx.lineJoin = 'round';
-          ctx.beginPath();
-          ctx.moveTo(mazeWaypoints[0].x, mazeWaypoints[0].y);
-          for (let i = 1; i < mazeWaypoints.length; i++) {
-            ctx.lineTo(mazeWaypoints[i].x, mazeWaypoints[i].y);
-          }
-          ctx.stroke();
+          applyCanvasViewTransform(ctx, viewCam);
+          drawPrimWalls(mazeLayout, mazeTheme);
 
-          // Molten Basalt Border Trim
-          ctx.strokeStyle = '#7f1d1d';
-          ctx.lineWidth = 3;
-          ctx.stroke();
-
-          // Fiery Orange Luminous Guide Path Dots
-          ctx.strokeStyle = 'rgba(249, 115, 22, 0.6)';
-          ctx.lineWidth = 2;
-          ctx.setLineDash([8, 8]);
-          ctx.stroke();
-          ctx.setLineDash([]);
-
-          // Twilight Dragonfire Braziers
-          const dsBraziers = [
-            { x: 220, y: 300 },
-            { x: 220, y: 170 },
-            { x: 350, y: 170 },
-            { x: 350, y: 280 },
-            { x: 500, y: 280 },
-            { x: 500, y: 95 },
-            { x: 620, y: 95 },
-            { x: 620, y: 190 },
-          ];
-          for (const b of dsBraziers) {
-            ctx.fillStyle = '#1e1b2e';
-            ctx.fillRect(b.x - 3, b.y - 8, 6, 14);
-            const flicker = Math.sin(tickCount * 0.25 + b.x) * 3;
-            ctx.fillStyle = 'rgba(192, 38, 211, 0.28)';
-            ctx.beginPath();
-            ctx.arc(b.x, b.y, 16 + flicker, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.fillStyle = '#c026d3';
-            ctx.beginPath();
-            ctx.arc(b.x, b.y, 4, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.fillStyle = '#f43f5e';
-            ctx.beginPath();
-            ctx.arc(b.x, b.y, 2, 0, Math.PI * 2);
-            ctx.fill();
+          // Wall candles (30% size) — random left-right symmetric on maze walls
+          for (const site of collectMazeWallCandleSites(mazeLayout)) {
+            drawMazeWallCandle(site.x, site.y, mazeTheme?.torchColor || '#c026d3', 'violet');
           }
 
-          // Entrance: Wyrmrest Base
-          ctx.fillStyle = '#f97316';
-          ctx.font = 'bold 11px sans-serif';
-          ctx.textAlign = 'center';
-          ctx.fillText('🚩 龙眠神殿底层集结点', 60, 275);
-          ctx.strokeStyle = 'rgba(249, 115, 22, 0.6)';
-          ctx.lineWidth = 2.5;
-          ctx.strokeRect(35, 285, 50, 50);
-
-          // Exit: Twilight Gateway
-          ctx.save();
-          ctx.translate(720, 200);
-          const spin = (tickCount * 0.05) % (Math.PI * 2);
-          ctx.rotate(spin);
-          ctx.strokeStyle = '#c026d3';
-          ctx.lineWidth = 3;
-          ctx.strokeRect(-25, -25, 50, 50);
-          ctx.strokeStyle = '#ef4444';
-          ctx.strokeRect(-18, -18, 36, 36);
-          ctx.restore();
-
-          ctx.fillStyle = '#f472b6';
-          ctx.font = 'bold 11px sans-serif';
-          ctx.textAlign = 'center';
-          ctx.fillText(`🚪 暮光裂隙·巨龙王座之门 (${targetBossName || '首领'})`, 700, 155);
+          const ent = mazeLayout.entrance;
+          const ex = mazeLayout.exit;
+          drawEntranceMarker(ent.x, ent.y, '#f97316');
+          drawBlueExitPortal(ex.x, ex.y);
         } else {
           // ── Shadowfang Keep (5-man Castle Corridors) ──
-          ctx.fillStyle = '#080814';
+          // Screen-fixed ambience / texture (does not yaw with ISO camera)
+          ctx.fillStyle = mazeTheme?.ambienceColor || '#080814';
           ctx.fillRect(0, 0, width, height);
 
           // Cobblestone grid
@@ -2723,88 +3752,34 @@ export const CombatCanvas: React.FC<Props> = ({
             ctx.stroke();
           }
 
-          // Guaranteed Open Corridor Pathway along Waypoints (Width: 62px)
-          ctx.strokeStyle = '#18162d';
-          ctx.lineWidth = 62;
-          ctx.lineCap = 'round';
-          ctx.lineJoin = 'round';
-          ctx.beginPath();
-          ctx.moveTo(mazeWaypoints[0].x, mazeWaypoints[0].y);
-          for (let i = 1; i < mazeWaypoints.length; i++) {
-            ctx.lineTo(mazeWaypoints[i].x, mazeWaypoints[i].y);
-          }
-          ctx.stroke();
+          applyCanvasViewTransform(ctx, viewCam);
+          drawPrimWalls(mazeLayout, mazeTheme);
 
-          // Corridor Border Stone Trim
-          ctx.strokeStyle = '#2d284a';
-          ctx.lineWidth = 3;
-          ctx.stroke();
-
-          // Golden/Purple Luminous Guide Path Dots
-          ctx.strokeStyle = 'rgba(168, 85, 247, 0.45)';
-          ctx.lineWidth = 2;
-          ctx.setLineDash([8, 8]);
-          ctx.stroke();
-          ctx.setLineDash([]);
-
-          // Wall Torches
-          const sfkTorches = [
-            { x: 240, y: 75 },
-            { x: 240, y: 225 },
-            { x: 120, y: 215 },
-            { x: 120, y: 315 },
-            { x: 430, y: 315 },
-            { x: 430, y: 90 },
-            { x: 600, y: 90 },
-            { x: 600, y: 235 },
-          ];
-          for (const t of sfkTorches) {
-            ctx.fillStyle = '#8B4513';
-            ctx.fillRect(t.x - 2, t.y - 6, 4, 12);
-            const flicker = Math.sin(tickCount * 0.2 + t.x) * 2;
-            ctx.fillStyle = 'rgba(245, 158, 11, 0.25)';
-            ctx.beginPath();
-            ctx.arc(t.x, t.y, 14 + flicker, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.fillStyle = '#F59E0B';
-            ctx.beginPath();
-            ctx.arc(t.x, t.y, 3.5, 0, Math.PI * 2);
-            ctx.fill();
+          // Wall candles (30% size) — random left-right symmetric on maze walls
+          for (const site of collectMazeWallCandleSites(mazeLayout)) {
+            drawMazeWallCandle(site.x, site.y, mazeTheme?.torchColor || '#F59E0B', 'amber');
           }
 
-          // Entrance: Castle Gate
-          ctx.fillStyle = '#10B981';
-          ctx.font = 'bold 11px sans-serif';
-          ctx.textAlign = 'center';
-          ctx.fillText('🚩 城堡前庭出发点', 60, 48);
-          ctx.strokeStyle = 'rgba(16, 185, 129, 0.4)';
-          ctx.lineWidth = 2.5;
-          ctx.strokeRect(35, 55, 50, 50);
-
-          // Exit: High Keep Portal
-          ctx.save();
-          ctx.translate(720, 230);
-          const spin = (tickCount * 0.05) % (Math.PI * 2);
-          ctx.rotate(spin);
-          ctx.strokeStyle = '#8B5CF6';
-          ctx.lineWidth = 3;
-          ctx.strokeRect(-25, -25, 50, 50);
-          ctx.strokeStyle = '#38BDF8';
-          ctx.strokeRect(-18, -18, 36, 36);
-          ctx.restore();
-
-          ctx.fillStyle = '#C084FC';
-          ctx.font = 'bold 11px sans-serif';
-          ctx.textAlign = 'center';
-          ctx.fillText(`🚪 领主大厅传送门 (${targetBossName || '首领'})`, 700, 185);
+          const ent = mazeLayout.entrance;
+          const ex = mazeLayout.exit;
+          drawEntranceMarker(ent.x, ent.y, '#10B981');
+          drawBlueExitPortal(ex.x, ex.y);
         }
 
-        // Draw Trash Mobs
+        // Draw Trash Mobs (maze: 50% size, no names) — ISO upright billboard
         trashMobsRef.current.forEach(mob => {
-          drawTrashMob(ctx, mob, tickCount, is20Man);
+          withUprightAt(ctx, viewCam, { x: mob.x, y: mob.y }, (sp) => {
+            const ox = mob.x;
+            const oy = mob.y;
+            mob.x = sp.x;
+            mob.y = sp.y;
+            drawTrashMob(ctx, mob, tickCount, is20Man, { scale: 0.5, showName: false });
+            mob.x = ox;
+            mob.y = oy;
+          });
         });
 
-        // Floating SCT
+        // Floating SCT — upright in screen space
         const now = Date.now();
         encounterSCTRef.current = encounterSCTRef.current.filter(item => now - item.createdAt < 1200);
         encounterSCTRef.current.forEach(item => {
@@ -2812,72 +3787,16 @@ export const CombatCanvas: React.FC<Props> = ({
           const progress = age / 1200;
           const yOff = progress * 24;
           const alpha = 1 - progress;
-          ctx.save();
-          ctx.globalAlpha = alpha;
-          ctx.fillStyle = item.color;
-          ctx.font = item.isCrit ? 'bold 13px sans-serif' : 'bold 11px sans-serif';
-          ctx.textAlign = 'center';
-          ctx.fillText(item.text, item.x, item.y - yOff);
-          ctx.restore();
+          withUprightAt(ctx, viewCam, { x: item.x, y: item.y }, (sp) => {
+            ctx.save();
+            ctx.globalAlpha = alpha;
+            ctx.fillStyle = item.color;
+            ctx.font = item.isCrit ? 'bold 13px sans-serif' : 'bold 11px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(item.text, sp.x, sp.y - yOff);
+            ctx.restore();
+          });
         });
-
-        // Top Guide Banner
-        if (isCorpseRunning) {
-          const runSec = Math.max(0, corpseRunRemainingMs / 1000).toFixed(1);
-          const progressPct = Math.min(1, Math.max(0, 1 - corpseRunRemainingMs / 10000));
-          ctx.fillStyle = 'rgba(127, 29, 29, 0.95)';
-          ctx.fillRect(40, 13, width - 80, 38);
-          ctx.strokeStyle = '#EF4444';
-          ctx.lineWidth = 2;
-          ctx.strokeRect(40, 13, width - 80, 38);
-          ctx.fillStyle = '#FECACA';
-          ctx.font = 'bold 11px sans-serif';
-          ctx.textAlign = 'center';
-          ctx.fillText(`💀 所有拥有复活能力的队员均已阵亡！全队受罚跑尸中 (${runSec}s) · 倒计时结束后群体复活进入行军`, width / 2, 30);
-
-          // Progress bar under banner
-          ctx.fillStyle = '#450a0a';
-          ctx.fillRect(50, 38, width - 100, 6);
-          ctx.fillStyle = '#F59E0B';
-          ctx.fillRect(50, 38, (width - 100) * progressPct, 6);
-        } else if (hasDeadMembers) {
-          ctx.fillStyle = 'rgba(120, 53, 15, 0.9)';
-          ctx.fillRect(50, 16, width - 100, 34);
-          ctx.strokeStyle = '#F59E0B';
-          ctx.lineWidth = 1.5;
-          ctx.strokeRect(50, 16, width - 100, 34);
-          ctx.fillStyle = '#FDE68A';
-          ctx.font = 'bold 11px sans-serif';
-          ctx.textAlign = 'center';
-          ctx.fillText(`🪦 队伍中有队友阵亡 (${deadMembers.map(d => d.name).join(', ')}) · 存活治疗正在施法【起死回生】· 全员齐备方可行军探索`, width / 2, 38);
-        } else if (currentEncounterPack > 0) {
-          ctx.fillStyle = 'rgba(127, 29, 29, 0.92)';
-          ctx.fillRect(220, 14, 340, 34);
-          ctx.strokeStyle = '#EF4444';
-          ctx.lineWidth = 2;
-          ctx.strokeRect(220, 14, 340, 34);
-          ctx.fillStyle = '#FCA5A5';
-          ctx.font = 'bold 11px sans-serif';
-          ctx.textAlign = 'center';
-          const packLabel = currentEncounterPack === 1 ? '第1波通道守卫' : '第2波精英伏兵';
-          ctx.fillText(`⚔️ 遭遇${packLabel}！全队停驻激战中 · 肃清后继续推进`, width / 2, 35);
-        } else {
-          ctx.fillStyle = autoNavActiveRef.current ? 'rgba(14, 116, 144, 0.9)' : 'rgba(30, 41, 59, 0.9)';
-          ctx.fillRect(240, 14, 300, 34);
-          ctx.strokeStyle = autoNavActiveRef.current ? '#38BDF8' : '#64748B';
-          ctx.lineWidth = 2;
-          ctx.strokeRect(240, 14, 300, 34);
-          ctx.fillStyle = autoNavActiveRef.current ? '#E0F2FE' : '#94A3B8';
-          ctx.font = 'bold 11px sans-serif';
-          ctx.textAlign = 'center';
-          ctx.fillText(
-            autoNavActiveRef.current
-              ? `🧭 自动寻路疾跑中 (${is20Man ? '20人团队' : '5人小队'} 阵型行军)`
-              : '🖱️ 手动操控中 (单击地面跑动 / 单击选人 / WASD)',
-            width / 2,
-            35
-          );
-        }
 
         // Draw Party in Maze with Smooth Vector Interpolation (NO TELEPORTATION!)
         const sortedParty = [...units].sort((a, b) => {
@@ -2892,27 +3811,20 @@ export const CombatCanvas: React.FC<Props> = ({
           const isPlayer = u.isPlayer;
           let targetPos: { x: number; y: number };
 
-          if (currentEncounterPack > 0) {
-            const activeMobs = trashMobsRef.current.filter(
-              m => m.packIndex === currentEncounterPack && !m.isDead && !m.isTombstone
-            );
-            const targetMob = activeMobs[0] || getPointAlongMaze(currentEncounterPack === 1 ? totalMazeLen * 0.32 : totalMazeLen * 0.72);
-            const isTank = u.role === 'TANK';
-            const isMelee = u.role === 'DPS' && (u.classId === 'ROGUE' || u.classId === 'DK' || u.classId === 'WARRIOR' || u.classId === 'PALADIN');
-            const isHealer = u.role === 'HEALER';
-
-            if (isTank) {
-              targetPos = { x: targetMob.x - 28, y: targetMob.y - 6 };
-            } else if (isMelee) {
-              targetPos = { x: targetMob.x - 24, y: targetMob.y + 14 };
-            } else if (isHealer) {
-              targetPos = { x: targetMob.x - 78 - ((rank % 4) * 12), y: targetMob.y + 16 };
-            } else {
-              targetPos = { x: targetMob.x - 70 - ((rank % 4) * 12), y: targetMob.y - 14 };
-            }
-          } else if (autoNavActiveRef.current && !hasDeadMembers) {
-            const rankDist = Math.max(0, mazeLeadDistRef.current - rank * (is20Man ? 12 : 26));
+          if (autoNavActiveRef.current && !hasDeadMembers) {
+            // March + encounter share the same path lead — fight at predicted stop, no teleport to mobs
+            const rankDist = Math.max(0, mazeLeadDistRef.current - rank * (is20Man ? 8 : 14));
             targetPos = getPointAlongMaze(rankDist);
+            if (currentEncounterPack > 0) {
+              const isTank = u.role === 'TANK';
+              const isMelee = u.role === 'DPS' && (u.classId === 'ROGUE' || u.classId === 'DK' || u.classId === 'WARRIOR' || u.classId === 'PALADIN');
+              const isHealer = u.role === 'HEALER';
+              // Tiny lateral fidget only (keep on corridor; avoid yanking into walls)
+              if (isTank) targetPos = { x: targetPos.x + 4, y: targetPos.y - 3 };
+              else if (isMelee) targetPos = { x: targetPos.x - 2, y: targetPos.y + 5 };
+              else if (isHealer) targetPos = { x: targetPos.x - 6 - (rank % 3) * 3, y: targetPos.y + 4 };
+              else targetPos = { x: targetPos.x - 5 - (rank % 3) * 3, y: targetPos.y - 4 };
+            }
           } else {
             // Manual movement
             targetPos = isPlayer
@@ -2936,7 +3848,11 @@ export const CombatCanvas: React.FC<Props> = ({
           const dist = Math.hypot(dx, dy);
 
           if (dist > 0.5) {
-            const step = Math.min(dist, Math.max(3.8, dist * 0.22));
+            // Cap step so encounter/timeline corrections never look like teleports
+            const step = Math.min(
+              dist,
+              Math.min(8.5 * MAZE_TRAVERSE_SPEED_SCALE, Math.max(3.6 * MAZE_TRAVERSE_SPEED_SCALE, dist * 0.22 * MAZE_TRAVERSE_SPEED_SCALE))
+            );
             curPos.x += (dx / dist) * step;
             curPos.y += (dy / dist) * step;
           } else {
@@ -2957,7 +3873,15 @@ export const CombatCanvas: React.FC<Props> = ({
             u.position.y = curPos.y;
           }
 
-          drawClassCharacter(ctx, u, curPos, isPlayer, u.id === selectedUnitId, tickCount, rank);
+          // Maze: 50% size; ISO billboard upright at projected feet
+          const showNm = shouldShowCombatName(u, selectedUnitId, focusTargetId, prefs, localPlayerId);
+          const showHp = shouldShowUnitHpBar(u, selectedUnitId, focusTargetId, prefs, localPlayerId);
+          withUprightAt(ctx, viewCam, curPos, (sp) => {
+            drawClassCharacter(ctx, u, sp, !!isPlayer, u.id === selectedUnitId, tickCount, rank, {
+              scale: 0.5,
+              showName: showNm && !showHp,
+            });
+          });
 
           // If member is dead, show resurrecting beam from healer
           if (!u.alive && revivingUnitId === u.id) {
@@ -2986,91 +3910,53 @@ export const CombatCanvas: React.FC<Props> = ({
           }
         });
 
-        // Maze skirmish FX: beams / projectiles / slashes
-        beamsRef.current.forEach(beam => {
-          beam.elapsedMs += 16;
-          const progress = beam.elapsedMs / beam.totalMs;
-          if (progress < 1) {
-            ctx.save();
-            ctx.strokeStyle = beam.color || `rgba(16, 185, 129, ${(1 - progress) * 0.85})`;
-            ctx.globalAlpha = 1 - progress;
-            ctx.lineWidth = 3.5 * (1 - progress * 0.4);
-            ctx.beginPath();
-            ctx.moveTo(beam.fromX, beam.fromY);
-            const midX = (beam.fromX + beam.toX) / 2;
-            const midY = Math.min(beam.fromY, beam.toY) - 28;
-            ctx.quadraticCurveTo(midX, midY, beam.toX, beam.toY);
-            ctx.stroke();
-            ctx.restore();
-          }
+        // Layer: terrain < trash < characters < hit FX < HP bars
+        const nowHit = performance.now();
+        pruneHitFx(hitFxRef.current, nowHit);
+        drawHitFx(ctx, hitFxRef.current, nowHit, hitFxFilter);
+        units.forEach((u, idx) => {
+          if (!shouldShowUnitHpBar(u, selectedUnitId, focusTargetId, prefs, localPlayerId)) return;
+          const pos = u.isPlayer
+            ? playerPosRef.current
+            : (companionPositionsRef.current[u.id] || { x: 160 + idx * 25, y: 150 + idx * 30 });
+          withUprightAt(ctx, viewCam, pos, (sp) => {
+            drawUnitHpBar(ctx, u, sp, {
+              scale: 0.5,
+              name: shouldShowCombatName(u, selectedUnitId, focusTargetId, prefs, localPlayerId)
+                ? u.name
+                : null,
+            });
+          });
         });
-        beamsRef.current = beamsRef.current.filter(b => b.elapsedMs < b.totalMs);
-
-        projectilesRef.current.forEach(proj => {
-          proj.progress += 0.05;
-          if (proj.progress < 1) {
-            const curX = proj.fromX + (proj.toX - proj.fromX) * proj.progress;
-            const curY = proj.fromY + (proj.toY - proj.fromY) * proj.progress - Math.sin(proj.progress * Math.PI) * 22;
-            ctx.save();
-            ctx.fillStyle = proj.color;
-            ctx.beginPath();
-            ctx.arc(curX, curY, 5.5, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.restore();
-          }
-        });
-        projectilesRef.current = projectilesRef.current.filter(p => p.progress < 1);
-
-        slashesRef.current.forEach(slash => {
-          slash.elapsedMs += 16;
-          const slashProgress = slash.elapsedMs / slash.totalMs;
-          if (slashProgress < 1) {
-            ctx.save();
-            ctx.translate(slash.x, slash.y);
-            ctx.rotate(slash.angle);
-            ctx.strokeStyle = slash.color;
-            ctx.lineWidth = 3 * (1 - slashProgress);
-            ctx.beginPath();
-            ctx.arc(0, 0, 16 + slashProgress * 8, -Math.PI / 3, Math.PI / 3);
-            ctx.stroke();
-            ctx.restore();
-          }
-        });
-        slashesRef.current = slashesRef.current.filter(s => s.elapsedMs < s.totalMs);
 
         ctx.restore();
         animId = requestAnimationFrame(render);
         return;
       }
 
-      // ── STAGE B: PULL_APPROACH — enter from LEFT; AI stand progress tracks tank→boss range ───
+      // ── STAGE B: PULL_APPROACH — continue from maze positions; AI settle by tank→boss range ───
       if (runPhase === 'PULL_APPROACH') {
         const bossStand = bossPosRef.current;
         const tankUnit = units.find(u => u.role === 'TANK') || units[0];
         const playerIsTank = !!(tankUnit && tankUnit.isPlayer);
         const leftEntry = { x: 110, y: 180 };
 
-        // Spawn everyone at the left doorway once
+        // Capture current maze/world positions once — never teleport to left door
         if (approachElapsedRef.current === 0) {
           const startSnap: Record<string, { x: number; y: number }> = {};
-          let meleeRank = 0;
-          let rangedRank = 0;
-          units.forEach((u) => {
+          units.forEach((u, rank) => {
             let entry: { x: number; y: number };
-            if (u.role === 'TANK') {
-              entry = { ...leftEntry };
-            } else if (isMeleeDpsUnit(u)) {
-              entry = {
-                x: 88,
-                y: 158 + (meleeRank % 2 === 0 ? -18 : 22) + Math.floor(meleeRank / 2) * 8,
-              };
-              meleeRank += 1;
-            } else if (u.role === 'HEALER') {
-              entry = { x: 72, y: 210 + (rangedRank % 3) * 14 };
-              rangedRank += 1;
+            if (u.isPlayer) {
+              entry = { ...playerPosRef.current };
+            } else if (companionPositionsRef.current[u.id]) {
+              entry = { ...companionPositionsRef.current[u.id] };
+            } else if (u.position) {
+              entry = { x: u.position.x, y: u.position.y };
             } else {
-              entry = { x: 70, y: 130 + (rangedRank % 5) * 16 };
-              rangedRank += 1;
+              entry = {
+                x: leftEntry.x - rank * 12,
+                y: leftEntry.y + ((rank % 2 === 0 ? -1 : 1) * 10),
+              };
             }
             startSnap[u.id] = entry;
             if (u.isPlayer) {
@@ -3149,108 +4035,189 @@ export const CombatCanvas: React.FC<Props> = ({
         const progress = Math.max(distProgress, timedProgress);
         const ease = progress * progress * (3 - 2 * progress); // smoothstep
 
-        drawArenaBackground(ctx, width, height);
+        ctx.fillStyle = '#080812';
+        ctx.fillRect(0, 0, width, height);
 
-        ctx.fillStyle = 'rgba(15, 23, 42, 0.55)';
-        ctx.fillRect(0, 100, 48, 160);
-        ctx.strokeStyle = '#64748B';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(0, 100, 48, 160);
-        ctx.fillStyle = '#94A3B8';
-        ctx.font = 'bold 10px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText('入口', 24, 185);
-
-        ctx.fillStyle = '#FFD700';
-        ctx.font = 'bold 13px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillText(
-          playerIsTank
-            ? `🛡️ 主坦靠近首领，队友随距离落位（${Math.round(progress * 100)}%）· WASD/点击移动开怪`
-            : `🛡️ 全员自左侧入口冲入 · 奔向预定站位 · 主坦开怪`,
-          width / 2,
-          42
-        );
-
-        // Draw boss FIRST so entry never looks empty (fallback if React state lags a tick)
-        if (bossUnit) {
-          drawBossModel(ctx, bossUnit, bossStand, bossUnit.id === selectedUnitId, tickCount);
-        } else {
-          ctx.save();
-          ctx.translate(bossStand.x, bossStand.y);
-          ctx.fillStyle = 'rgba(0,0,0,0.5)';
-          ctx.beginPath();
-          ctx.ellipse(0, 36, 48, 18, 0, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.fillStyle = '#7f1d1d';
-          ctx.fillRect(-28, -36, 56, 64);
+        if (playerIsTank) {
           ctx.fillStyle = '#FFD700';
           ctx.font = 'bold 13px sans-serif';
           ctx.textAlign = 'center';
-          ctx.fillText(`💀 ${targetBossName || '首领'}`, 0, -68);
-          ctx.restore();
+          ctx.fillText(
+            `🛡️ 主坦靠近首领，队友随距离落位（${Math.round(progress * 100)}%）· WASD/点击移动开怪`,
+            width / 2,
+            42
+          );
         }
 
-        units.forEach((u, idx) => {
-          const start = approachStartPositionsRef.current[u.id] || { x: 100, y: 180 };
-          const dest = getCombatFormationPos(u, idx, bossStand, 1);
+        applyCanvasViewTransform(ctx, viewCam);
+        drawArenaFloorWorld(ctx, viewCam, width, height);
+        enterScreenSpaceFromIso(ctx, viewCam);
+        drawArenaVignetteScreen(ctx, width, height);
+        ctx.restore();
 
-          // Player tank: keep live control position (already updated above / by WASD)
-          if (u.isPlayer && playerIsTank) {
-            if (u.position) {
-              u.position.x = playerPosRef.current.x;
-              u.position.y = playerPosRef.current.y;
+        // Update approach stands, then paint boss+party by camera depth
+        {
+          type DepthSprite = { depth: number; paint: () => void };
+          const sprites: DepthSprite[] = [];
+
+          if (bossUnit) {
+            sprites.push({
+              depth: viewDepthKey(bossStand.x, bossStand.y, viewCam),
+              paint: () => {
+                withUprightAt(ctx, viewCam, bossStand, (sp) => {
+                  drawBossModel(ctx, bossUnit, sp, bossUnit.id === selectedUnitId, tickCount, false, {
+                    showName: prefs.showBossName && !prefs.showBossHp,
+                  });
+                });
+              },
+            });
+          } else {
+            sprites.push({
+              depth: viewDepthKey(bossStand.x, bossStand.y, viewCam),
+              paint: () => {
+                ctx.save();
+                ctx.translate(bossStand.x, bossStand.y);
+                ctx.fillStyle = 'rgba(0,0,0,0.5)';
+                ctx.beginPath();
+                ctx.ellipse(0, 36, 48, 18, 0, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = '#7f1d1d';
+                ctx.fillRect(-28, -36, 56, 64);
+                if (prefs.showBossName && !prefs.showBossHp) {
+                  ctx.fillStyle = '#FFE08A';
+                  ctx.font = `bold ${Math.max(7, Math.round(12 * 0.85))}px sans-serif`;
+                  ctx.textAlign = 'center';
+                  ctx.textBaseline = 'middle';
+                  const label = `💀 ${targetBossName || '首领'}`;
+                  ctx.strokeStyle = 'rgba(0,0,0,0.85)';
+                  ctx.lineWidth = 2;
+                  ctx.strokeText(label, 0, -78 + 6);
+                  ctx.fillText(label, 0, -78 + 6);
+                  ctx.textBaseline = 'alphabetic';
+                }
+                ctx.restore();
+              },
+            });
+          }
+
+          units.forEach((u, idx) => {
+            const start = approachStartPositionsRef.current[u.id] || { x: 100, y: 180 };
+            const dest = getCombatFormationPos(u, idx, bossStand, 1);
+
+            if (u.isPlayer && playerIsTank) {
+              if (u.position) {
+                u.position.x = playerPosRef.current.x;
+                u.position.y = playerPosRef.current.y;
+              }
+              const pos = { ...playerPosRef.current };
+              const showNm = shouldShowCombatName(u, selectedUnitId, focusTargetId, prefs, localPlayerId);
+              const showHp = shouldShowUnitHpBar(u, selectedUnitId, focusTargetId, prefs, localPlayerId);
+              sprites.push({
+                depth: viewDepthKey(pos.x, pos.y, viewCam),
+                paint: () => {
+                  withUprightAt(ctx, viewCam, pos, (sp) => {
+                    drawClassCharacter(ctx, u, sp, true, u.id === selectedUnitId, tickCount, idx, {
+                      scale: combatSpriteScale,
+                      showName: showNm && !showHp,
+                    });
+                  });
+                },
+              });
+              return;
             }
-            drawClassCharacter(
-              ctx,
-              u,
-              playerPosRef.current,
-              true,
-              u.id === selectedUnitId,
-              tickCount,
-              idx
-            );
-            return;
-          }
 
-          // AI tank already placed above when not player
-          if (u.role === 'TANK' && !u.isPlayer) {
-            drawClassCharacter(ctx, u, tankPos, false, u.id === selectedUnitId, tickCount, idx);
-            return;
-          }
+            if (u.role === 'TANK' && !u.isPlayer) {
+              const pos = { ...tankPos };
+              const showNm = shouldShowCombatName(u, selectedUnitId, focusTargetId, prefs, localPlayerId);
+              const showHp = shouldShowUnitHpBar(u, selectedUnitId, focusTargetId, prefs, localPlayerId);
+              sprites.push({
+                depth: viewDepthKey(pos.x, pos.y, viewCam),
+                paint: () => {
+                  withUprightAt(ctx, viewCam, pos, (sp) => {
+                    drawClassCharacter(ctx, u, sp, false, u.id === selectedUnitId, tickCount, idx, {
+                      scale: combatSpriteScale,
+                      showName: showNm && !showHp,
+                    });
+                  });
+                },
+              });
+              return;
+            }
 
-          // AI (and non-tank player): stand progress tracks tank→boss distance
-          const desired = {
-            x: start.x + ease * (dest.x - start.x),
-            y: start.y + ease * (dest.y - start.y),
-          };
-          const cur = u.isPlayer
-            ? playerPosRef.current
-            : companionPositionsRef.current[u.id] || { ...start };
-          const dx = desired.x - cur.x;
-          const dy = desired.y - cur.y;
-          const dist = Math.hypot(dx, dy);
-          // Chase desired stand; faster as tank commits closer to boss
-          const maxStep = 2.2 + ease * 2.8;
-          if (dist > 0.5) {
-            const step = Math.min(dist, maxStep);
-            cur.x += (dx / dist) * step;
-            cur.y += (dy / dist) * step;
-          } else {
-            cur.x = desired.x;
-            cur.y = desired.y;
-          }
+            const desired = {
+              x: start.x + ease * (dest.x - start.x),
+              y: start.y + ease * (dest.y - start.y),
+            };
+            const cur = u.isPlayer
+              ? playerPosRef.current
+              : companionPositionsRef.current[u.id] || { ...start };
+            const dx = desired.x - cur.x;
+            const dy = desired.y - cur.y;
+            const dist = Math.hypot(dx, dy);
+            const maxStep = 2.2 + ease * 2.8;
+            if (dist > 0.5) {
+              const step = Math.min(dist, maxStep);
+              cur.x += (dx / dist) * step;
+              cur.y += (dy / dist) * step;
+            } else {
+              cur.x = desired.x;
+              cur.y = desired.y;
+            }
 
-          if (u.isPlayer) {
-            playerPosRef.current = { x: cur.x, y: cur.y };
-          } else {
-            companionPositionsRef.current[u.id] = { x: cur.x, y: cur.y };
-          }
-          if (u.position) {
-            u.position.x = cur.x;
-            u.position.y = cur.y;
-          }
-          drawClassCharacter(ctx, u, cur, !!u.isPlayer, u.id === selectedUnitId, tickCount, idx);
+            if (u.isPlayer) {
+              playerPosRef.current = { x: cur.x, y: cur.y };
+            } else {
+              companionPositionsRef.current[u.id] = { x: cur.x, y: cur.y };
+            }
+            if (u.position) {
+              u.position.x = cur.x;
+              u.position.y = cur.y;
+            }
+            const pos = { x: cur.x, y: cur.y };
+            const showNm = shouldShowCombatName(u, selectedUnitId, focusTargetId, prefs, localPlayerId);
+            const showHp = shouldShowUnitHpBar(u, selectedUnitId, focusTargetId, prefs, localPlayerId);
+            sprites.push({
+              depth: viewDepthKey(pos.x, pos.y, viewCam),
+              paint: () => {
+                withUprightAt(ctx, viewCam, pos, (sp) => {
+                  drawClassCharacter(ctx, u, sp, !!u.isPlayer, u.id === selectedUnitId, tickCount, idx, {
+                    scale: combatSpriteScale,
+                    showName: showNm && !showHp,
+                  });
+                });
+              },
+            });
+          });
+
+          sprites.sort((a, b) => a.depth - b.depth);
+          for (const s of sprites) s.paint();
+        }
+
+
+
+        // HP bars above models — upright billboards
+        if (bossUnit && prefs.showBossHp) {
+          withUprightAt(ctx, viewCam, bossStand, (sp) => {
+            drawBossHpBar(ctx, bossUnit, sp, {
+              name: prefs.showBossName ? bossUnit.name : null,
+            });
+          });
+        }
+        units.forEach((u, idx) => {
+          if (!shouldShowUnitHpBar(u, selectedUnitId, focusTargetId, prefs, localPlayerId)) return;
+          let pos: { x: number; y: number };
+          if (u.isPlayer && playerIsTank) pos = playerPosRef.current;
+          else if (u.role === 'TANK' && !u.isPlayer) pos = tankPos;
+          else if (u.isPlayer) pos = playerPosRef.current;
+          else pos = companionPositionsRef.current[u.id] || { x: 100, y: 180 };
+          withUprightAt(ctx, viewCam, pos, (sp) => {
+            drawUnitHpBar(ctx, u, sp, {
+              scale: combatSpriteScale,
+              name: shouldShowCombatName(u, selectedUnitId, focusTargetId, prefs, localPlayerId)
+                ? u.name
+                : null,
+            });
+          });
         });
 
         // Pull once: grace so left-door snap + boss paint always happen first
@@ -3272,7 +4239,8 @@ export const CombatCanvas: React.FC<Props> = ({
       }
 
       // ── STAGE C: BOSS_COMBAT & OTHER PHASES ──────────────────────────────────
-      drawArenaBackground(ctx, width, height);
+      ctx.fillStyle = '#080812';
+      ctx.fillRect(0, 0, width, height);
 
       // Top guide text if combat not started
       if (runPhase === 'LOBBY') {
@@ -3292,70 +4260,126 @@ export const CombatCanvas: React.FC<Props> = ({
         ctx.fillText('🏆 全通凯旋！首领战斗报告已生成，可在详情面板查阅 DPS/HPS 分解', width / 2, 35);
       }
 
-      // Active Ground Effects (Heal Zones, Damage Zones, Cone Warning, Totems)
-      const activeHealZones: GroundEffect[] = [];
+      applyCanvasViewTransform(ctx, viewCam);
+      drawArenaFloorWorld(ctx, viewCam, width, height);
+      enterScreenSpaceFromIso(ctx, viewCam);
+      drawArenaVignetteScreen(ctx, width, height);
+      ctx.restore();
+
+      // Active Ground Effects → fill-only AoE rings (no edge stroke) + totem/cone overlays
+      const nowFx = performance.now();
+      const unitsById = new Map<string, Unit>();
+      for (const u of units) unitsById.set(u.id, u);
+      if (bossUnit) unitsById.set(bossUnit.id, bossUnit);
+
+      if (pendingAoeActionsRef.current.length > 0) {
+        const batch = pendingAoeActionsRef.current.splice(0, pendingAoeActionsRef.current.length);
+        aoeRingsRef.current = ingestCombatActionsAsRings(
+          aoeRingsRef.current,
+          batch,
+          unitsById,
+          nowFx,
+          aoeSeenActionIdsRef.current
+        );
+        ingestCombatActionsAsClassAoePulses(classAoePulsesRef.current, {
+          actions: batch,
+          unitsById,
+          seenIds: classAoePulseSeenIdsRef.current,
+          now: nowFx,
+        });
+        const resolvePos = (unitId: string) => {
+          const u = unitsById.get(unitId);
+          if (!u) return null;
+          if (u.isPlayer) return { ...playerPosRef.current };
+          const c = companionPositionsRef.current[unitId];
+          if (c) return { ...c };
+          if (bossUnit && unitId === bossUnit.id) return { ...bossPosRef.current };
+          if (u.position) return { x: u.position.x, y: u.position.y };
+          return null;
+        };
+        ingestCombatActionsAsHitFx(hitFxRef.current, {
+          actions: batch,
+          unitsById,
+          seenIds: hitFxSeenIdsRef.current,
+          now: nowFx,
+          bossName: bossUnit?.name,
+          resolvePos,
+          resolveScale: (unitId) => {
+            const u = unitsById.get(unitId);
+            if (!u) return 1;
+            if (u.classId === 'BOSS' || u.unitKind === 'BOSS') return HIT_FX_BOSS_SIZE_MULT;
+            return 1;
+          },
+        });
+        // Cap seen-id set to avoid unbounded growth
+        if (aoeSeenActionIdsRef.current.size > 200) {
+          aoeSeenActionIdsRef.current = new Set(Array.from(aoeSeenActionIdsRef.current).slice(-80));
+        }
+        if (classAoePulseSeenIdsRef.current.size > 200) {
+          classAoePulseSeenIdsRef.current = new Set(Array.from(classAoePulseSeenIdsRef.current).slice(-80));
+        }
+        if (hitFxSeenIdsRef.current.size > 200) {
+          hitFxSeenIdsRef.current = new Set(Array.from(hitFxSeenIdsRef.current).slice(-80));
+        }
+      }
+      // Ground AoE rings = terrain layer (under class pulse / boss / chars)
+      aoeRingsRef.current = syncPersistentRingsFromGround(
+        aoeRingsRef.current,
+        groundEffects,
+        unitsById,
+        nowFx
+      );
+      for (const ring of aoeRingsRef.current) {
+        if (!showAoeTone(ring.tone)) continue;
+        ctx.save();
+        drawAoeRing(ctx, ring, nowFx, { whiteOutline: prefs.terrainWhiteOutline });
+        ctx.restore();
+      }
+
+      // Instant AoE class-color feathered pulse: above terrain rings, below boss
+      pruneClassAoePulses(classAoePulsesRef.current, nowFx);
+      drawClassAoePulses(ctx, classAoePulsesRef.current, nowFx);
+
+      // Form casting snowflakes; drawHitFx deferred until after boss+characters
+      for (const burst of hitFxRef.current.snowBursts) {
+        if (!burst.fading && burst.form < 1) {
+          burst.form = Math.min(1, burst.form + 0.016 / 1.2);
+        }
+      }
+      pruneHitFx(hitFxRef.current, nowFx);
+
       for (const effect of groundEffects) {
         ctx.save();
-        if (effect.kind === 'HEAL_ZONE') {
-          activeHealZones.push(effect);
-          const grad = ctx.createRadialGradient(effect.x, effect.y, 4, effect.x, effect.y, effect.radius);
-          grad.addColorStop(0, 'rgba(16, 185, 129, 0.45)');
-          grad.addColorStop(0.7, 'rgba(16, 185, 129, 0.2)');
-          grad.addColorStop(1, 'rgba(16, 185, 129, 0.0)');
-          ctx.fillStyle = grad;
-          ctx.beginPath();
-          ctx.arc(effect.x, effect.y, effect.radius, 0, Math.PI * 2);
-          ctx.fill();
-
-          ctx.strokeStyle = '#10B981';
-          ctx.lineWidth = 1.5;
-          ctx.setLineDash([4, 4]);
-          ctx.beginPath();
-          ctx.arc(effect.x, effect.y, effect.radius, 0, Math.PI * 2);
-          ctx.stroke();
-          ctx.setLineDash([]);
-        } else if (effect.kind === 'DAMAGE_ZONE') {
-          const grad = ctx.createRadialGradient(effect.x, effect.y, 4, effect.x, effect.y, effect.radius);
-          grad.addColorStop(0, 'rgba(239, 68, 68, 0.55)');
-          grad.addColorStop(0.7, 'rgba(239, 68, 68, 0.25)');
-          grad.addColorStop(1, 'rgba(239, 68, 68, 0.0)');
-          ctx.fillStyle = grad;
-          ctx.beginPath();
-          ctx.arc(effect.x, effect.y, effect.radius, 0, Math.PI * 2);
-          ctx.fill();
-
-          ctx.strokeStyle = '#EF4444';
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.arc(effect.x, effect.y, effect.radius, 0, Math.PI * 2);
-          ctx.stroke();
-        } else if (effect.kind === 'CONE_WARNING') {
-          ctx.fillStyle = 'rgba(239, 68, 68, 0.28)';
-          ctx.strokeStyle = '#EF4444';
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.moveTo(effect.x, effect.y);
-          const facing = (effect as any).facingRad ?? Math.PI;
-          const coneAngle = (effect as any).coneAngleRad ?? (Math.PI / 3);
-          ctx.arc(effect.x, effect.y, effect.radius, facing - coneAngle / 2, facing + coneAngle / 2);
-          ctx.closePath();
-          ctx.fill();
-          ctx.stroke();
+        if (effect.kind === 'CONE_WARNING') {
+          // 锥形光圈：与圆形同一套半径→透明度；朝向/张开角由 Boss 设定
+          drawConeWarning(ctx, effect, { whiteOutline: prefs.terrainWhiteOutline });
         } else if (effect.kind === 'TOTEM') {
-          ctx.fillStyle = '#0070DE';
+          // Candle-sized totem marker (thin wax + small flame); radius fill comes from AoE ring
+          const cx = effect.x;
+          const cy = effect.y;
+          ctx.fillStyle = '#C4A574';
+          ctx.fillRect(cx - 1.5, cy - 7, 3, 9);
+          ctx.strokeStyle = '#3F2A14';
+          ctx.lineWidth = 1;
           ctx.beginPath();
-          ctx.arc(effect.x, effect.y, 16, 0, Math.PI * 2);
+          ctx.moveTo(cx, cy - 7);
+          ctx.lineTo(cx, cy - 9.5);
+          ctx.stroke();
+          ctx.fillStyle = '#FBBF24';
+          ctx.beginPath();
+          ctx.ellipse(cx, cy - 12, 2.2, 3.6, 0, 0, Math.PI * 2);
           ctx.fill();
-          ctx.fillStyle = '#8B4513';
-          ctx.fillRect(effect.x - 3, effect.y - 10, 6, 20);
-          ctx.fillStyle = '#FACC15';
-          ctx.fillRect(effect.x - 6, effect.y - 14, 12, 4);
+          ctx.fillStyle = '#F97316';
+          ctx.beginPath();
+          ctx.ellipse(cx, cy - 11.2, 1.1, 1.8, 0, 0, Math.PI * 2);
+          ctx.fill();
         }
         ctx.restore();
       }
 
-      // Networked: pull boss / remote units toward host-authoritative positions
-      if (syncRemotePositions) {
+      // Networked guests: pull boss toward host-authoritative position.
+      // Host keeps local chase AI — do not lerp-overwrite host boss pose.
+      if (syncRemotePositions && isNetworkGuestRef.current) {
         if (bossUnit?.position) {
           bossPosRef.current.x += (bossUnit.position.x - bossPosRef.current.x) * 0.4;
           bossPosRef.current.y += (bossUnit.position.y - bossPosRef.current.y) * 0.4;
@@ -3364,6 +4388,61 @@ export const CombatCanvas: React.FC<Props> = ({
 
       // ── Process AI Companions Pathfinding & Behaviors (Item 5: Perturbation & Micro-stepping) ──
       const bossPos = bossPosRef.current;
+      // 主坦世界坐标：非高优意图时队友须保持在其 25 码内
+      const primaryTank =
+        orderTanksByThreatPriority(units.filter((t) => t.role === 'TANK'))[0] ??
+        units.find((t) => t.role === 'TANK' && ((t.isAlive ?? t.alive) && t.hp > 0));
+      let primaryTankPos: { x: number; y: number } | undefined;
+      if (primaryTank) {
+        if (primaryTank.isPlayer) {
+          primaryTankPos = { ...playerPosRef.current };
+        } else {
+          primaryTankPos =
+            companionPositionsRef.current[primaryTank.id] ||
+            (primaryTank.position ? { ...primaryTank.position } : undefined);
+        }
+      }
+
+      const bossTargetUnit =
+        (bossTargetId
+          ? units.find((t) => t.id === bossTargetId && (t.alive ?? t.isAlive) && t.hp > 0)
+          : null) ?? null;
+      const bossTargetPos = bossTargetUnit
+        ? bossTargetUnit.isPlayer
+          ? { ...playerPosRef.current }
+          : companionPositionsRef.current[bossTargetUnit.id] ||
+            (bossTargetUnit.position ? { ...bossTargetUnit.position } : undefined)
+        : undefined;
+      const bossFacingRad = resolveUnitFacingRad({
+        position: bossPos,
+        isMoving: isBossMovingRef.current,
+        moveDx: bossMoveDirRef.current.dx,
+        moveDy: bossMoveDirRef.current.dy,
+        targetPos: bossTargetPos ?? null,
+        fallbackFacingRad: (bossUnit as { facingRad?: number } | undefined)?.facingRad,
+      });
+      if (bossUnit) {
+        (bossUnit as { facingRad?: number }).facingRad = bossFacingRad;
+      }
+      const aggroIsNonTank = !!(bossTargetUnit && bossTargetUnit.role !== 'TANK');
+
+      let nearestHealerPos: { x: number; y: number } | undefined;
+      {
+        let bestD = Infinity;
+        for (const h of units) {
+          if (h.role !== 'HEALER' || !((h.isAlive ?? h.alive) && h.hp > 0)) continue;
+          const hp = h.isPlayer
+            ? playerPosRef.current
+            : companionPositionsRef.current[h.id] || h.position;
+          if (!hp) continue;
+          const d = Math.hypot(hp.x - bossPos.x, hp.y - bossPos.y);
+          if (d < bestD) {
+            bestD = d;
+            nearestHealerPos = { x: hp.x, y: hp.y };
+          }
+        }
+      }
+
       units.forEach((u, idx) => {
         if (u.isPlayer) return;
 
@@ -3381,12 +4460,14 @@ export const CombatCanvas: React.FC<Props> = ({
         const isAlive = (u.isAlive ?? u.alive) && u.hp > 0;
         if (!isAlive) return;
 
-        // Network sync: guests follow all remotes; host only follows remote humans (MOVE)
-        // Host AI companions still pathfind locally and write unit.position for broadcast
+        // Network sync: guests follow all remotes; host only follows remote humans (MOVE).
+        // Do NOT use onNetworkMoveReport as a guest signal — App always passes that callback,
+        // which previously made host AI early-return and freeze (no heal-zone / dodge / fidget).
+        // Host AI companions still pathfind locally and write unit.position for broadcast.
         const followHostPos =
           syncRemotePositions &&
           !!u.position &&
-          (!!onNetworkMoveReport || !!u.isHumanControlled);
+          (isNetworkGuestRef.current || !!u.isHumanControlled);
         if (followHostPos) {
           pos.x += (u.position.x - pos.x) * 0.4;
           pos.y += (u.position.y - pos.y) * 0.4;
@@ -3400,29 +4481,32 @@ export const CombatCanvas: React.FC<Props> = ({
         // 1. 默认阵型：与 PULL_APPROACH 共用 getCombatFormationPos，开怪不瞬移
         const defaultTarget = getCombatFormationPos(u, idx, bossPos, hpPct);
 
-        // 2. 地面治疗阵法与负面阵型权衡评估：
-        // 存在多个地面治疗阵法时已经在其中一个了就不要走到其他的了，除非有负面阵型要躲避根据权衡是躲避还是继续站位
-        // 近战DPS血线健康时不远离Boss走治疗阵，若不影响打Boss可走，恢复健康且打不到Boss时返回攻击Boss
+        // 2. 走位可行域求交：躲红圈 → 仇恨纠偏 → 危血绿圈 → 健康输出位叠层 → 主坦 25 码
         const formationResult = evaluateGroundFormationPosition({
           currentPos: pos,
           unit: u,
           groundEffects,
           defaultTarget,
           bossPos,
+          attackTargetPos: bossPos,
+          tankPos: primaryTank && primaryTank.id !== u.id ? primaryTankPos : undefined,
+          bossFacingRad,
+          bossTargetUnitId: bossTargetId,
+          aggroIsNonTank,
+          nearestHealerPos,
+          isPrimaryTank: !!primaryTank && primaryTank.id === u.id,
         });
 
         targetX = formationResult.targetPos.x;
         targetY = formationResult.targetPos.y;
 
-        // 3. 多动症踱步：仅在默认阵型 / 回打 Boss 时允许——不干扰躲圈、蹭治疗阵、拉怪意图点
-        // 站桩超过该 AI 的 fidgetIdleThresholdMs（按角色名稳定随机，约 5~60s）后，在意图点周围小幅走动再回位
+        // 3. 多动症：仅在 allowFidget 的可行域内；单次位移 ≤5 码，且不得踏入红圈
         {
           const canFidget =
             runPhase === 'BOSS_COMBAT' &&
             !!bossUnit &&
             !!(bossUnit.alive ?? bossUnit.isAlive) &&
-            (formationResult.tradeOffDecision === 'DEFAULT_POSITION' ||
-              formationResult.tradeOffDecision === 'RETURN_TO_BOSS');
+            formationResult.allowFidget;
 
           let fidget = companionFidgetRef.current[u.id];
           if (!fidget) {
@@ -3435,6 +4519,10 @@ export const CombatCanvas: React.FC<Props> = ({
           const movedPx = Math.hypot(pos.x - fidget.lastX, pos.y - fidget.lastY);
           fidget.lastX = pos.x;
           fidget.lastY = pos.y;
+          const fidgetCap = Math.min(
+            formationResult.fidgetMaxRadiusPx || FIDGET_MAX_PX,
+            FIDGET_MAX_PX
+          );
 
           if (!canFidget) {
             fidget.idleMs = 0;
@@ -3457,16 +4545,27 @@ export const CombatCanvas: React.FC<Props> = ({
             } else {
               fidget.ox = 0;
               fidget.oy = 0;
-              // 真正站桩（到岗且几乎不动）才累计不耐烦；赶路中不计
               if (atIntent && movedPx < 0.85) {
                 fidget.idleMs += frameDtMs;
                 if (fidget.idleMs >= idleThresholdMs) {
                   const angle =
                     (((personality.seed + Math.floor(nowMs / 17) + idx * 97) % 360) * Math.PI) / 180;
-                  const radius =
-                    personality.fidgetRadiusPx * (0.55 + ((personality.seed >> 5) % 46) / 100);
-                  fidget.ox = Math.cos(angle) * radius;
-                  fidget.oy = Math.sin(angle) * radius;
+                  const radius = Math.min(
+                    fidgetCap,
+                    personality.fidgetRadiusPx * (0.55 + ((personality.seed >> 5) % 46) / 100)
+                  );
+                  let ox = Math.cos(angle) * radius;
+                  let oy = Math.sin(angle) * radius;
+                  const trial = {
+                    x: formationResult.targetPos.x + ox,
+                    y: formationResult.targetPos.y + oy,
+                  };
+                  if (groundEffects.some((g) => isPosInHazard(trial, g))) {
+                    ox = 0;
+                    oy = 0;
+                  }
+                  fidget.ox = ox;
+                  fidget.oy = oy;
                   fidget.activeUntil = nowMs + personality.fidgetDurationMs;
                   fidget.idleMs = 0;
                   targetX += fidget.ox;
@@ -3477,6 +4576,20 @@ export const CombatCanvas: React.FC<Props> = ({
               }
             }
           }
+        }
+
+        // 踱步偏移后再次压回主坦 25 码（仅低优默认可踱步意图；躲圈与吃治疗圈不受限）
+        if (
+          primaryTankPos &&
+          u.role !== 'TANK' &&
+          formationResult.allowFidget &&
+          (formationResult.tradeOffDecision === 'DEFAULT_POSITION' ||
+            formationResult.tradeOffDecision === 'RETURN_TO_BOSS' ||
+            formationResult.tradeOffDecision === 'STAY_IN_CURRENT_HEAL_ZONE')
+        ) {
+          const stacked = clampPosWithinTankRange({ x: targetX, y: targetY }, primaryTankPos);
+          targetX = stacked.x;
+          targetY = stacked.y;
         }
 
         // 全场物理边界（外圈不实际限制移动，角色与玩家均可正常走入外圈，只是看起来更广阔）
@@ -3495,8 +4608,10 @@ export const CombatCanvas: React.FC<Props> = ({
           pos.x += (dx / dist) * step;
           pos.y += (dy / dist) * step;
           (u as any).isMoving = wasMoving ? dist > 1.6 : dist > 5.0;
+          unitMoveDirRef.current[u.id] = { dx: dx / dist, dy: dy / dist };
         } else {
           (u as any).isMoving = false;
+          unitMoveDirRef.current[u.id] = { dx: 0, dy: 0 };
         }
 
         // 全图自由移动，外圈不限制通行
@@ -3509,9 +4624,10 @@ export const CombatCanvas: React.FC<Props> = ({
       });
 
       // ── Process Boss Movement & Pursuit AI (受距离约束，够不着会跑过去) ──
-      // Guests: boss pose already lerped from host snapshot — skip local chase AI
+      // Guests: boss pose already lerped from host snapshot — skip local chase AI.
+      // Host must keep chase AI (onNetworkMoveReport is always passed from App).
       let bossIsMoving = false;
-      const guestFollowHostBoss = syncRemotePositions && !!onNetworkMoveReport;
+      const guestFollowHostBoss = syncRemotePositions && isNetworkGuestRef.current;
       if (
         !guestFollowHostBoss &&
         runPhase === 'BOSS_COMBAT' &&
@@ -3547,9 +4663,13 @@ export const CombatCanvas: React.FC<Props> = ({
               const step = Math.min(bossSpeed, Math.max(0, dist - CHASE_STOP_DIST));
               if (step > 0.35) {
                 bossIsMoving = true;
+                bossMoveDirRef.current = { dx: dx / dist, dy: dy / dist };
                 bossPosRef.current.x += (dx / dist) * step;
                 bossPosRef.current.y += (dy / dist) * step;
               }
+            } else if (tPos) {
+              // 站定时朝向打击目标（供下一帧走位 / 正面锥使用）
+              bossMoveDirRef.current = { dx: 0, dy: 0 };
             }
 
             // 场地全范围自由通行，外圈不硬性设阻
@@ -3566,78 +4686,7 @@ export const CombatCanvas: React.FC<Props> = ({
       }
       isBossMovingRef.current = bossIsMoving;
 
-      // ── Periodic Dynamic Combat FX (Projectiles, Healing Rays, Slashes) ───────
-      if (runPhase === 'BOSS_COMBAT' && bossUnit && bossUnit.alive) {
-        // Ranged cast flying projectile (Mage / Warlock / Hunter / Priest / Elemental Shaman)
-        if (tickCount % 30 === 0) {
-          const rangedDps = units.find(
-            u =>
-              u.alive &&
-              u.role === 'DPS' &&
-              (u.classId === 'MAGE' || u.classId === 'WARLOCK' || u.classId === 'HUNTER' || u.classId === 'PRIEST' || u.classId === 'SHAMAN')
-          );
-          if (rangedDps) {
-            const mPos = rangedDps.isPlayer ? playerPosRef.current : (companionPositionsRef.current[rangedDps.id] || { x: 160, y: 160 });
-            const rColor =
-              rangedDps.classId === 'MAGE' ? '#FF4500' :
-              rangedDps.classId === 'WARLOCK' ? '#A855F7' :
-              rangedDps.classId === 'HUNTER' ? '#ABD473' :
-              rangedDps.classId === 'PRIEST' ? '#C084FC' : '#38BDF8';
-            projectilesRef.current.push({
-              id: `proj_${Date.now()}_${Math.random()}`,
-              fromX: mPos.x,
-              fromY: mPos.y,
-              toX: bossPos.x,
-              toY: bossPos.y,
-              color: rColor,
-              kind: 'FIRE',
-              progress: 0,
-            });
-          }
-        }
-
-        // Healer radiant healing beam
-        if (tickCount % 40 === 0) {
-          const healer = units.find(u => u.role === 'HEALER' && u.alive);
-          if (healer) {
-            const wounded = units.filter(u => u.alive && u.hp < u.maxHp);
-            const lowest = wounded.sort((a, b) => a.hp / a.maxHp - b.hp / b.maxHp)[0];
-            const hPos = healer.isPlayer ? playerPosRef.current : (companionPositionsRef.current[healer.id] || { x: 140, y: 220 });
-            const tPos = lowest ? (lowest.isPlayer ? playerPosRef.current : (companionPositionsRef.current[lowest.id] || { x: 180, y: 180 })) : hPos;
-            beamsRef.current.push({
-              id: `beam_${Date.now()}_${Math.random()}`,
-              fromX: hPos.x,
-              fromY: hPos.y,
-              toX: tPos.x,
-              toY: tPos.y,
-              color: '#10B981',
-              elapsedMs: 0,
-              totalMs: 450,
-            });
-          }
-        }
-
-        // Melee slash visual
-        if (tickCount % 22 === 0) {
-          const melee = units.find(u => u.alive && (u.classId === 'ROGUE' || u.classId === 'WARRIOR' || ((u.classId === 'DK' || u.classId === 'PALADIN') && u.role === 'DPS')));
-          if (melee) {
-            const mPos = companionPositionsRef.current[melee.id];
-            // 仅在近战单位实际处于首领攻击范围 (<=80px) 内时播放挥砍视觉特效
-            const inRange = !mPos || Math.hypot(mPos.x - bossPos.x, mPos.y - bossPos.y) <= 80;
-            if (inRange) {
-              slashesRef.current.push({
-                id: `slash_${Date.now()}_${Math.random()}`,
-                x: bossPos.x - 20 + (Math.random() - 0.5) * 15,
-                y: bossPos.y + (Math.random() - 0.5) * 20,
-                angle: (Math.random() - 0.5) * Math.PI,
-                color: '#FFF569',
-                elapsedMs: 0,
-                totalMs: 220,
-              });
-            }
-          }
-        }
-      }
+      // Decorative tick% combat FX removed — ST hit FX driven by recentActions (combatHitFx)
 
       // ── Draw Mouse Click-to-Move Ping Animation ─────────────────────────────
       if (clickTargetRef.current) {
@@ -3678,244 +4727,221 @@ export const CombatCanvas: React.FC<Props> = ({
         }
       }
 
-      // ── Draw Healing Beams ──────────────────────────────────────────────────
-      beamsRef.current.forEach(beam => {
-        beam.elapsedMs += 16;
-        const progress = beam.elapsedMs / beam.totalMs;
-        if (progress < 1) {
-          ctx.save();
-          const alpha = 1 - progress;
-          ctx.strokeStyle = `rgba(16, 185, 129, ${alpha * 0.8})`;
-          ctx.lineWidth = 4 * (1 - progress * 0.5);
-          ctx.beginPath();
-          ctx.moveTo(beam.fromX, beam.fromY);
-          const midX = (beam.fromX + beam.toX) / 2;
-          const midY = Math.min(beam.fromY, beam.toY) - 30;
-          ctx.quadraticCurveTo(midX, midY, beam.toX, beam.toY);
-          ctx.stroke();
-          ctx.restore();
+      // 八向朝向：移动中朝移动方向，否则朝释法/打击对象
+      const resolveUnitLookTarget = (u: Unit): { x: number; y: number } | null => {
+        if (u.role === 'ENEMY' || u.classId === 'BOSS') {
+          return bossTargetPos ?? primaryTankPos ?? null;
         }
-      });
-      beamsRef.current = beamsRef.current.filter(b => b.elapsedMs < b.totalMs);
-
-      // ── Draw Projectiles ───────────────────────────────────────────────────
-      projectilesRef.current.forEach(proj => {
-        proj.progress += 0.05;
-        if (proj.progress < 1) {
-          const curX = proj.fromX + (proj.toX - proj.fromX) * proj.progress;
-          const curY = proj.fromY + (proj.toY - proj.fromY) * proj.progress - Math.sin(proj.progress * Math.PI) * 25;
-          ctx.save();
-          ctx.fillStyle = proj.color;
-          ctx.beginPath();
-          ctx.arc(curX, curY, 6, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.fillStyle = '#FFA500';
-          ctx.beginPath();
-          ctx.arc(curX - 4, curY + 2, 4, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.restore();
+        // 当前选中目标（玩家常用）
+        if (selectedUnitId) {
+          if (bossUnit && (selectedUnitId === bossUnit.id || selectedUnitId === 'boss')) {
+            return { ...bossPosRef.current };
+          }
+          const sel = units.find((t) => t.id === selectedUnitId);
+          if (sel) {
+            if (sel.isPlayer) return { ...playerPosRef.current };
+            const cp = companionPositionsRef.current[sel.id];
+            if (cp) return { ...cp };
+            if (sel.position) return { x: sel.position.x, y: sel.position.y };
+          }
         }
-      });
-      projectilesRef.current = projectilesRef.current.filter(p => p.progress < 1);
-
-      // ── Draw Melee Slashes ─────────────────────────────────────────────────
-      slashesRef.current.forEach(slash => {
-        slash.elapsedMs += 16;
-        const slashProgress = slash.elapsedMs / slash.totalMs;
-        if (slashProgress < 1) {
-          ctx.save();
-          ctx.translate(slash.x, slash.y);
-          ctx.rotate(slash.angle);
-          ctx.strokeStyle = slash.color;
-          ctx.lineWidth = 3 * (1 - slashProgress);
-          ctx.beginPath();
-          ctx.arc(0, 0, 18 + slashProgress * 10, -Math.PI / 3, Math.PI / 3);
-          ctx.stroke();
-          ctx.restore();
+        // 默认：输出/坦克看 Boss；治疗也看 Boss（无选中时）
+        if (bossUnit && ((bossUnit.isAlive ?? bossUnit.alive) && bossUnit.hp > 0)) {
+          return { ...bossPosRef.current };
         }
-      });
-      slashesRef.current = slashesRef.current.filter(s => s.elapsedMs < s.totalMs);
+        return null;
+      };
 
-      // ── Draw Boss Model ─────────────────────────────────────────────────────
-      if (bossUnit) {
-        drawBossModel(ctx, bossUnit, bossPosRef.current, bossUnit.id === selectedUnitId, tickCount, isBossMovingRef.current);
+      for (const u of units) {
+        const pos = u.isPlayer
+          ? playerPosRef.current
+          : companionPositionsRef.current[u.id] ||
+            (u.position ? { x: u.position.x, y: u.position.y } : null);
+        if (!pos) continue;
+        const moveDir = u.isPlayer
+          ? playerMoveDirRef.current
+          : unitMoveDirRef.current[u.id] || { dx: 0, dy: 0 };
+        const moving =
+          !!(u as { isMoving?: boolean }).isMoving ||
+          Math.hypot(moveDir.dx, moveDir.dy) > 0.15;
+        if (u.isPlayer && !moving) {
+          playerMoveDirRef.current = { dx: 0, dy: 0 };
+        }
+        const facingRad = resolveUnitFacingRad({
+          position: pos,
+          isMoving: moving,
+          moveDx: moveDir.dx,
+          moveDy: moveDir.dy,
+          targetPos: resolveUnitLookTarget(u),
+          fallbackFacingRad: (u as { facingRad?: number }).facingRad,
+        });
+        (u as { facingRad?: number }).facingRad = facingRad;
+      }
+      lastPlayerPosForFacingRef.current = { ...playerPosRef.current };
+
+      // Layer: terrain auras < boss/chars (camera depth) < hit FX < HP bars < SCT
+      // ISO: closer-to-camera billboards paint later (painter's algorithm)
+      {
+        type DepthSprite = { depth: number; paint: () => void };
+        const sprites: DepthSprite[] = [];
+        if (bossUnit) {
+          const bPos = bossPosRef.current;
+          const bFacing = (bossUnit as { facingRad?: number }).facingRad || 0;
+          sprites.push({
+            depth: viewDepthKey(bPos.x, bPos.y, viewCam),
+            paint: () => {
+              withUprightAt(ctx, viewCam, bPos, (sp) => {
+                drawBossModel(
+                  ctx,
+                  bossUnit,
+                  sp,
+                  bossUnit.id === selectedUnitId,
+                  tickCount,
+                  isBossMovingRef.current,
+                  {
+                    showName: prefs.showBossName && !prefs.showBossHp,
+                    facingDir: facingDirFromRad(viewRelativeFacingRad(bFacing, viewCam)),
+                  }
+                );
+              });
+            },
+          });
+        }
+        units.forEach((u, idx) => {
+          const isPlayer = u.isPlayer;
+          const pos = isPlayer
+            ? playerPosRef.current
+            : companionPositionsRef.current[u.id] || { x: 160 + idx * 25, y: 150 + idx * 30 };
+          const showNm = shouldShowCombatName(u, selectedUnitId, focusTargetId, prefs, localPlayerId);
+          const showHp = shouldShowUnitHpBar(u, selectedUnitId, focusTargetId, prefs, localPlayerId);
+          const wFacing = (u as { facingRad?: number }).facingRad || 0;
+          sprites.push({
+            depth: viewDepthKey(pos.x, pos.y, viewCam),
+            paint: () => {
+              withUprightAt(ctx, viewCam, pos, (sp) => {
+                drawClassCharacter(ctx, u, sp, !!isPlayer, u.id === selectedUnitId, tickCount, idx, {
+                  showName: showNm && !showHp,
+                  facingDir: facingDirFromRad(viewRelativeFacingRad(wFacing, viewCam)),
+                });
+              });
+            },
+          });
+        });
+        sprites.sort((a, b) => a.depth - b.depth);
+        for (const s of sprites) s.paint();
       }
 
-      // ── Draw Player Character & Companions ─────────────────────────────────
+      drawHitFx(ctx, hitFxRef.current, nowFx, hitFxFilter);
+
+      // HP bars overlay — upright billboards above models
+      if (bossUnit && prefs.showBossHp) {
+        withUprightAt(ctx, viewCam, bossPosRef.current, (sp) => {
+          drawBossHpBar(ctx, bossUnit, sp, {
+            name: prefs.showBossName ? bossUnit.name : null,
+          });
+        });
+      }
       units.forEach((u, idx) => {
-        const isPlayer = u.isPlayer;
-        const pos = isPlayer
+        if (!shouldShowUnitHpBar(u, selectedUnitId, focusTargetId, prefs, localPlayerId)) return;
+        const pos = u.isPlayer
           ? playerPosRef.current
           : (companionPositionsRef.current[u.id] || { x: 160 + idx * 25, y: 150 + idx * 30 });
-
-        drawClassCharacter(ctx, u, pos, isPlayer, u.id === selectedUnitId, tickCount, idx);
+        withUprightAt(ctx, viewCam, pos, (sp) => {
+          drawUnitHpBar(ctx, u, sp, {
+            name: shouldShowCombatName(u, selectedUnitId, focusTargetId, prefs, localPlayerId)
+              ? u.name
+              : null,
+          });
+        });
       });
 
       // ── Draw Floating Combat Text (SCT) ────────────────────────────────────
+      // 范围由 combatDisplayPrefs 控制（默认：我伤/我疗/疗我/伤我；友方伤/疗关）
       const nowSCT = Date.now();
+      const sctPrefs = displayPrefs;
+
       for (const fct of floatingTexts) {
         const ageMs = nowSCT - fct.createdAtMs;
         if (ageMs > 1500) continue;
 
-        const targetUnit = units.find(u => u.id === fct.targetId);
-        let targetX = 0;
-        let targetY = 0;
+        const mode = resolveLocalFloatingTextMode(fct, {
+          localPlayerId,
+          units,
+          bossUnitId: bossUnit?.id,
+          prefs: sctPrefs,
+        });
+        if (!mode) continue;
+
+        const targetUnit = units.find((u) => u.id === fct.targetId);
+        let feet: { x: number; y: number } | null = null;
+        let headLift = 25;
         const isTargetBoss = fct.targetId === bossUnit?.id;
-        const isTargetEnemy = isTargetBoss || targetUnit?.role === 'ENEMY';
-        const isTargetPlayer = targetUnit?.isPlayer || fct.isToPlayer;
 
         if (isTargetBoss) {
-          targetX = bossPos.x;
-          targetY = bossPos.y - 35;
+          feet = { x: bossPos.x, y: bossPos.y };
+          headLift = 35;
         } else if (targetUnit) {
-          const uPos = targetUnit.isPlayer ? playerPosRef.current : companionPositionsRef.current[targetUnit.id];
-          if (uPos) {
-            targetX = uPos.x;
-            targetY = uPos.y - 25;
-          }
+          const uPos = targetUnit.isPlayer
+            ? playerPosRef.current
+            : companionPositionsRef.current[targetUnit.id];
+          if (uPos) feet = { x: uPos.x, y: uPos.y };
         }
-        if (targetX === 0 && targetY === 0) continue;
+        if (!feet) continue;
 
-        // 1. 敌人头顶数字：严格只显示 你 & 你的宠物 对敌人造成的伤害与命中判定
-        if (isTargetEnemy && !fct.isFromPlayerOrPet) {
-          continue;
-        }
-
-        // 散布微小水平抖动与减速上浮动画 (模拟魔兽原版 SCT 抛物线浮动)
         let hash = 0;
-        for (let i = 0; i < fct.id.length; i++) hash = ((hash << 5) - hash) + fct.id.charCodeAt(i);
+        for (let i = 0; i < fct.id.length; i++) hash = (hash << 5) - hash + fct.id.charCodeAt(i);
         const xJitter = (Math.abs(hash) % 36) - 18;
 
         const progress = ageMs / 1500;
         const yOffset = Math.sin(progress * Math.PI * 0.5) * 45;
         const alpha = Math.max(0, 1 - Math.pow(progress, 1.4));
 
-        let scale = 1.0;
-        if (fct.isCrit) {
-          scale = ageMs < 200 ? 1.0 + (1 - ageMs / 200) * 0.4 : 1.0;
-        }
+        const isAllyFx = mode === 'ALLY_OUTGOING' || mode === 'ALLY_HEAL';
+        const basePx =
+          mode === 'OUTGOING' || mode === 'ALLY_OUTGOING'
+            ? 15.5
+            : mode === 'HEAL_SELF' || mode === 'ALLY_HEAL'
+              ? 14.5
+              : 15;
+        const fontPx = fct.isCrit ? basePx * 1.2 : basePx;
 
+        const screenFeet = worldToView(feet.x, feet.y, viewCam);
+        enterScreenSpaceFromIso(ctx, viewCam);
         ctx.save();
-        ctx.globalAlpha = alpha;
-        ctx.translate(targetX + xJitter, targetY - yOffset);
-        if (scale !== 1.0) {
-          ctx.scale(scale, scale);
-        }
-
+        ctx.globalAlpha = alpha * (isAllyFx ? 0.72 : 1);
+        ctx.translate(screenFeet.x + xJitter, screenFeet.y - headLift - yOffset);
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
+        ctx.font = `bold ${fontPx}px "Microsoft YaHei", sans-serif`;
+        ctx.lineWidth = fct.isCrit ? 3 : 2.5;
+        ctx.strokeStyle = '#000000';
 
-        if (isTargetEnemy) {
-          // ── 敌人头顶数字 (你 & 你的宠物 对敌人造成的伤害) ──
-          if (['DODGE', 'PARRY', 'BLOCK', 'RESIST', 'ABSORB', 'MISS', 'IMMUNE'].includes(fct.category) ||
-              ['闪避', '招架', '格挡', '抵抗', '吸收', '未命中', '免疫'].includes(fct.text)) {
-            // 你打出的命中判定
-            ctx.font = 'bold 15px "Microsoft YaHei", sans-serif';
-            ctx.fillStyle = '#FEF08A';
-            ctx.strokeStyle = '#000000';
-            ctx.lineWidth = 2.5;
-            const hitText = fct.text.startsWith('[') ? fct.text : `[${fct.text}]`;
-            ctx.strokeText(hitText, 0, 0);
-            ctx.fillText(hitText, 0, 0);
-          } else if (fct.isCrit) {
-            // 暴击放大数字 (Enlarged Pop Font)
-            ctx.font = 'bold 22px "Impact", "Microsoft YaHei", sans-serif';
-            ctx.fillStyle = '#FFF500';
-            ctx.strokeStyle = '#8B0000';
-            ctx.lineWidth = 3;
-            ctx.strokeText(`💥 ${fct.text}`, 0, 0);
-            ctx.fillText(`💥 ${fct.text}`, 0, 0);
-          } else if (fct.category === 'DAMAGE_AUTO') {
-            // 白字普攻 (White auto-attack)
-            ctx.font = 'bold 14px "Microsoft YaHei", sans-serif';
-            ctx.fillStyle = '#FFFFFF';
-            ctx.strokeStyle = '#0f172a';
-            ctx.lineWidth = 2.5;
-            ctx.strokeText(fct.text, 0, 0);
-            ctx.fillText(fct.text, 0, 0);
-          } else if (fct.category === 'DAMAGE_DOT') {
-            // DOT持续伤害 (Periodic damage tick)
-            ctx.font = 'bold 13.5px "Microsoft YaHei", sans-serif';
-            ctx.fillStyle = '#F59E0B'; // 琥珀金
-            ctx.strokeStyle = '#000000';
-            ctx.lineWidth = 2;
-            ctx.strokeText(fct.text, 0, 0);
-            ctx.fillText(fct.text, 0, 0);
-          } else {
-            // 黄字技能 (Yellow skill damage)
-            ctx.font = 'bold 15.5px "Microsoft YaHei", sans-serif';
-            ctx.fillStyle = '#FFFF00'; // 原汁原味经典 WoW 黄字技能色
-            ctx.strokeStyle = '#000000';
-            ctx.lineWidth = 2.5;
-            ctx.strokeText(fct.text, 0, 0);
-            ctx.fillText(fct.text, 0, 0);
-          }
-        } else if (isTargetPlayer) {
-          // ── 你角色头顶数字 ──
-          if (fct.category === 'HEAL') {
-            // 2. 你角色头顶绿色数字：治疗量（队友奶你 / 自己回血技能）
-            const isCritHeal = fct.isCrit;
-            ctx.font = isCritHeal ? 'bold 20px "Impact", sans-serif' : 'bold 14.5px "Microsoft YaHei", sans-serif';
-            ctx.fillStyle = isCritHeal ? '#4ADE80' : '#22C55E';
-            ctx.strokeStyle = '#022c22';
-            ctx.lineWidth = 2.5;
-            const cleanText = fct.text.replace(/^\+/, '');
-            const healStr = isCritHeal ? `💥 +${cleanText}` : `+${cleanText}`;
-            ctx.strokeText(healStr, 0, 0);
-            ctx.fillText(healStr, 0, 0);
-          } else if (fct.category === 'DAMAGE_TAKEN') {
-            // 3. 你角色头顶红色数字：敌人对你造成的伤害
-            const isCritDmg = fct.isCrit;
-            ctx.font = isCritDmg ? 'bold 20px "Impact", sans-serif' : 'bold 15px "Microsoft YaHei", sans-serif';
-            ctx.fillStyle = isCritDmg ? '#FF0000' : '#EF4444';
-            ctx.strokeStyle = '#450a0a';
-            ctx.lineWidth = 2.5;
-            const cleanText = fct.text.replace(/^-/, '');
-            const dmgStr = isCritDmg ? `💥 -${cleanText}` : `-${cleanText}`;
-            ctx.strokeText(dmgStr, 0, 0);
-            ctx.fillText(dmgStr, 0, 0);
-          } else if (['DODGE', 'PARRY', 'BLOCK', 'RESIST', 'ABSORB', 'MISS'].includes(fct.category) ||
-                     ['闪避', '招架', '格挡', '抵抗', '吸收', '未命中'].includes(fct.text)) {
-            // 4. 打到你身上的命中判定结果
-            let color = '#38BDF8';
-            if (fct.category === 'PARRY' || fct.text === '招架') color = '#F59E0B';
-            else if (fct.category === 'BLOCK' || fct.text === '格挡') color = '#A855F7';
-            else if (fct.category === 'ABSORB' || fct.text === '吸收') color = '#FCD34D';
-            else if (fct.category === 'RESIST' || fct.text === '抵抗') color = '#C084FC';
-            else if (fct.category === 'MISS' || fct.text === '未命中') color = '#94A3B8';
-
-            ctx.font = 'bold 16px "Microsoft YaHei", sans-serif';
-            ctx.fillStyle = color;
-            ctx.strokeStyle = '#000000';
-            ctx.lineWidth = 2.5;
-            ctx.strokeText(fct.text, 0, 0);
-            ctx.fillText(fct.text, 0, 0);
-          } else {
-            // 默认玩家普通提示
-            ctx.font = 'bold 13px sans-serif';
-            ctx.fillStyle = '#FFFFFF';
-            ctx.strokeStyle = '#000000';
-            ctx.lineWidth = 2;
-            ctx.strokeText(fct.text, 0, 0);
-            ctx.fillText(fct.text, 0, 0);
-          }
+        if (mode === 'OUTGOING' || mode === 'ALLY_OUTGOING') {
+          ctx.fillStyle = mode === 'ALLY_OUTGOING' ? '#FDE68A' : '#FFFF00';
+          ctx.strokeText(fct.text, 0, 0);
+          ctx.fillText(fct.text, 0, 0);
+        } else if (mode === 'HEAL_SELF' || mode === 'ALLY_HEAL') {
+          ctx.fillStyle =
+            mode === 'ALLY_HEAL'
+              ? fct.isCrit
+                ? '#86EFAC'
+                : '#4ADE80'
+              : fct.isCrit
+                ? '#4ADE80'
+                : '#22C55E';
+          ctx.strokeStyle = '#022c22';
+          const healStr = `+${fct.text.replace(/^\+/, '')}`;
+          ctx.strokeText(healStr, 0, 0);
+          ctx.fillText(healStr, 0, 0);
         } else {
-          // ── 队友头顶普通辅助跳字 (保持整洁低调) ──
-          if (fct.category === 'HEAL') {
-            ctx.font = 'bold 11.5px sans-serif';
-            ctx.fillStyle = '#4ADE80';
-            ctx.fillText(`+${fct.text.replace(/^\+/, '')}`, 0, 0);
-          } else if (fct.isCrit) {
-            ctx.font = 'bold 13.5px sans-serif';
-            ctx.fillStyle = '#FFD700';
-            ctx.fillText(`💥 ${fct.text}`, 0, 0);
-          } else {
-            ctx.font = 'bold 12px sans-serif';
-            ctx.fillStyle = '#cbd5e1';
-            ctx.fillText(fct.text, 0, 0);
-          }
+          ctx.fillStyle = fct.isCrit ? '#FF0000' : '#EF4444';
+          ctx.strokeStyle = '#450a0a';
+          const dmgStr = `-${fct.text.replace(/^-/, '')}`;
+          ctx.strokeText(dmgStr, 0, 0);
+          ctx.fillText(dmgStr, 0, 0);
         }
         ctx.restore();
+        ctx.restore(); // enterScreenSpaceFromIso
       }
 
       // ── Ground Target Reticle (Follows mouse, glowing or dimmed based on validity) ──
@@ -3948,40 +4974,20 @@ export const CombatCanvas: React.FC<Props> = ({
         ctx.stroke();
         ctx.setLineDash([]);
 
-        if (isAllowed) {
-          // Bright, glowing reticle in allowed area
-          const pulse = Math.sin(tickCount * 0.15) * 2;
-          const effRadius = radius + pulse;
+        // Flat disc: 透明度 ≤5yd 40% … ≥30yd 96%（alpha = 1−透明度），无羽化
+        const ringAlpha = resolveAoeAlphaByRadiusPx(radius);
+        const hex = (color || '#10b981').replace('#', '');
+        const rr = parseInt(hex.slice(0, 2), 16) || 16;
+        const gg = parseInt(hex.slice(2, 4), 16) || 185;
+        const bb = parseInt(hex.slice(4, 6), 16) || 129;
 
-          // Inner translucent glow fill
-          ctx.fillStyle = `${color}25`;
+        if (isAllowed) {
+          ctx.shadowBlur = 0;
+          ctx.fillStyle = `rgba(${rr}, ${gg}, ${bb}, ${ringAlpha})`;
           ctx.beginPath();
-          ctx.arc(x, y, effRadius, 0, Math.PI * 2);
+          ctx.arc(x, y, radius, 0, Math.PI * 2);
           ctx.fill();
 
-          // Outer glowing border
-          ctx.shadowColor = color;
-          ctx.shadowBlur = 14;
-          ctx.strokeStyle = color;
-          ctx.lineWidth = 2.5;
-          ctx.beginPath();
-          ctx.arc(x, y, effRadius, 0, Math.PI * 2);
-          ctx.stroke();
-
-          // Rotating compass notches
-          const rot = tickCount * 0.03;
-          for (let i = 0; i < 4; i++) {
-            const angle = rot + (i * Math.PI) / 2;
-            const innerR = effRadius - 8;
-            const outerR = effRadius + 4;
-            ctx.beginPath();
-            ctx.moveTo(x + Math.cos(angle) * innerR, y + Math.sin(angle) * innerR);
-            ctx.lineTo(x + Math.cos(angle) * outerR, y + Math.sin(angle) * outerR);
-            ctx.stroke();
-          }
-
-          // Center crosshair
-          ctx.shadowBlur = 0;
           ctx.strokeStyle = '#ffffff';
           ctx.lineWidth = 1.5;
           ctx.beginPath();
@@ -3991,37 +4997,28 @@ export const CombatCanvas: React.FC<Props> = ({
           ctx.lineTo(x, y + 8);
           ctx.stroke();
 
-          // Center dot
           ctx.fillStyle = '#ffffff';
           ctx.beginPath();
           ctx.arc(x, y, 2.5, 0, Math.PI * 2);
           ctx.fill();
 
-          // Guide Text below reticle
           ctx.fillStyle = '#ffffff';
           ctx.font = 'bold 11px sans-serif';
           ctx.textAlign = 'center';
           ctx.shadowColor = '#000000';
           ctx.shadowBlur = 4;
-          ctx.fillText(`左键释放 【${name}】`, x, y + effRadius + 18);
+          ctx.fillText(`左键释放 【${name}】`, x, y + radius + 18);
+          ctx.shadowBlur = 0;
           ctx.fillStyle = '#9ca3af';
           ctx.font = '9px sans-serif';
-          ctx.fillText('右键或ESC取消', x, y + effRadius + 30);
+          ctx.fillText('右键或ESC取消', x, y + radius + 30);
         } else {
-          // Dimmed / dark reticle when outside allowed area ("否则光圈变暗")
           ctx.shadowBlur = 0;
-          ctx.fillStyle = 'rgba(20, 20, 30, 0.4)';
+          ctx.fillStyle = `rgba(20, 20, 30, ${Math.min(0.55, ringAlpha)})`;
           ctx.beginPath();
           ctx.arc(x, y, radius, 0, Math.PI * 2);
           ctx.fill();
 
-          ctx.strokeStyle = 'rgba(100, 100, 110, 0.35)';
-          ctx.lineWidth = 1.5;
-          ctx.beginPath();
-          ctx.arc(x, y, radius, 0, Math.PI * 2);
-          ctx.stroke();
-
-          // Dimmed crosshair
           ctx.strokeStyle = 'rgba(150, 50, 50, 0.4)';
           ctx.lineWidth = 1.5;
           ctx.beginPath();
@@ -4031,7 +5028,6 @@ export const CombatCanvas: React.FC<Props> = ({
           ctx.lineTo(x, y + 6);
           ctx.stroke();
 
-          // Dim warning text
           ctx.fillStyle = '#f87171';
           ctx.font = 'bold 10px sans-serif';
           ctx.textAlign = 'center';
@@ -4050,7 +5046,7 @@ export const CombatCanvas: React.FC<Props> = ({
 
     animId = requestAnimationFrame(render);
     return () => cancelAnimationFrame(animId);
-  }, [units, bossUnit, bossTargetId, groundEffects, floatingTexts, runPhase, screenShake, selectedUnitId, onPlayerMove, onCancelCast, onApproachComplete, onFastForwardTravel, revivingUnitId, reviveProgress, autoApproachTarget, onApproachTargetReached, isCorpseRunning, corpseRunRemainingMs, groundTargetState, syncRemotePositions, onNetworkMoveReport]);
+  }, [units, bossUnit, bossTargetId, groundEffects, floatingTexts, runPhase, screenShake, selectedUnitId, focusTargetId, onPlayerMove, onCancelCast, onApproachComplete, onFastForwardTravel, revivingUnitId, reviveProgress, autoApproachTarget, onApproachTargetReached, isCorpseRunning, corpseRunRemainingMs, groundTargetState, syncRemotePositions, onNetworkMoveReport]);
 
   return (
     <div className="relative w-full h-full min-h-[500px] overflow-hidden bg-[#070710] cursor-crosshair select-none">
@@ -4063,8 +5059,18 @@ export const CombatCanvas: React.FC<Props> = ({
         onMouseMove={handleCanvasMouseMove}
         onMouseLeave={handleCanvasMouseLeave}
         onContextMenu={handleCanvasContextMenu}
+        onPointerDown={handleCanvasPointerDown}
+        onPointerMove={handleCanvasPointerMove}
+        onPointerUp={handleCanvasPointerUp}
+        onPointerCancel={handleCanvasPointerUp}
         className="w-full h-full block"
-        title={groundTargetState ? "单击有效区域释放技能，右键或ESC取消" : "单击地面移动，单击或双击角色选中目标"}
+        title={
+          groundTargetState
+            ? '单击有效区域释放技能，右键或ESC取消'
+            : displayPrefs.canvasViewMode === 'ISO' && runPhase !== 'TRAVEL_RECOVERY'
+              ? '2.5D：按住右键左右转 / 上下俯仰(20°–垂直) · 单击地面移动 · 滚轮缩放'
+              : '单击地面移动，单击或双击角色选中目标 · 滚轮缩放视角'
+        }
       />
       {/* Top Center Banner when in Ground Targeting Mode */}
       {groundTargetState && (
@@ -4079,8 +5085,18 @@ export const CombatCanvas: React.FC<Props> = ({
       <div className="absolute top-2 left-3 flex items-center space-x-2 text-[10px] text-gray-300 bg-black/80 px-2.5 py-1 rounded-lg border border-[#3b3b5c] backdrop-blur pointer-events-none">
         <span className="text-amber-400 font-bold">🎮 操控：</span>
         <span>
-          单击地面跑动 · 单击选人 · 长按 <strong className="text-white bg-slate-800 px-1 rounded">W A S D</strong> 连续移动 · 
-          按 <strong className="text-amber-300 bg-slate-800 px-1 rounded">Alt+1~{units.length}</strong> 切换目标 · 施法距离不足自动跑向目标
+          单击地面跑动 · 单击选人 · 长按 <strong className="text-white bg-slate-800 px-1 rounded">W A S D</strong> 连续移动 ·
+          滚轮缩放（±50%）
+          {displayPrefs.canvasViewMode === 'ISO' && runPhase === 'TRAVEL_RECOVERY' ? (
+            <> · 迷宫阶段锁定俯视</>
+          ) : displayPrefs.canvasViewMode === 'ISO' ? (
+            <>
+              {' '}
+              · 按住 <strong className="text-amber-300 bg-slate-800 px-1 rounded">右键</strong>{' '}
+              左右转视角 · 上下调俯仰（上 20° / 下垂直）
+            </>
+          ) : null}
+          · 按 <strong className="text-amber-300 bg-slate-800 px-1 rounded">Alt+1~5</strong> 切换当前小队目标 · 施法距离不足自动跑向目标
         </span>
       </div>
     </div>

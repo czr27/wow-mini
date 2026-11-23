@@ -57,7 +57,9 @@ export type CombatTickSetters = {
   setPlayerGcdRemainingMs: Dispatch<SetStateAction<number>>;
   setPlayerGcdTotalMs: Dispatch<SetStateAction<number>>;
   setPlayerCooldowns: Dispatch<SetStateAction<Record<string, { cdRemainingMs: number; totalCdMs: number }>>>;
-  setCompanionCasts: Dispatch<SetStateAction<Record<string, { spellName: string; progress: number }>>>;
+  setCompanionCasts: Dispatch<
+    SetStateAction<Record<string, { spellName: string; progress: number; spellId?: string }>>
+  >;
   setWipeVoteTimerMs: Dispatch<SetStateAction<number>>;
   setIsApproaching: Dispatch<SetStateAction<boolean>>;
   setGroundEffects: Dispatch<SetStateAction<GroundEffect[]>>;

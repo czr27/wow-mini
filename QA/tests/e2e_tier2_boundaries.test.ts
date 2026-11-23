@@ -1064,11 +1064,11 @@ export async function runTier2BoundaryTests(): Promise<{ passed: number; total: 
   }
 
   // T2.39: Heroic Mode Damage Scaling Boundaries
-  console.log('--- 运行 [T2.39] (R8-B4) 英雄模式伤害倍率缩放边界 (1.0x vs 1.5x) ---');
+  console.log('--- 运行 [T2.39] (R8-B4) 英雄模式伤害倍率缩放边界 (1.0x vs 1.2x) ---');
   try {
     const normalBaseDamage = 10000;
     const calcDamageByDifficulty = (base: number, diff: 'NORMAL' | 'HEROIC') => {
-      const multiplier = diff === 'HEROIC' ? 1.5 : 1.0;
+      const multiplier = diff === 'HEROIC' ? 1.2 : 1.0;
       return Math.max(0, Math.round(base * multiplier));
     };
 
@@ -1076,7 +1076,7 @@ export async function runTier2BoundaryTests(): Promise<{ passed: number; total: 
     const hero = calcDamageByDifficulty(normalBaseDamage, 'HEROIC');
 
     assert.strictEqual(norm, 10000, '普通模式伤害倍率为 1.0x');
-    assert.strictEqual(hero, 15000, '英雄模式伤害严格缩放 1.5x');
+    assert.strictEqual(hero, 12000, '英雄模式伤害严格缩放 1.2x');
 
     // Boundary 0 damage input
     const zeroHero = calcDamageByDifficulty(0, 'HEROIC');

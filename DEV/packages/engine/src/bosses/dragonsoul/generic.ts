@@ -2,8 +2,7 @@ import type { BossEncounterModule, BossSkill } from '../core/BossTypes.js';
 
 /**
  * 巨龙之魂通用 20人团本高压模版
- * 适用于：督军佐诺兹 (Zon'ozz), 不眠的约萨希 (Yor'sahj), 缚风者哈甲拉 (Hagara),
- * 战争领主黑角 (Blackhorn), 死亡之翼的背脊 (Spine), 死亡之翼的疯狂 (Madness)
+ * 后备通用模板（正式八王均已专属模块；此工厂仅供测试/兜底）。
  */
 export function createDragonSoulGenericEncounter(bossId: string, bossName: string): BossEncounterModule {
   return {

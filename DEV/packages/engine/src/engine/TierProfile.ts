@@ -102,7 +102,7 @@ export const CATA_DS_397_PROFILE: InstanceTierProfile = {
   tierId: 'cata_ds_397',
   playerHpMult: 1.15,        // 80级20人团本合剂+耐力Buff约75k血坦 / 41k血DPS
   playerOutputMult: 1.25,    // 80级团本团队增益后输出放大
-  bossHpMult: 6.5,           // 20人团本首领血量适配80级满急速输出
+  bossHpMult: 6.5,           // 相对 5 人本的粗略血量倍率（展示用；实际 HP 由击杀时间预算算出）
   bossDamageMult: 0.58,
   difficultyPressure: 1.2,
   tankBaseHp: 75000,
@@ -114,3 +114,95 @@ export const CATA_DS_397_PROFILE: InstanceTierProfile = {
 export function getTierProfile(tier: '5man' | '20man'): InstanceTierProfile {
   return tier === '20man' ? CATA_DS_397_PROFILE : CATA_5H_346_PROFILE;
 }
+
+/**
+ * 目标击杀时长（秒）——英雄难度下按 AI 满编输出标定：
+ * - 5 人：非尾王 2 分钟 / 尾王 3 分钟
+ * - 20 人：非尾王 3 分钟 / 尾王 5 分钟
+ */
+export const BOSS_KILL_TIME_SEC = {
+  '5man': { normal: 120, final: 180 },
+  '20man': { normal: 180, final: 300 },
+} as const;
+
+/** 血量预算用单人秒伤基准（与装备面板 baseDps 解耦） */
+export const AI_BOSS_BUDGET_SINGLE_DPS = 5000;
+/** 坦克相对满额 DPS 的折算；治疗不计入 Boss 血量预算 */
+export const AI_BOSS_BUDGET_TANK_FRAC = 0.8;
+export const AI_BOSS_BUDGET_HEALER_FRAC = 0;
+/** 英雄本相对普通本：Boss 血量倍率 */
+export const HEROIC_DIFFICULTY_MULT = 1.5;
+/** 英雄本相对普通本：敌方/Boss 输出倍率 */
+export const HEROIC_ENEMY_DAMAGE_MULT = 1.2;
+
+/** AI 队伍角色构成（与 DUNGEON_ROLE_QUOTAS 中位一致） */
+const AI_RAID_COMPOSITION = {
+  '5man': { tanks: 1, healers: 1, dps: 3 },
+  '20man': { tanks: 2, healers: 5, dps: 13 },
+} as const;
+
+/**
+ * 估算满编 AI 队伍对单体首领的预算 DPS。
+ * 单人 5000；坦克 ×0.8；输出 ×1；治疗不计。
+ * 例：5 人 = 5000×0.8 + 3×5000 = 19000
+ */
+export function estimateAiRaidDps(tier: '5man' | '20man'): number {
+  const { tanks, healers, dps } = AI_RAID_COMPOSITION[tier];
+  const raw =
+    dps * AI_BOSS_BUDGET_SINGLE_DPS +
+    tanks * AI_BOSS_BUDGET_SINGLE_DPS * AI_BOSS_BUDGET_TANK_FRAC +
+    healers * AI_BOSS_BUDGET_SINGLE_DPS * AI_BOSS_BUDGET_HEALER_FRAC;
+  return Math.max(1, Math.round(raw));
+}
+
+function roundBossHp(hp: number): number {
+  return Math.max(50_000, Math.round(hp / 50_000) * 50_000);
+}
+
+/**
+ * 按目标击杀时长 × AI 队伍 DPS 计算首领血量。
+ * 默认按英雄本写入（× HEROIC_DIFFICULTY_MULT）；普通本在 spawn 时再除回。
+ */
+export function computeBossHpForKillTime(
+  tier: '5man' | '20man',
+  isFinalBoss: boolean,
+  difficulty: 'NORMAL' | 'HEROIC' = 'HEROIC',
+): number {
+  const sec = isFinalBoss
+    ? BOSS_KILL_TIME_SEC[tier].final
+    : BOSS_KILL_TIME_SEC[tier].normal;
+  const base = estimateAiRaidDps(tier) * sec;
+  const mult = difficulty === 'HEROIC' ? HEROIC_DIFFICULTY_MULT : 1;
+  return roundBossHp(base * mult);
+}
+
+/**
+ * 生成副本内各位首领血量（英雄本预算）：非尾王约 95%→105% 递进，尾王按终局时长。
+ */
+export function buildDungeonBossHpList(
+  tier: '5man' | '20man',
+  bossCount: number,
+  difficulty: 'NORMAL' | 'HEROIC' = 'HEROIC',
+): number[] {
+  const n = Math.max(1, bossCount);
+  const normalHp = computeBossHpForKillTime(tier, false, difficulty);
+  const finalHp = computeBossHpForKillTime(tier, true, difficulty);
+  return Array.from({ length: n }, (_, i) => {
+    if (i === n - 1) return finalHp;
+    const steps = Math.max(1, n - 1);
+    const t = steps === 1 ? 0.5 : i / (steps - 1);
+    const mult = 0.95 + t * 0.1;
+    return roundBossHp(normalHp * mult);
+  });
+}
+
+/** 难度对敌方/Boss 输出的倍率：普通 1.0，英雄 1.2，自定义由 coeff 处理 */
+export function getDifficultyNumericMult(
+  difficulty: 'NORMAL' | 'HEROIC' | 'CUSTOM',
+): number {
+  if (difficulty === 'HEROIC') return HEROIC_ENEMY_DAMAGE_MULT;
+  return 1;
+}
+
+/** @deprecated 使用 buildDungeonBossHpList */
+export const computeDungeonBossHpTable = buildDungeonBossHpList;

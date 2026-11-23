@@ -189,7 +189,7 @@ export const DRUID: ClassSpec = {
           baseValue: 1800,
           durationMs: 7_000,
           tickIntervalMs: 1_000,
-          description: '智能分配5人7s HoT（优先血量最低的友方）',
+          description: '40码施放；以选中友方为圆心，15码内血量百分比最低的最多5名友方施加7s HoT',
         },
       ],
     },
@@ -354,12 +354,13 @@ export const DRUID: ClassSpec = {
       targetType: 'AOE_ALLY',
       school: 'NATURE',
       isRaidBuff: true,
+      range: 240, // Cata: 30 码施法距离；命中后全团队生效
       effects: [
         {
           type: 'BUFF',
           auraId: 'mark_of_the_wild',
           durationMs: 3_600_000, // 1小时
-          description: '全团所有属性+5% Buff，持续1h（长效Buff，赶路阶段AI自动补充）',
+          description: '30码内对友方施放：若目标在队伍/团队中，全团所有属性+5%（含抗性），持续1h',
         },
       ],
     },

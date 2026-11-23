@@ -5,12 +5,15 @@
  * - `null / undefined` 代表“使用语义默认停靠位”（例如动作条停靠在窗体下方中部）。
  * - 历史版本曾把重置误存为 `{ x: 0, y: 0 }` 导致动作条贴左上角，`sanitizeSavedActionBarPos`
  *   会自动清洗该脏数据并恢复底部居中默认锚点。
+ * - 所有可拖悬浮框不得进入顶部「魔兽大灾变」标题区（App header h-14），也不得拖出视口。
  */
 export interface HudPos {
     x: number;
     y: number;
 }
 export declare const DEFAULT_ACTION_BAR_BOTTOM_MARGIN_PX = 16;
+/** App 顶栏 `h-14`：悬浮 HUD 不得覆盖标题区 */
+export declare const HUD_TOP_INSET_PX = 56;
 /**
  * 识别无效坐标或历史遗留的 `{ x: 0, y: 0 }` 重置哨兵脏数据
  */
@@ -24,8 +27,15 @@ export declare function sanitizeSavedActionBarPos(pos: HudPos | null | undefined
  * 计算元素在视口“下方中部”的精确像素坐标（用于显式锚点定位或自动化断言）
  */
 export declare function computeBottomCenterPos(viewportWidth: number, viewportHeight: number, elementWidth: number, elementHeight: number, bottomMarginPx?: number): HudPos;
+export interface ClampHudOpts {
+    /** 顶部禁入区高度，默认标题栏 56px */
+    topInsetPx?: number;
+    /** 左右/底部额外内边距，默认 0 */
+    edgeInsetPx?: number;
+}
 /**
- * 将拖拽中的 HUD 坐标钳制在可视视口内，防止拖出屏幕丢失
+ * 将 HUD 坐标钳制在可视区内：不得覆盖标题栏，不得拖出屏幕。
+ * 已出界的旧存档坐标调用一次即可拉回限制区。
  */
-export declare function clampHudPosToViewport(pos: HudPos, viewportWidth: number, viewportHeight: number, elementWidth: number, elementHeight: number): HudPos;
+export declare function clampHudPosToViewport(pos: HudPos, viewportWidth: number, viewportHeight: number, elementWidth: number, elementHeight: number, opts?: ClampHudOpts): HudPos;
 //# sourceMappingURL=hudLayout.d.ts.map

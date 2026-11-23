@@ -10,11 +10,107 @@ export interface ArtResourceMatch {
   displayName: string;
 }
 
+/** Boot / download progress for the game loading screen. */
+export interface ArtLoadProgress {
+  phase: 'listing' | 'mapping' | 'downloading' | 'done';
+  loaded: number;
+  total: number;
+  /** 0..100 */
+  percent: number;
+  label: string;
+}
+
+export type ArtLoadProgressCallback = (progress: ArtLoadProgress) => void;
+
+function reportProgress(
+  onProgress: ArtLoadProgressCallback | undefined,
+  partial: ArtLoadProgress
+): void {
+  if (!onProgress) return;
+  try {
+    onProgress(partial);
+  } catch {
+    // ignore UI listener errors
+  }
+}
+
+function preloadImage(url: string): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof Image === 'undefined') {
+      resolve();
+      return;
+    }
+    const img = new Image();
+    img.onload = () => resolve();
+    img.onerror = () => resolve();
+    img.src = url;
+  });
+}
+
+/** Preload unique URLs with limited concurrency; reports download progress. */
+async function preloadArtUrls(
+  urls: string[],
+  onProgress?: ArtLoadProgressCallback,
+  concurrency = 10
+): Promise<void> {
+  const unique = Array.from(new Set(urls.filter(Boolean)));
+  const total = unique.length;
+  if (total === 0) {
+    reportProgress(onProgress, {
+      phase: 'downloading',
+      loaded: 0,
+      total: 0,
+      percent: 90,
+      label: '资源列表为空，使用内置图标',
+    });
+    return;
+  }
+
+  let loaded = 0;
+  reportProgress(onProgress, {
+    phase: 'downloading',
+    loaded: 0,
+    total,
+    percent: 35,
+    label: `下载图标 0 / ${total}`,
+  });
+
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(concurrency, total) }, async () => {
+    while (cursor < unique.length) {
+      const i = cursor++;
+      const url = unique[i];
+      await preloadImage(url);
+      loaded += 1;
+      const pct = 35 + Math.round((loaded / total) * 60);
+      reportProgress(onProgress, {
+        phase: 'downloading',
+        loaded,
+        total,
+        percent: Math.min(95, pct),
+        label: `下载图标 ${loaded} / ${total}`,
+      });
+    }
+  });
+  await Promise.all(workers);
+}
+
 // 常见图片扩展名
 const VALID_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.webp', '.svg', '.gif', '.bmp'];
 
 // 职业前缀集合
-const CLASS_PREFIXES = ['druid_', 'dk_', 'shaman_', 'mage_', 'rogue_'];
+const CLASS_PREFIXES = [
+  'druid_',
+  'dk_',
+  'shaman_',
+  'mage_',
+  'rogue_',
+  'paladin_',
+  'warrior_',
+  'hunter_',
+  'priest_',
+  'warlock_',
+];
 
 /**
  * 字符串键名归一化（去除下划线、空格、横杠、大小写），以便模糊匹配
@@ -131,6 +227,78 @@ export function findMatchingArtFile(
  */
 export const CUSTOM_ART_URLS: Record<string, string> = {};
 
+/** classId -> /ART/resources/... URL */
+export const CUSTOM_CLASS_ART_URLS: Record<string, string> = {};
+
+/**
+ * 各 ClassId 在资源目录中的候选文件名（去扩展名，归一化前）。
+ * 优先 class_{id}（fill_class_icons.py 产出），其次 Wowhead classicon_*。
+ */
+export const CLASS_ART_FILE_CANDIDATES: Record<string, string[]> = {
+  DK: ['class_dk', 'dk', 'classicon_deathknight', 'deathknight'],
+  DRUID: ['class_druid', 'druid', 'classicon_druid'],
+  SHAMAN: ['class_shaman', 'shaman', 'classicon_shaman'],
+  MAGE: ['class_mage', 'mage', 'classicon_mage'],
+  ROGUE: ['class_rogue', 'rogue', 'classicon_rogue'],
+  WARRIOR: ['class_warrior', 'warrior', 'classicon_warrior'],
+  PALADIN: ['class_paladin', 'paladin', 'classicon_paladin'],
+  HUNTER: ['class_hunter', 'hunter', 'classicon_hunter'],
+  PRIEST: ['class_priest', 'priest', 'classicon_priest'],
+  WARLOCK: ['class_warlock', 'warlock', 'classicon_warlock'],
+};
+
+export function findMatchingClassArtFile(classId: string, availableFiles: string[]): string | null {
+  const candidates = CLASS_ART_FILE_CANDIDATES[classId] || [`class_${classId.toLowerCase()}`, classId.toLowerCase()];
+  const normCandidates = candidates.map((c) => normalizeKey(c));
+  for (const file of availableFiles) {
+    const lastDotIdx = file.lastIndexOf('.');
+    if (lastDotIdx === -1) continue;
+    const ext = file.slice(lastDotIdx).toLowerCase();
+    if (!VALID_EXTENSIONS.includes(ext)) continue;
+    const normBase = normalizeKey(file.slice(0, lastDotIdx));
+    if (normCandidates.includes(normBase)) return file;
+  }
+  return null;
+}
+
+/**
+ * 将 ART/resources 职业图标覆盖到 classAvatars（手绘 SVG 作 onerror 回退）。
+ */
+export function applyArtResourcesToClassAvatars(
+  files: string[],
+  classAvatars: Record<string, string>,
+  defaultAvatars: Record<string, string>
+): Record<string, ArtResourceMatch> {
+  const matched: Record<string, ArtResourceMatch> = {};
+  const classIds = new Set<string>([
+    ...Object.keys(defaultAvatars),
+    ...Object.keys(classAvatars),
+    ...Object.keys(CLASS_ART_FILE_CANDIDATES),
+  ]);
+
+  for (const classId of classIds) {
+    const matchFile = findMatchingClassArtFile(classId, files);
+    if (matchFile) {
+      const url = `/ART/resources/${matchFile}`;
+      CUSTOM_CLASS_ART_URLS[classId] = url;
+      const fallbackSvg = defaultAvatars[classId] || classAvatars[classId];
+      classAvatars[classId] = formatArtIconHtml(url, classId, fallbackSvg);
+      matched[classId] = {
+        spellId: classId,
+        filename: matchFile,
+        url,
+        displayName: classId,
+      };
+    } else {
+      delete CUSTOM_CLASS_ART_URLS[classId];
+      if (defaultAvatars[classId]) {
+        classAvatars[classId] = defaultAvatars[classId];
+      }
+    }
+  }
+  return matched;
+}
+
 // 订阅监听器（用于在热更新或动态加载时通知 UI 重新渲染）
 const iconChangeListeners: Set<() => void> = new Set();
 
@@ -149,8 +317,31 @@ function notifyIconChangeListeners(): void {
   });
 }
 
+function applyOneArtIcon(
+  spellId: string,
+  matchFile: string,
+  spellIcons: Record<string, string>,
+  defaultIcons: Record<string, string>,
+  spellTooltips: Record<string, { name?: string }>,
+  matchedSpells: Record<string, ArtResourceMatch>
+) {
+  const spellName = spellTooltips[spellId]?.name;
+  const url = `/ART/resources/${matchFile}`;
+  CUSTOM_ART_URLS[spellId] = url;
+  const fallbackSvg = defaultIcons[spellId] || spellIcons[spellId];
+  spellIcons[spellId] = formatArtIconHtml(url, spellName || spellId, fallbackSvg);
+  matchedSpells[spellId] = {
+    spellId,
+    filename: matchFile,
+    url,
+    displayName: spellName || spellId,
+  };
+}
+
 /**
- * 将外部资源文件列表同步应用到目标图标字典
+ * 将外部资源文件列表同步应用到目标图标字典。
+ * 以下载文件名为准：`rake.jpg` → spellId `rake`，即使引擎/tooltip 尚未登记也会挂上。
+ * 同时为已知的 `druid_rake` 等带职业前缀 id 建立别名。
  */
 export function applyArtResourcesToIcons(
   files: string[],
@@ -159,58 +350,54 @@ export function applyArtResourcesToIcons(
   spellTooltips: Record<string, { name?: string }> = {}
 ): Record<string, ArtResourceMatch> {
   const matchedSpells: Record<string, ArtResourceMatch> = {};
+  const imageFiles = files.filter((f) => {
+    const dot = f.lastIndexOf('.');
+    if (dot < 0) return false;
+    const ext = f.slice(dot).toLowerCase();
+    return VALID_EXTENSIONS.includes(ext) && !f.toLowerCase().includes('manifest');
+  });
 
-  // 收集所有需要寻找图标的技能/Buff ID
+  // 1) 文件驱动：basename 即 spellId（下载命名为权威）
+  for (const file of imageFiles) {
+    const baseName = file.slice(0, file.lastIndexOf('.'));
+    // 跳过职业头像等非技能资源
+    if (/^class[_-]/i.test(baseName)) continue;
+    applyOneArtIcon(baseName, file, spellIcons, defaultIcons, spellTooltips, matchedSpells);
+
+    // 为已登记的职业前缀 id 建别名（druid_rake / shaman_riptide …）
+    for (const prefix of CLASS_PREFIXES) {
+      const prefixed = `${prefix}${baseName}`;
+      if (defaultIcons[prefixed] || spellIcons[prefixed] || spellTooltips[prefixed]) {
+        applyOneArtIcon(prefixed, file, spellIcons, defaultIcons, spellTooltips, matchedSpells);
+      }
+    }
+  }
+
+  // 2) 已知 spellId 再扫一遍：覆盖中文文件名、大小写变体、仅有前缀 id 等情况
   const allSpellIds = new Set<string>([
     ...Object.keys(defaultIcons),
     ...Object.keys(spellIcons),
     ...Object.keys(spellTooltips),
-    'tranquility',
-    'druid_tranquility',
   ]);
 
   for (const spellId of allSpellIds) {
+    if (matchedSpells[spellId]) continue;
     const spellName = spellTooltips[spellId]?.name;
-    const matchFile = findMatchingArtFile(spellId, spellName, files);
-
+    const matchFile = findMatchingArtFile(spellId, spellName, imageFiles);
     if (matchFile) {
-      const url = `/ART/resources/${matchFile}`;
-      CUSTOM_ART_URLS[spellId] = url;
-      const fallbackSvg = defaultIcons[spellId] || spellIcons[spellId];
-      spellIcons[spellId] = formatArtIconHtml(url, spellName || spellId, fallbackSvg);
-
-      matchedSpells[spellId] = {
-        spellId,
-        filename: matchFile,
-        url,
-        displayName: spellName || spellId,
-      };
-    } else {
-      // 未在 \ART\resources\ 找到，使用自绘画（保留或回滚至默认自绘 SVG）
+      applyOneArtIcon(spellId, matchFile, spellIcons, defaultIcons, spellTooltips, matchedSpells);
+    } else if (defaultIcons[spellId]) {
       delete CUSTOM_ART_URLS[spellId];
-      if (defaultIcons[spellId]) {
-        spellIcons[spellId] = defaultIcons[spellId];
-      }
+      spellIcons[spellId] = defaultIcons[spellId];
     }
   }
 
   return matchedSpells;
 }
 
-/**
- * 游戏加载时执行的资源扫描与加载函数
- * 优先从 \ART\resources\ 寻找，存在则覆盖自绘画，否则回退
- */
-export async function initArtResourceIcons(
-  spellIcons: Record<string, string>,
-  defaultIcons: Record<string, string>,
-  spellTooltips: Record<string, { name?: string }> = {}
-): Promise<Record<string, ArtResourceMatch>> {
-  console.log('[ArtResources] 🎮 游戏加载时扫描 \\ART\\resources\\ 寻找技能与 Buff 图标...');
-
+async function resolveArtResourceFiles(): Promise<string[]> {
   let files: string[] = getInitialArtFiles();
 
-  // 若处于浏览器环境，向服务器请求最新的 \ART\resources\ 实际文件清单
   if (typeof window !== 'undefined' && typeof fetch === 'function') {
     try {
       const res = await fetch('/api/art-resources', { cache: 'no-cache' });
@@ -221,7 +408,6 @@ export async function initArtResourceIcons(
         }
       }
     } catch {
-      // 若 /api/art-resources 无法连接（例如离线或静态托管），尝试读取静态 manifest
       try {
         const manifestRes = await fetch('/ART/resources/manifest.json', { cache: 'no-cache' });
         if (manifestRes.ok) {
@@ -231,17 +417,80 @@ export async function initArtResourceIcons(
           }
         }
       } catch {
-        // 使用初始文件列表
+        // keep initial list
       }
     }
   }
+  return files;
+}
+
+/**
+ * 游戏加载时执行的资源扫描与加载函数
+ * 优先从 \ART\resources\ 寻找，存在则覆盖自绘画，否则回退；并预下载图片供加载进度界面使用。
+ */
+export async function initArtResourceIcons(
+  spellIcons: Record<string, string>,
+  defaultIcons: Record<string, string>,
+  spellTooltips: Record<string, { name?: string }> = {},
+  classAvatars?: Record<string, string>,
+  defaultClassAvatars?: Record<string, string>,
+  onProgress?: ArtLoadProgressCallback
+): Promise<Record<string, ArtResourceMatch>> {
+  console.log('[ArtResources] 游戏加载时扫描 ART/resources 寻找技能 / Buff / 职业图标...');
+
+  reportProgress(onProgress, {
+    phase: 'listing',
+    loaded: 0,
+    total: 0,
+    percent: 5,
+    label: '正在获取资源清单…',
+  });
+
+  const files = await resolveArtResourceFiles();
+
+  reportProgress(onProgress, {
+    phase: 'mapping',
+    loaded: 0,
+    total: files.length,
+    percent: 20,
+    label: `匹配图标（清单 ${files.length} 个文件）…`,
+  });
 
   const matches = applyArtResourcesToIcons(files, spellIcons, defaultIcons, spellTooltips);
   const matchCount = Object.keys(matches).length;
 
+  let classCount = 0;
+  if (classAvatars && defaultClassAvatars) {
+    classCount = Object.keys(
+      applyArtResourcesToClassAvatars(files, classAvatars, defaultClassAvatars)
+    ).length;
+  }
+
+  reportProgress(onProgress, {
+    phase: 'mapping',
+    loaded: matchCount + classCount,
+    total: files.length,
+    percent: 35,
+    label: `已匹配技能 ${matchCount} · 职业头像 ${classCount}`,
+  });
+
+  const preloadUrls = [
+    ...Object.values(CUSTOM_ART_URLS),
+    ...Object.values(CUSTOM_CLASS_ART_URLS),
+  ];
+  await preloadArtUrls(preloadUrls, onProgress);
+
   console.log(
-    `[ArtResources] ✅ 扫描完成：从 \\ART\\resources\\ 优先加载了 ${matchCount} 个图标 (例如: Tranquility.jpg -> 宁静)，其余技能使用自绘像素图标。`
+    `[ArtResources] 扫描完成：技能/Buff ${matchCount} 个，职业头像 ${classCount} 个；缺失回退自绘。`
   );
+
+  reportProgress(onProgress, {
+    phase: 'done',
+    loaded: preloadUrls.length,
+    total: preloadUrls.length,
+    percent: 100,
+    label: '资源就绪',
+  });
 
   notifyIconChangeListeners();
   return matches;

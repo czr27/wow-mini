@@ -213,8 +213,9 @@ test('HUD layout utility: sanitizes legacy {0,0} reset bug and computes bottom-c
   assert.equal(anchor.x, 440);
   assert.equal(anchor.y, 704);
 
-  // Clamping keeps dragged bar inside viewport
+  // Clamping keeps dragged bar inside viewport (below title bar h-14=56)
   assert.deepEqual(clampHudPosToViewport({ x: -50, y: 9999 }, 1440, 900, 560, 180), { x: 0, y: 720 });
+  assert.deepEqual(clampHudPosToViewport({ x: 10, y: 0 }, 1440, 900, 200, 80), { x: 10, y: 56 });
 });
 
 test('AccountManager.saveCharacterUiLayout deletes actionBar key when reset with null', () => {

@@ -41,16 +41,88 @@
           "enemyDamageCoeff": 1,
           "bossHpCoeff": 1
         },
-        "uiLayout": {},
-        "updatedAtMs": 0
+        "uiLayout": {
+          "raidFrames5man": {
+            "x": 255,
+            "y": 188,
+            "width": 171,
+            "height": 372
+          },
+          "combatDisplay": {
+            "canvasViewMode": "ISO",
+            "isoOrbitSensitivity": 1,
+            "isoPitchSensitivity": 1,
+            "showSelfHp": true,
+            "showSelfName": true,
+            "showAllHp": false,
+            "showAllNames": false,
+            "showBossHp": true,
+            "showBossName": true,
+            "showTargetHp": true,
+            "showTargetName": true,
+            "showFocusHp": true,
+            "showFocusName": true,
+            "showFriendlyProjectiles": true,
+            "showFriendlySlash": true,
+            "showEnemyProjectiles": true,
+            "showEnemySlash": true,
+            "showHealTerrain": true,
+            "showBuffTerrain": true,
+            "showDamageTerrain": true,
+            "terrainWhiteOutline": false,
+            "showRaidFrameNames": true,
+            "showRaidFrameBuffs": true,
+            "showRaidFrameDebuffs": true,
+            "showRaidFrameStandingBuffs": false,
+            "showSctMyDamage": true,
+            "showSctMyHeal": true,
+            "showSctHealOnMe": true,
+            "showSctDamageOnMe": true,
+            "showSctAllyDamage": false,
+            "showSctAllyHeal": false
+          },
+          "raidFrames20man": {
+            "x": 8,
+            "y": 205
+          }
+        },
+        "updatedAtMs": 1795472393239
       },
       {
         "id": "char_1795352976456_et4c4",
         "name": "提里奥",
         "classId": "PALADIN",
-        "lastSpec": "HOLY",
+        "lastSpec": "RETRIBUTION",
         "specKeybindings": {
           "HOLY": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          },
+          "PROTECTION": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          },
+          "RETRIBUTION": {
             "0": "1",
             "1": "2",
             "2": "3",
@@ -82,7 +154,7 @@
           "bossHpCoeff": 1
         },
         "uiLayout": {},
-        "updatedAtMs": 0
+        "updatedAtMs": 1795456433635
       },
       {
         "id": "char_1795352976456_wdmgs",
@@ -128,9 +200,23 @@
         "id": "char_1795352976456_pq5hj",
         "name": "安度因",
         "classId": "PRIEST",
-        "lastSpec": "HOLY",
+        "lastSpec": "DISCIPLINE",
         "specKeybindings": {
           "HOLY": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          },
+          "DISCIPLINE": {
             "0": "1",
             "1": "2",
             "2": "3",
@@ -147,8 +233,8 @@
         },
         "clearCertificates": [],
         "createdAtIso": "2026-11-22T13:09:36.456Z",
-        "lastDungeonTier": "5man",
-        "lastDungeonDifficulty": "HEROIC",
+        "lastDungeonTier": "20man",
+        "lastDungeonDifficulty": "CUSTOM",
         "lastCustomDifficulty": {
           "playerDamageCoeff": 1,
           "playerHealingCoeff": 1,
@@ -161,8 +247,13 @@
           "enemyDamageCoeff": 1,
           "bossHpCoeff": 1
         },
-        "uiLayout": {},
-        "updatedAtMs": 0
+        "uiLayout": {
+          "raidFrames20man": {
+            "x": 269,
+            "y": 38
+          }
+        },
+        "updatedAtMs": 1795454955017
       },
       {
         "id": "char_1795352976456_lq38m",
@@ -248,9 +339,23 @@
         "id": "char_1795306445170_kspyc",
         "name": "玛法里奥",
         "classId": "DRUID",
-        "lastSpec": "RESTORATION",
+        "lastSpec": "BALANCE",
         "specKeybindings": {
           "RESTORATION": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          },
+          "BALANCE": {
             "0": "1",
             "1": "2",
             "2": "3",
@@ -282,7 +387,7 @@
           "bossHpCoeff": 1
         },
         "uiLayout": {},
-        "updatedAtMs": 0
+        "updatedAtMs": 1795457172049
       },
       {
         "id": "char_1795306445170_zxaaw",
@@ -308,7 +413,7 @@
         "clearCertificates": [],
         "createdAtIso": "2026-11-22T00:14:05.170Z",
         "lastDungeonTier": "5man",
-        "lastDungeonDifficulty": "HEROIC",
+        "lastDungeonDifficulty": "CUSTOM",
         "lastCustomDifficulty": {
           "playerDamageCoeff": 1,
           "playerHealingCoeff": 1,
@@ -322,7 +427,7 @@
           "bossHpCoeff": 1
         },
         "uiLayout": {},
-        "updatedAtMs": 0
+        "updatedAtMs": 1795451969650
       },
       {
         "id": "char_1795306445170_vx9kt",
@@ -406,7 +511,7 @@
       }
     ],
     "createdAtIso": "2026-11-22T13:33:20.156Z",
-    "updatedAtMs": 1795419150409
+    "updatedAtMs": 1795473798766
   },
   {
     "id": "acc_1795307172004_ze24f",
@@ -874,7 +979,7 @@
         "id": "char_1795307313080_emowk",
         "name": "牛头人万岁",
         "classId": "DRUID",
-        "lastSpec": "RESTORATION",
+        "lastSpec": "BALANCE",
         "specKeybindings": {
           "RESTORATION": {
             "0": "1",
@@ -930,7 +1035,7 @@
         "clearCertificates": [],
         "createdAtIso": "2026-11-22T00:28:33.081Z",
         "lastDungeonTier": "5man",
-        "lastDungeonDifficulty": "NORMAL",
+        "lastDungeonDifficulty": "HEROIC",
         "lastCustomDifficulty": {
           "playerDamageCoeff": 1,
           "playerHealingCoeff": 1,
@@ -945,13 +1050,66 @@
         },
         "uiLayout": {
           "raidFrames": {
-            "x": 73,
-            "y": 242,
-            "width": 256,
-            "height": 341
+            "x": 136,
+            "y": 221,
+            "width": 249,
+            "height": 421
+          },
+          "statsPanel": {
+            "x": 1620,
+            "y": 388
+          },
+          "actionBar": {
+            "x": 672,
+            "y": 735
+          },
+          "raidFrames5man": {
+            "x": 109,
+            "y": 217,
+            "width": 182,
+            "height": 420
+          },
+          "raidFrames20man": {
+            "x": 0,
+            "y": 151,
+            "width": 455,
+            "height": 345
+          },
+          "combatDisplay": {
+            "canvasViewMode": "ISO",
+            "isoOrbitSensitivity": 0.75,
+            "isoPitchSensitivity": 1,
+            "showSelfHp": true,
+            "showSelfName": true,
+            "showAllHp": false,
+            "showAllNames": false,
+            "showBossHp": true,
+            "showBossName": true,
+            "showTargetHp": true,
+            "showTargetName": true,
+            "showFocusHp": true,
+            "showFocusName": true,
+            "showFriendlyProjectiles": true,
+            "showFriendlySlash": true,
+            "showEnemyProjectiles": true,
+            "showEnemySlash": true,
+            "showHealTerrain": true,
+            "showBuffTerrain": true,
+            "showDamageTerrain": true,
+            "terrainWhiteOutline": true,
+            "showRaidFrameNames": true,
+            "showRaidFrameBuffs": true,
+            "showRaidFrameDebuffs": true,
+            "showRaidFrameStandingBuffs": false,
+            "showSctMyDamage": true,
+            "showSctMyHeal": true,
+            "showSctHealOnMe": true,
+            "showSctDamageOnMe": true,
+            "showSctAllyDamage": false,
+            "showSctAllyHeal": false
           }
         },
-        "updatedAtMs": 1795418838083,
+        "updatedAtMs": 1795473702485,
         "specSlotLayouts": {
           "RESTORATION": {
             "0": "moonfire",
@@ -1010,8 +1168,25 @@
           "enemyDamageCoeff": 1,
           "bossHpCoeff": 1
         },
-        "uiLayout": {},
-        "updatedAtMs": 0
+        "uiLayout": {
+          "raidFrames": {
+            "x": 24,
+            "y": 220,
+            "width": 198,
+            "height": 376
+          },
+          "actionBar": {
+            "x": 685,
+            "y": 699.75
+          },
+          "raidFrames20man": {
+            "x": 24,
+            "y": 220,
+            "width": 379,
+            "height": 390
+          }
+        },
+        "updatedAtMs": 1795463202136
       },
       {
         "id": "char_1795307354737_jguuy",
@@ -1072,30 +1247,67 @@
             "9": "F",
             "10": "Z",
             "11": "X"
+          },
+          "ELEMENTAL": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          },
+          "ENHANCEMENT": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
           }
         },
         "clearCertificates": [],
         "createdAtIso": "2026-11-22T06:55:34.674Z",
         "lastDungeonTier": "20man",
-        "lastDungeonDifficulty": "HEROIC",
+        "lastDungeonDifficulty": "CUSTOM",
         "lastCustomDifficulty": {
           "playerDamageCoeff": 1,
           "playerHealingCoeff": 1,
           "playerHpCoeff": 1,
           "playerMpCoeff": 1,
           "aiDamageCoeff": 1,
-          "aiHealingCoeff": 1,
+          "aiHealingCoeff": 0.15,
           "aiHpCoeff": 1,
           "aiMpCoeff": 1,
-          "enemyDamageCoeff": 1,
-          "bossHpCoeff": 1
+          "enemyDamageCoeff": 0.51,
+          "bossHpCoeff": 7.46
         },
-        "uiLayout": {},
-        "updatedAtMs": 0
+        "uiLayout": {
+          "actionBar": {
+            "x": 715,
+            "y": 715.75
+          },
+          "statsPanel": {
+            "x": 1390,
+            "y": 382
+          }
+        },
+        "updatedAtMs": 1795445714052
       }
     ],
     "createdAtIso": "2026-11-23T00:06:13.466Z",
-    "updatedAtMs": 1795418838083
+    "updatedAtMs": 1795473702485
   },
   {
     "id": "acc_1795413301351_h51yj",
@@ -1139,9 +1351,9 @@
         },
         "clearCertificates": [],
         "createdAtIso": "2026-11-23T05:55:14.456Z",
-        "updatedAtMs": 1795417837910,
+        "updatedAtMs": 1795464743322,
         "lastDungeonTier": "5man",
-        "lastDungeonDifficulty": "HEROIC",
+        "lastDungeonDifficulty": "CUSTOM",
         "lastCustomDifficulty": {
           "playerDamageCoeff": 1,
           "playerHealingCoeff": 1,
@@ -1160,6 +1372,22 @@
             "y": 220,
             "width": 262,
             "height": 334
+          },
+          "raidFrames20man": {
+            "x": 0,
+            "y": 267,
+            "width": 452,
+            "height": 317
+          },
+          "raidFrames5man": {
+            "x": 24,
+            "y": 220,
+            "width": 235,
+            "height": 380
+          },
+          "statsPanel": {
+            "x": 1513,
+            "y": 355
           }
         }
       },
@@ -1182,11 +1410,39 @@
             "9": "F",
             "10": "Z",
             "11": "X"
+          },
+          "ENHANCEMENT": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          },
+          "ELEMENTAL": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
           }
         },
         "clearCertificates": [],
         "createdAtIso": "2026-11-23T07:08:38.721Z",
-        "updatedAtMs": 1795417718720,
+        "updatedAtMs": 1795450201128,
         "lastDungeonTier": "5man",
         "lastDungeonDifficulty": "HEROIC",
         "lastCustomDifficulty": {
@@ -1201,11 +1457,18 @@
           "enemyDamageCoeff": 1,
           "bossHpCoeff": 1
         },
-        "uiLayout": {}
+        "uiLayout": {
+          "raidFrames20man": {
+            "x": 46,
+            "y": 335,
+            "width": 452,
+            "height": 317
+          }
+        }
       }
     ],
     "createdAtIso": "2026-11-23T05:55:01.351Z",
-    "updatedAtMs": 1795417837910
+    "updatedAtMs": 1795464743322
   },
   {
     "id": "acc_1795417946193_ut3p0",
@@ -1254,6 +1517,86 @@
       }
     ],
     "createdAtIso": "2026-11-23T07:12:26.193Z",
-    "updatedAtMs": 1795419150412
+    "updatedAtMs": 1795466919314
+  },
+  {
+    "id": "acc_1795461878181_kyyzb",
+    "username": "disp_prefs_user",
+    "passwordHash": "pass1234",
+    "characters": [
+      {
+        "id": "char_1795461878181_nh3cm",
+        "name": "测显偏好",
+        "classId": "WARRIOR",
+        "lastSpec": "ARMS",
+        "specKeybindings": {
+          "ARMS": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-23T19:24:38.181Z",
+        "updatedAtMs": 1795461878181,
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {
+          "combatDisplay": {
+            "showSelfHp": true,
+            "showSelfName": true,
+            "showAllHp": true,
+            "showAllNames": true,
+            "showBossHp": true,
+            "showBossName": true,
+            "showTargetHp": true,
+            "showTargetName": true,
+            "showFocusHp": true,
+            "showFocusName": true,
+            "showFriendlyProjectiles": true,
+            "showFriendlySlash": true,
+            "showEnemyProjectiles": true,
+            "showEnemySlash": true,
+            "showHealTerrain": true,
+            "showBuffTerrain": true,
+            "showDamageTerrain": true,
+            "terrainWhiteOutline": false,
+            "showRaidFrameNames": true,
+            "showRaidFrameBuffs": true,
+            "showRaidFrameDebuffs": true,
+            "showRaidFrameStandingBuffs": false,
+            "showSctMyDamage": false,
+            "showSctMyHeal": true,
+            "showSctHealOnMe": true,
+            "showSctDamageOnMe": true,
+            "showSctAllyDamage": true,
+            "showSctAllyHeal": false
+          }
+        }
+      }
+    ],
+    "createdAtIso": "2026-11-23T19:24:38.181Z",
+    "updatedAtMs": 1795473798769
   }
 ]

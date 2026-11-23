@@ -81,6 +81,25 @@ describe('Room Lifecycle, AI-Only Cleanup, AI Name Sync & Custom Difficulty', ()
     assert.strictEqual(validStart.canStart, true, '恢复 1T 1H 3DPS 后开局校验必须通过');
   });
 
+  it('3b. 未先点 AI 补齐时 startGame 会自动补齐并开局成功', () => {
+    const manager = new RoomManager();
+    const room = manager.createRoom({
+      name: '开局自动补齐',
+      dungeonId: 'shadowfang_keep',
+      host: { id: 'player_1', name: '提里奥', classId: 'PALADIN', spec: 'HOLY' },
+    });
+    assert.ok(room.members.length < 5, '创建后不应已满员');
+    const beforeValidate = manager.validateStartGame(room.id);
+    assert.strictEqual(beforeValidate.canStart, false);
+    assert.ok(beforeValidate.reasons.some((r) => r.includes('未满')));
+
+    const start = manager.startGame(room.id, 'player_1');
+    assert.strictEqual(start.success, true, `开局应自动补齐后成功: ${start.reason || ''}`);
+    const after = manager.getRoom(room.id)!;
+    assert.strictEqual(after.members.length, 5);
+    assert.strictEqual(after.status, 'IN_COMBAT');
+  });
+
   it('4. 房间支持创建与切换自定义模式 (CUSTOM) 并保存自定义系数', () => {
     const manager = new RoomManager();
     const customSettings = {
@@ -105,6 +124,21 @@ describe('Room Lifecycle, AI-Only Cleanup, AI Name Sync & Custom Difficulty', ()
     manager.setRoomDifficulty(room.id, 'CUSTOM', { ...customSettings, bossHpCoeff: 2.5 });
     assert.strictEqual(room.difficulty, 'CUSTOM');
     assert.strictEqual(room.customDifficulty?.bossHpCoeff, 2.5);
+  });
+
+  it('4b. 祖尔格拉布可选普通难度（血量按英雄÷1.5）', () => {
+    const manager = new RoomManager();
+    const room = manager.createRoom({
+      name: 'ZG普通',
+      dungeonId: 'zulgurub',
+      difficulty: 'NORMAL',
+      host: { id: 'player_1', name: '吉安娜', classId: 'MAGE', spec: 'FIRE' },
+    });
+    assert.strictEqual(room.difficulty, 'NORMAL');
+    manager.setRoomDifficulty(room.id, 'HEROIC');
+    assert.strictEqual(room.difficulty, 'HEROIC');
+    manager.setRoomDifficulty(room.id, 'NORMAL');
+    assert.strictEqual(room.difficulty, 'NORMAL');
   });
 
   it('5. 房主战斗快照只写入目标房间，多房间互不干扰；SUMMARY 写结算', () => {

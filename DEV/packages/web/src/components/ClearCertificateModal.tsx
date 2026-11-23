@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import type { DungeonClearCertificate } from '@cata-raid-sim/engine';
 import { CLASS_COLORS, CLASS_NAMES } from './AuthAndCharacterModal.js';
+import { DismissibleModal } from './DismissibleModal.js';
 
 interface Props {
   certificate: DungeonClearCertificate | null;
@@ -29,8 +30,12 @@ export const ClearCertificateModal: React.FC<Props> = ({ certificate, onClose })
   const currentBossEnc = certificate.encounters[selectedBossIndex];
 
   return (
-    <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center z-50 p-4">
-      <div className="bg-[#131326] border-2 border-amber-500/70 rounded-2xl shadow-2xl max-w-3xl w-full flex flex-col max-h-[88vh] overflow-hidden text-gray-200">
+    <DismissibleModal
+      onClose={onClose}
+      overlayClassName="backdrop-blur-md"
+      panelClassName="bg-[#131326] border-2 border-amber-500/70 rounded-2xl shadow-2xl max-w-3xl w-full flex flex-col max-h-[88vh] overflow-hidden text-gray-200"
+      aria-label="副本通关证明"
+    >
         
         {/* Certificate Header Banner */}
         <div className="bg-gradient-to-r from-[#2a2010] via-[#3a2e10] to-[#2a2010] border-b border-amber-500/40 px-6 py-4 flex items-center justify-between">
@@ -227,7 +232,6 @@ export const ClearCertificateModal: React.FC<Props> = ({ certificate, onClose })
             关闭凭证
           </button>
         </div>
-      </div>
-    </div>
+    </DismissibleModal>
   );
 };

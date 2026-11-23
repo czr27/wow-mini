@@ -102,6 +102,8 @@ export interface Spell {
   travelOnly?: boolean;
   /** 符文消耗（DK） */
   runesRequired?: Array<'BLOOD' | 'FROST' | 'UNHOLY'>;
+  /** 最大施法距离（画布像素；约 80≈近战，320≈40码） */
+  range?: number;
 }
 
 export interface ClassSpec {

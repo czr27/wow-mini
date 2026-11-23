@@ -21,6 +21,7 @@ import {
   getHastedCastTimeMs,
   LEVEL_80_MAX_HASTE,
 } from '../engine/TierProfile.js';
+import { getUnitHaste } from '../engine/BuffEffects.js';
 
 export type SkillCycle = 'MAJOR' | 'MINOR' | 'SUSTAINED';
 export type SkillRoleCategory = 'DAMAGE' | 'HEAL' | 'DEFENSIVE' | 'UTILITY' | 'INTERRUPT';
@@ -142,7 +143,8 @@ export function createAIPersonality(name: string, id: string = ''): AIPersonalit
 
   // 多动意向（坦克/远程/治疗默认）：有人 5s 就踱步，有人能站将近一分钟——同名稳定可复现
   const fidgetIdleThresholdMs = 5000 + (pos % 56000); // 5s ~ 61s
-  const fidgetRadiusPx = 8 + (pos % 17); // 8 ~ 24 px
+  // 多动症半径：人格差异，调用方再硬顶 ≤5 码（FIDGET_MAX_PX）
+  const fidgetRadiusPx = 12 + (pos % 29); // 12 ~ 40 px
   const fidgetDurationMs = 900 + ((pos >> 3) % 1400); // 0.9s ~ 2.3s
 
   return {
@@ -227,7 +229,10 @@ export function computeMetricsFromNormalizedSpell(
     ? getHastedCastTimeMs(spell.castTimeMs, haste)
     : 0;
 
-  const totalHeal = spell.directHeal + spell.hotTotalHeal + spell.shieldValue;
+  // HoT 总量按 45% 折算进吞吐，避免回春等纯 HoT 被当成等量瞬抬
+  const HOT_THROUGHPUT_FACTOR = 0.45;
+  const totalHeal =
+    spell.directHeal + spell.shieldValue + Math.round(spell.hotTotalHeal * HOT_THROUGHPUT_FACTOR);
   const totalDamage = spell.directDamage + spell.dotTotalDamage;
 
   let roleType: SkillRoleCategory = 'UTILITY';
@@ -971,6 +976,102 @@ export function isHealSupportBuffSpell(sp: NormalizedSpell): boolean {
   return false;
 }
 
+/** 外置减伤/保命（痛苦压制、守护之魂等）：友方单体防御大招 */
+export function isExternalSaveSpell(sp: NormalizedSpell): boolean {
+  if (!sp.isDefensive || sp.isDamage) return false;
+  return sp.targetType === 'SINGLE_ALLY' || sp.targetType === 'SMART_ALLY';
+}
+
+/** 单位是否持有任一匹配 aura / spellId */
+export function unitHasAnyAura(unit: Unit, ids: string[]): boolean {
+  if (!unit.buffs?.length || ids.length === 0) return false;
+  const set = new Set(ids.map(s => s.toLowerCase()));
+  return unit.buffs.some(b => {
+    const sid = (b.spellId || '').toLowerCase();
+    return set.has(sid);
+  });
+}
+
+/** 迅捷治愈类：需要目标身上有回春/愈合 */
+export function canCastSwiftmendOn(unit: Unit): boolean {
+  return unitHasAnyAura(unit, [
+    'rejuvenation',
+    'regrowth',
+    'druid_rejuvenation',
+    'druid_regrowth',
+    '回春术',
+    '愈合',
+  ]);
+}
+
+function isSwiftmendSpell(sp: NormalizedSpell | undefined): boolean {
+  if (!sp) return false;
+  const id = `${sp.id} ${sp.shortId}`.toLowerCase();
+  return id.includes('swiftmend');
+}
+
+/** 轻量 triage：坦克/治疗加权，已有护盾降权；分数越高越优先抬 */
+export function triageHealUrgency(unit: Unit): number {
+  const maxHp = Math.max(1, unit.maxHp || 1);
+  const hpPct = Math.max(0, Math.min(1, unit.hp / maxHp));
+  let urgency = 1 - hpPct;
+  if (unit.role === 'TANK') urgency *= 1.35;
+  else if (unit.role === 'HEALER') urgency *= 1.15;
+  const absorb = unit.absorb || 0;
+  if (absorb >= maxHp * 0.08) urgency *= 0.82;
+  return urgency;
+}
+
+/** 治疗候选相对目标的 aura 修正（已有同名 HoT/盾则大幅降权；缺 HoT 的轻伤铺垫加权） */
+export function adjustHealScoreForTargetAuras(
+  candidate: UsableSkillCandidate,
+  target: Unit,
+  baseScore: number,
+  opts?: { isEmergency?: boolean },
+): number {
+  const sp = candidate.normalizedSpell;
+  if (!sp || baseScore <= 0) return baseScore;
+  let score = baseScore;
+  const auraKeys = [sp.auraId, sp.shortId, sp.id].filter(Boolean) as string[];
+
+  if (sp.isHot && auraKeys.length > 0 && unitHasAnyAura(target, auraKeys)) {
+    score *= opts?.isEmergency ? 0.15 : 0.22;
+  }
+  if (sp.isShield && auraKeys.length > 0 && unitHasAnyAura(target, auraKeys)) {
+    score *= 0.08;
+  }
+  if (sp.isShield && (target.absorb || 0) >= target.maxHp * 0.12) {
+    score *= 0.2;
+  }
+  // 轻伤时优先补缺失 HoT，而不是重复刷直疗
+  const hpPct = target.maxHp > 0 ? target.hp / target.maxHp : 1;
+  if (!opts?.isEmergency && sp.isHot && hpPct >= 0.7 && auraKeys.length > 0 && !unitHasAnyAura(target, auraKeys)) {
+    score *= 1.45;
+  }
+  if (isSwiftmendSpell(sp) && !canCastSwiftmendOn(target)) {
+    return -1;
+  }
+  return score;
+}
+
+function pickTriageTarget(allies: Unit[], caster: Unit, tickCount: number): Unit {
+  if (allies.length === 0) return caster;
+  const ranked = [...allies].sort((a, b) => triageHealUrgency(b) - triageHealUrgency(a));
+  if (ranked.length === 1) return ranked[0];
+  const top = ranked[0];
+  const second = ranked[1];
+  const topPct = top.hp / Math.max(1, top.maxHp);
+  const secondPct = second.hp / Math.max(1, second.maxHp);
+  // 前两名血量接近时，按治疗者 id 分流，减轻多奶叠抬同一人
+  if (Math.abs(topPct - secondPct) <= 0.08) {
+    let hash = 0;
+    const key = `${caster.id}:${tickCount}`;
+    for (let i = 0; i < key.length; i++) hash = (hash * 31 + key.charCodeAt(i)) | 0;
+    return Math.abs(hash) % 2 === 0 ? top : second;
+  }
+  return top;
+}
+
 /** 是否为输出向增效 Buff（宿敌、元素释放、狂野怒火等） */
 export function isDamageSupportBuffSpell(sp: NormalizedSpell): boolean {
   if (!sp.isBuff || sp.isHeal || sp.isRaidBuff) return false;
@@ -995,7 +1096,7 @@ export function buildUsableCandidatesForUnit(
 ): UsableSkillCandidate[] {
   if (caster.classId === 'BOSS' || caster.classId === 'NPC') return [];
   const spells = getSpellsForClassSpec(caster.classId as ClassId, specId);
-  const haste = caster.stats?.haste ?? LEVEL_80_MAX_HASTE;
+  const haste = getUnitHaste(caster, LEVEL_80_MAX_HASTE);
   const roleFilter = options?.roleFilter ?? (caster.role === 'HEALER' ? 'HEAL' : 'DAMAGE');
   const useShortId = options?.useShortId ?? false;
 
@@ -1005,25 +1106,38 @@ export function buildUsableCandidatesForUnit(
     if (sp.isOutOfCombatOnly || sp.isResurrect || sp.isInterrupt || sp.isTaunt || sp.isDispel || sp.isRaidBuff) {
       continue;
     }
-    if (sp.isDefensive && !sp.isHeal && !sp.isDamage && !isHealSupportBuffSpell(sp) && !isDamageSupportBuffSpell(sp)) {
+    const healSupport = isHealSupportBuffSpell(sp);
+    const dmgSupport = isDamageSupportBuffSpell(sp);
+    const externalSave = isExternalSaveSpell(sp);
+
+    if (
+      sp.isDefensive &&
+      !sp.isHeal &&
+      !sp.isDamage &&
+      !healSupport &&
+      !dmgSupport &&
+      !externalSave
+    ) {
       continue;
     }
     if (sp.isResourceRestore && !sp.isHeal && !sp.isDamage) continue;
 
-    const healSupport = isHealSupportBuffSpell(sp);
-    const dmgSupport = isDamageSupportBuffSpell(sp);
-
-    if (roleFilter === 'HEAL' && !sp.isHeal && !healSupport) continue;
+    if (roleFilter === 'HEAL' && !sp.isHeal && !healSupport && !externalSave) continue;
     if (roleFilter === 'DAMAGE' && !sp.isDamage && !dmgSupport) continue;
 
     const effectiveCastMs = sp.castTimeMs > 0 ? getHastedCastTimeMs(sp.castTimeMs, haste) : 0;
-    let baseAmt = roleFilter === 'HEAL' || (roleFilter === 'ALL' && (sp.isHeal || healSupport))
-      ? (sp.directHeal + sp.hotTotalHeal + sp.shieldValue)
-      : (sp.directDamage + sp.dotTotalDamage);
+    let baseAmt =
+      roleFilter === 'HEAL' || (roleFilter === 'ALL' && (sp.isHeal || healSupport || externalSave))
+        ? externalSave && !sp.isHeal
+          ? 24_000 // 外置减伤等效急救吞吐，便于进评分
+          : sp.directHeal + Math.round(sp.hotTotalHeal * 0.45) + sp.shieldValue
+        : sp.directDamage + sp.dotTotalDamage;
 
-    // 纯 Buff：给 AI 一个合理的“等效吞吐”以便参与优先级排序（不依赖具体 spellId）
-    if (baseAmt <= 0 && (healSupport || dmgSupport)) {
-      if (sp.isMajorCd) {
+    // 纯 Buff / 外置减伤：给 AI 一个合理的“等效吞吐”以便参与优先级排序（不依赖具体 spellId）
+    if (baseAmt <= 0 && (healSupport || dmgSupport || externalSave)) {
+      if (externalSave) {
+        baseAmt = 24_000;
+      } else if (sp.isMajorCd) {
         baseAmt = 28000; // 大招增效等效爆发
       } else if (sp.targetType === 'SINGLE_ALLY' || sp.targetType === 'SMART_ALLY') {
         baseAmt = 14000; // 维护型友方 Buff
@@ -1035,23 +1149,25 @@ export function buildUsableCandidatesForUnit(
     if (baseAmt <= 0) continue;
 
     let metrics = computeMetricsFromNormalizedSpell(sp, haste);
-    // 纯增效 Buff：补齐吞吐指标，并把 roleType 对齐到当前职责
-    if ((healSupport || dmgSupport) && metrics.rawThroughput <= 0) {
+    // 纯增效 Buff / 外置减伤：补齐吞吐指标，并把 roleType 对齐到当前职责
+    if ((healSupport || dmgSupport || externalSave) && metrics.rawThroughput <= 0) {
       metrics = computeSkillMetrics({
         id: sp.id,
         name: sp.name,
-        roleType: healSupport ? 'HEAL' : 'DAMAGE',
+        roleType: healSupport || externalSave ? 'HEAL' : 'DAMAGE',
         castTimeMs: effectiveCastMs,
         cooldownMs: sp.cooldownMs,
         resourceCost: sp.resourceCostAmount,
         resourceType: sp.resourceKind,
-        rawHeal: healSupport ? baseAmt : 0,
+        rawHeal: healSupport || externalSave ? baseAmt : 0,
         rawDamage: dmgSupport ? baseAmt : 0,
         isAOE: sp.isAOE,
         maxAoeTargets: sp.maxAoeTargets,
         description: sp.description,
       });
-    } else if (healSupport && metrics.roleType === 'UTILITY') {
+    } else if ((healSupport || externalSave) && metrics.roleType === 'UTILITY') {
+      (metrics as { roleType: SkillRoleCategory }).roleType = 'HEAL';
+    } else if (externalSave && metrics.roleType === 'DEFENSIVE') {
       (metrics as { roleType: SkillRoleCategory }).roleType = 'HEAL';
     } else if (dmgSupport && metrics.roleType === 'UTILITY') {
       (metrics as { roleType: SkillRoleCategory }).roleType = 'DAMAGE';
@@ -1112,8 +1228,10 @@ export function evaluateUniversalAIDecision(input: UniversalAIDecisionInput): Un
   const sortedLowestAllies = [...livingAllies].sort(
     (a, b) => (a.hp / (a.maxHp || 1)) - (b.hp / (b.maxHp || 1))
   );
-  const lowestAlly = sortedLowestAllies[0] || caster;
-  const lowestHpRatio = lowestAlly.maxHp > 0 ? lowestAlly.hp / lowestAlly.maxHp : 1.0;
+  const lowestByHp = sortedLowestAllies[0] || caster;
+  const lowestHpRatio = lowestByHp.maxHp > 0 ? lowestByHp.hp / lowestByHp.maxHp : 1.0;
+  // triage：坦克/治疗加权 + 多奶分流；血线判定仍用纯 HP%
+  const lowestAlly = pickTriageTarget(livingAllies, caster, tickCount);
 
   const isAnyEmergency = lowestHpRatio < 0.45 || !isTankSafe;
   const livingEnemies = enemies.filter(e => (e.alive ?? e.isAlive) && e.hp > 0);
@@ -1226,7 +1344,27 @@ export function evaluateUniversalAIDecision(input: UniversalAIDecisionInput): Un
   // 规则二：单体紧急救急（防坦克或队友猝死）——优先于 Buff 维护
   // ─────────────────────────────────────────────────────────────
   if (isAnyEmergency) {
-    const emergencyTarget = (!isTankSafe && tankUnit) ? tankUnit : lowestAlly;
+    const emergencyTarget = !isTankSafe && tankUnit ? tankUnit : lowestAlly;
+    const emergHpPct = emergencyTarget.maxHp > 0 ? emergencyTarget.hp / emergencyTarget.maxHp : 1;
+
+    // 极危时先上外置减伤（痛苦压制/守护之魂），目标尚无同类 buff
+    const externalSaves = available.filter(s => s.normalizedSpell && isExternalSaveSpell(s.normalizedSpell));
+    if (externalSaves.length > 0 && emergHpPct < 0.35) {
+      const usableSave = externalSaves.find(c => {
+        const sp = c.normalizedSpell!;
+        const keys = [sp.auraId, sp.shortId, sp.id].filter(Boolean) as string[];
+        return !unitHasAnyAura(emergencyTarget, keys);
+      });
+      if (usableSave) {
+        return {
+          decisionType: 'EMERGENCY_ST',
+          chosenCandidate: usableSave,
+          targetUnit: emergencyTarget,
+          reason: `目标(${emergencyTarget.name})极危(${(emergHpPct * 100).toFixed(0)}% < 35%)，优先外置减伤（${usableSave.spellName}）`,
+          score: 95,
+        };
+      }
+    }
 
     // 多人危急时才先开自身治疗增效大招（升腾/先祖指引等）；单体保坦直接抬血
     const majorAmplify = available.filter(
@@ -1246,29 +1384,42 @@ export function evaluateUniversalAIDecision(input: UniversalAIDecisionInput): Un
       };
     }
 
-    const emergencyHeals = available.filter(
-      s => !s.isAOE && s.metrics.roleType === 'HEAL' && !(s.normalizedSpell && isHealSupportBuffSpell(s.normalizedSpell) && !s.normalizedSpell.isHeal)
-    );
+    // 单体急救：排除真·群疗；允许 SINGLE_ALLY（含迅捷治愈附带地面圈）
+    const emergencyHeals = available.filter(s => {
+      if (s.metrics.roleType !== 'HEAL') return false;
+      const sp = s.normalizedSpell;
+      if (sp && isHealSupportBuffSpell(sp) && !sp.isHeal) return false;
+      if (sp && isExternalSaveSpell(sp)) return false;
+      if (s.isAOE && sp && sp.targetType !== 'SINGLE_ALLY') return false;
+      if (isSwiftmendSpell(sp) && !canCastSwiftmendOn(emergencyTarget)) return false;
+      return true;
+    });
     if (emergencyHeals.length > 0) {
-      const scoredEmergency = emergencyHeals.map(c => ({
-        candidate: c,
-        score: scoreSkillCandidate(c.metrics, {
-          caster,
-          personality,
-          target: emergencyTarget,
-          allies: livingAllies,
-          enemies: livingEnemies,
-          tickCount,
-          isEmergency: true,
-        }),
-      })).sort((a, b) => b.score - a.score);
+      const scoredEmergency = emergencyHeals
+        .map(c => {
+          const raw = scoreSkillCandidate(c.metrics, {
+            caster,
+            personality,
+            target: emergencyTarget,
+            allies: livingAllies,
+            enemies: livingEnemies,
+            tickCount,
+            isEmergency: true,
+          });
+          return {
+            candidate: c,
+            score: adjustHealScoreForTargetAuras(c, emergencyTarget, raw, { isEmergency: true }),
+          };
+        })
+        .filter(x => x.score > 0)
+        .sort((a, b) => b.score - a.score);
 
-      if (scoredEmergency.length > 0 && scoredEmergency[0].score > 0) {
+      if (scoredEmergency.length > 0) {
         return {
           decisionType: 'EMERGENCY_ST',
           chosenCandidate: scoredEmergency[0].candidate,
           targetUnit: emergencyTarget,
-          reason: `目标(${emergencyTarget.name})血线低于危险线(${((emergencyTarget.hp / (emergencyTarget.maxHp || 1)) * 100).toFixed(0)}% < 45%)，优先高吞吐量急救`,
+          reason: `目标(${emergencyTarget.name})血线低于危险线(${(emergHpPct * 100).toFixed(0)}% < 45%)，优先高吞吐量急救`,
           score: scoredEmergency[0].score,
         };
       }
@@ -1328,35 +1479,50 @@ export function evaluateUniversalAIDecision(input: UniversalAIDecisionInput): Un
   // ─────────────────────────────────────────────────────────────
   if (caster.role === 'HEALER' || available.some(s => s.metrics.roleType === 'HEAL')) {
     if (lowestHpRatio < 0.98) {
-      // 单体或轻伤维护：过滤掉非必要 3 分钟大招与纯维护 Buff（大地之盾/道标等），平衡吞吐量与蓝耗性价比
+      const sustainTarget = pickTriageTarget(
+        livingAllies.filter(a => a.maxHp > 0 && a.hp / a.maxHp < 0.98),
+        caster,
+        tickCount,
+      );
+      // 单体或轻伤维护：过滤掉非必要 3 分钟大招、纯维护 Buff、外置减伤与真·群疗（群疗已在规则一处理）
       const regularHeals = available.filter(s => {
         if (s.metrics.roleType !== 'HEAL' || s.metrics.cycle === 'MAJOR') return false;
         const sp = s.normalizedSpell;
-        // 无直疗的维护/增效 Buff 不参与常规抬血评分（避免大地之盾挤掉治疗波）
         if (sp && isHealSupportBuffSpell(sp) && sp.directHeal <= 0) return false;
+        if (sp && isExternalSaveSpell(sp)) return false;
+        // 常规抬血以单体/SMART 为主；真 AOE_ALLY 大圈留给规则一
+        if (s.isAOE && sp && sp.targetType === 'AOE_ALLY') return false;
+        if (isSwiftmendSpell(sp) && !canCastSwiftmendOn(sustainTarget)) return false;
         return true;
       });
       const pool = regularHeals.length > 0 ? regularHeals : available.filter(s => s.metrics.roleType === 'HEAL');
+      const emergish = lowestHpRatio < 0.6;
 
-      const scoredHeals = pool.map(c => ({
-        candidate: c,
-        score: scoreSkillCandidate(c.metrics, {
-          caster,
-          personality,
-          target: lowestAlly,
-          allies: livingAllies,
-          enemies: livingEnemies,
-          tickCount,
-          isEmergency: lowestHpRatio < 0.60,
-        }),
-      })).sort((a, b) => b.score - a.score);
+      const scoredHeals = pool
+        .map(c => {
+          const raw = scoreSkillCandidate(c.metrics, {
+            caster,
+            personality,
+            target: sustainTarget,
+            allies: livingAllies,
+            enemies: livingEnemies,
+            tickCount,
+            isEmergency: emergish,
+          });
+          return {
+            candidate: c,
+            score: adjustHealScoreForTargetAuras(c, sustainTarget, raw, { isEmergency: emergish }),
+          };
+        })
+        .filter(x => x.score > 0)
+        .sort((a, b) => b.score - a.score);
 
-      if (scoredHeals.length > 0 && scoredHeals[0].score > 0) {
+      if (scoredHeals.length > 0) {
         return {
           decisionType: 'SUSTAINED_ST',
           chosenCandidate: scoredHeals[0].candidate,
-          targetUnit: lowestAlly,
-          reason: '常规治疗：按当前血线与资源占比平衡性价比和输出选优',
+          targetUnit: sustainTarget,
+          reason: '常规治疗：triage 目标 + HoT/护盾感知后按性价比与吞吐选优',
           score: scoredHeals[0].score,
         };
       }

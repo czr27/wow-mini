@@ -3,8 +3,9 @@ import type { Unit } from '@cata-raid-sim/engine';
 import { normalizeCombatSkillName } from '@cata-raid-sim/engine';
 import { CLASS_COLORS } from './AuthAndCharacterModal.js';
 import { CLASS_PIXEL_AVATARS } from '../assets/pixelIcons.js';
+import { clampHudPosToViewport } from '../utils/hudLayout.js';
 
-/** Merge bounce / bloom variants (e.g. 治疗链(第2跳)) into the base skill for meters. */
+/** Merge bounce / bloom variants (e.g. ???(?2?)) into the base skill for meters. */
 function mergeSkillMap(raw: Record<string, number> | undefined): Record<string, number> {
   if (!raw) return {};
   const out: Record<string, number> = {};
@@ -43,22 +44,23 @@ function getDefaultPosition(w: number, h: number): { x: number; y: number } {
   return { x: 960, y: 520 };
 }
 
+function clampStatsPos(pos: { x: number; y: number }, w: number, h: number): { x: number; y: number } {
+  const vw = typeof window !== 'undefined' ? window.innerWidth : 1920;
+  const vh = typeof window !== 'undefined' ? window.innerHeight : 1080;
+  return clampHudPosToViewport(pos, vw, vh, w, h);
+}
+
 function loadSavedPosition(w: number, h: number): { x: number; y: number } {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_POS);
     if (raw) {
       const parsed = JSON.parse(raw);
       if (typeof parsed.x === 'number' && typeof parsed.y === 'number') {
-        const maxX = Math.max(0, (typeof window !== 'undefined' ? window.innerWidth : 1920) - w);
-        const maxY = Math.max(0, (typeof window !== 'undefined' ? window.innerHeight : 1080) - 40);
-        return {
-          x: Math.max(0, Math.min(maxX, parsed.x)),
-          y: Math.max(0, Math.min(maxY, parsed.y)),
-        };
+        return clampStatsPos(parsed, w, h);
       }
     }
   } catch {}
-  return getDefaultPosition(w, h);
+  return clampStatsPos(getDefaultPosition(w, h), w, h);
 }
 
 function loadSavedSize(): { width: number; height: number } {
@@ -305,6 +307,7 @@ export const StatsPanel: React.FC<Props> = ({ units, durationSec, initialPos = n
       interrupts,
       skillDamage: u.combatStats?.skillDamage,
       skillHealing: u.combatStats?.skillHealing,
+      skillDamageTaken: u.combatStats?.skillDamageTaken,
     };
   });
 
@@ -597,10 +600,15 @@ export const StatsPanel: React.FC<Props> = ({ units, durationSec, initialPos = n
           {/* Skill Breakdown List */}
           {(() => {
             let skillMap: Record<string, number> = {};
-            if (metric === 'DPS' || metric === 'DAMAGE_TAKEN') {
+            if (metric === 'DPS') {
               skillMap = mergeSkillMap(hoveredStat.skillDamage);
               if (Object.keys(skillMap).length === 0 && hoveredStat.totalDamage > 0) {
                 skillMap = { '普通攻击': hoveredStat.totalDamage };
+              }
+            } else if (metric === 'DAMAGE_TAKEN') {
+              skillMap = mergeSkillMap(hoveredStat.skillDamageTaken);
+              if (Object.keys(skillMap).length === 0 && hoveredStat.damageTaken > 0) {
+                skillMap = { '受到伤害': hoveredStat.damageTaken };
               }
             } else if (metric === 'EFFECTIVE_HPS') {
               skillMap = mergeSkillMap(hoveredStat.skillHealing);

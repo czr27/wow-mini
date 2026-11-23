@@ -1,5 +1,6 @@
 import type { Unit, SpellSchool } from '../types.js';
 import type { CombatEngine } from './CombatEngine.js';
+import { getEffectiveUnitStats, getHealingTakenMultiplier } from './BuffEffects.js';
 
 export interface DamageResult {
   damage: number;
@@ -32,17 +33,19 @@ export class Calculator {
 
   // ── Physical Damage ──────────────────────────────────────────
   calcPhysicalDamage(attacker: Unit, target: Unit, baseDmg: number, forceCrit?: boolean): DamageResult {
-    const raw = baseDmg * (1 + (attacker.stats?.attackPower ?? 0) / 14_000);
+    const aStats = getEffectiveUnitStats(attacker);
+    const tStats = getEffectiveUnitStats(target);
+    const raw = baseDmg * (1 + (aStats.attackPower ?? 0) / 14_000);
 
     // Armor damage reduction (Cata formula approximation)
-    const armorReduction = this.armorReduction(target.stats?.armor ?? 0);
+    const armorReduction = this.armorReduction(tStats.armor ?? 0);
 
     // Block: 30% damage reduction on blocked hits
-    const blocked = this.roll(target.stats?.block ?? 0);
+    const blocked = this.roll(tStats.block ?? 0);
     const blockMult = blocked ? 0.7 : 1.0;
 
     // Crit: 200% (2× multiplier) on critical hits
-    const isCrit = forceCrit !== undefined ? forceCrit : this.roll(attacker.stats?.critChance ?? 0);
+    const isCrit = forceCrit !== undefined ? forceCrit : this.roll(aStats.critChance ?? 0);
     const critMult = isCrit ? 2.0 : 1.0;
 
     let damage = raw * critMult * (1 - armorReduction) * blockMult;
@@ -63,13 +66,15 @@ export class Calculator {
     school: SpellSchool,
     forceCrit?: boolean,
   ): DamageResult {
-    const spBonus = (attacker.stats?.spellPower ?? 0) * this.schoolCoefficient(school);
+    const aStats = getEffectiveUnitStats(attacker);
+    const tStats = getEffectiveUnitStats(target);
+    const spBonus = (aStats.spellPower ?? 0) * this.schoolCoefficient(school);
     const raw = baseDmg + spBonus;
 
     // Spell resistance (simplified: flat % reduction)
-    const resistReduction = (target.stats?.spellResist ?? 0) / 100;
+    const resistReduction = (tStats.spellResist ?? 0) / 100;
 
-    const isCrit = forceCrit !== undefined ? forceCrit : this.roll((attacker.stats?.critChance ?? 0) + 0.05); // spell crit bonus
+    const isCrit = forceCrit !== undefined ? forceCrit : this.roll((aStats.critChance ?? 0) + 0.05); // spell crit bonus
     const critMult = isCrit ? 2.0 : 1.0;
 
     let damage = raw * critMult * (1 - Math.min(0.75, resistReduction));
@@ -83,10 +88,11 @@ export class Calculator {
 
   // ── Healing ──────────────────────────────────────────────────
   calcHealing(healer: Unit, target: Unit, baseHeal: number, forceCrit?: boolean): HealResult {
-    const spBonus = (healer.stats?.spellPower ?? 0) * 0.8; // standard healing coefficient
-    const raw = baseHeal + spBonus;
+    const hStats = getEffectiveUnitStats(healer);
+    const spBonus = (hStats.spellPower ?? 0) * 0.8; // standard healing coefficient
+    const raw = (baseHeal + spBonus) * getHealingTakenMultiplier(target);
 
-    const isCrit = forceCrit !== undefined ? forceCrit : this.roll((healer.stats?.critChance ?? 0) + 0.03);
+    const isCrit = forceCrit !== undefined ? forceCrit : this.roll((hStats.critChance ?? 0) + 0.03);
     const critMult = isCrit ? 2.0 : 1.0;
 
     const potential = Math.max(0, raw * critMult);

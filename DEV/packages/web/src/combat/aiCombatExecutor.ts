@@ -8,6 +8,7 @@ import type {
 import {
   findOptimalGroundAuraCentroid,
   evaluateTankThreatDecision,
+  orderTanksByThreatPriority,
   getUnitPersonality,
   evaluateUniversalAIDecision,
   getSpellsForClassSpec,
@@ -15,14 +16,29 @@ import {
   getClassPrimaryResource,
   getUnitResourceAmount,
   getEffectiveGcdMs,
+  getUnitHaste,
+  isBloodlustSpellId,
   LEVEL_80_STATS,
   LEVEL_80_MAX_HASTE,
   rollAiDamage,
   rollAiHeal,
   buildUsableCandidatesForUnit,
+  selectAoeHealTargets,
+  selectAoeEnemyTargets,
+  selectChainJumpTargets,
+  selectRaidBuffTargets,
+  RANGE_10YD_PX,
+  RANGE_30YD_PX,
+  RANGE_40YD_PX,
+  RANGE_SHORT_PX,
+  GROUND_TARGET_SPELL_DEFS,
+  resolveAoePulsePose,
+  isValidLifebloomTarget,
+  isTotemUnit,
 } from '@cata-raid-sim/engine';
 import type { IncomingHealCast } from '../components/RaidFrames.js';
 import { syncUnitResources, deductAiResource } from './unitResources.js';
+import { emitLocalAoePulse } from './emitLocalAoePulse.js';
 
 /** Active AI read-bar / channel state (per-unit). */
 export type AiActiveCast = {
@@ -40,6 +56,8 @@ export type AiActiveCast = {
   maxTargets?: number;
   school?: NormalizedSpell['school'];
   normalizedSpell?: NormalizedSpell;
+  /** Remote-human / channel bars: effects already applied on start */
+  isChannel?: boolean;
 };
 
 /**
@@ -59,6 +77,17 @@ export function executeAiNormalizedSpell(
   const isCrit = Math.random() < ((u.stats.critChance || 0.25) + critMod);
   const livingAllies = engine.friendlyUnits.filter(a => (a.alive || a.isAlive) && a.hp > 0);
   const activeEnemies = livingEnemies.length > 0 ? livingEnemies : [boss];
+
+  // Non-tank AI: never resolve taunt spells (Growl / Dark Command / etc.)
+  if (sp.isTaunt) {
+    if (u.role !== 'TANK') return;
+    const enemyTarget =
+      targetUnit && engine.enemyUnits.some((e) => e.id === targetUnit.id)
+        ? targetUnit
+        : livingEnemies[0] || boss;
+    if (enemyTarget) engine.threatManager.applyTaunt(enemyTarget.id, u.id);
+    return;
+  }
 
   // Resource builders (Paladin Holy Power / Warrior Rage / DK Runic Power)
   if (u.classId === 'PALADIN' && sp.resourceKind !== 'HOLY_POWER' && !sp.isDefensive && !sp.isTaunt && !sp.isInterrupt) {
@@ -101,28 +130,60 @@ export function executeAiNormalizedSpell(
       stacks === 1 &&
       Boolean(sp.auraId);
     const finalAuraTarget = nextHealAmpOnCaster ? u : buffTarget;
+    const isLust = isBloodlustSpellId(sp.id) || isBloodlustSpellId(sp.shortId) || isBloodlustSpellId(auraSpellId);
+    // 嗜血/时间扭曲用真实 duration（40s）；MotW 等长效团 buff 默认 1h
+    const durationMs = isLust
+      ? Math.max(1_000, sp.durationMs || 40_000)
+      : Math.max(sp.isRaidBuff ? 3_600_000 : 8000, sp.durationMs || 15000);
 
-    engine.applyBuff(finalAuraTarget, {
-      id: `${auraSpellId}_ai_${Date.now()}_${finalAuraTarget.id}`,
-      spellId: auraSpellId,
-      name: isStackedShield ? `${sp.name} (${stacks}层)` : sp.name,
-      kind: isEnemyBuff ? 'DEBUFF' : 'BUFF',
-      tags: isStackedShield ? ['SHIELD'] : ['STAT'],
-      sourceUnitId: u.id,
-      targetUnitId: finalAuraTarget.id,
-      stacks,
-      maxStacks: stacks,
-      durationMs: Math.max(8000, sp.durationMs || 15000),
-      remainingMs: Math.max(8000, sp.durationMs || 15000),
-      school: sp.school,
-    });
+    // MotW / Arcane Brilliance / Fort / Kings / 嗜血 → 全团；号角/怒吼 → 自身 30 码
+    const auraTargets =
+      !isEnemyBuff && (sp.isRaidBuff || isLust)
+        ? selectRaidBuffTargets({
+            spellId: sp.id,
+            allies: livingAllies.length ? livingAllies : engine.friendlyUnits,
+            caster: u,
+            isRaidBuff: true,
+          })
+        : [finalAuraTarget];
+
+    for (const t of auraTargets) {
+      if (!t) continue;
+      engine.applyBuff(t, {
+        id: `${auraSpellId}_ai_${Date.now()}_${t.id}`,
+        spellId: auraSpellId,
+        name: isStackedShield ? `${sp.name} (${stacks}层)` : sp.name,
+        kind: isEnemyBuff ? 'DEBUFF' : 'BUFF',
+        tags: isStackedShield ? ['SHIELD'] : isLust ? ['BLOODLUST', 'STAT'] : ['STAT'],
+        sourceUnitId: u.id,
+        targetUnitId: t.id,
+        stacks,
+        maxStacks: stacks,
+        durationMs,
+        remainingMs: durationMs,
+        school: sp.school,
+      });
+    }
     return;
   }
 
   if (sp.isHeal || sp.isShield) {
-    const primaryTarget = targetUnit && (targetUnit.alive || targetUnit.isAlive) && targetUnit.hp > 0
-      ? targetUnit
-      : livingAllies.sort((a, b) => (a.hp / a.maxHp) - (b.hp / b.maxHp))[0] || u;
+    const healPool = livingAllies.filter((a) => !isTotemUnit(a));
+    let primaryTarget =
+      targetUnit &&
+      (targetUnit.alive || targetUnit.isAlive) &&
+      targetUnit.hp > 0 &&
+      !isTotemUnit(targetUnit)
+        ? targetUnit
+        : healPool.sort((a, b) => a.hp / a.maxHp - b.hp / b.maxHp)[0] || u;
+    // 生命绽放：友方有效；图腾不可作为目标
+    if (sp.shortId === 'lifebloom' && !isValidLifebloomTarget(primaryTarget, engine)) {
+      primaryTarget =
+        healPool
+          .filter((a) => isValidLifebloomTarget(a, engine))
+          .sort((a, b) => a.hp / a.maxHp - b.hp / b.maxHp)[0] || u;
+      if (!isValidLifebloomTarget(primaryTarget, engine)) return;
+    }
 
     // Ground heal zone (Healing Rain / Healing Tide / Mana Tide / Spirit Link / PW:Barrier)
     if (
@@ -135,19 +196,27 @@ export function executeAiNormalizedSpell(
       sp.shortId === 'mana_tide_totem' ||
       sp.shortId === 'power_word_barrier'
     ) {
-      const centroid = findOptimalGroundAuraCentroid(u, livingAllies, 55, 360);
       const isHealingTide = sp.shortId.includes('healing_tide');
       const isManaTide = sp.shortId.includes('mana_tide');
       const isSpiritLink = sp.shortId.includes('spirit_link') || sp.shortId === 'power_word_barrier';
       const isTotem = isHealingTide || isManaTide || isSpiritLink;
+      // HTT = 40yd (320px); other totems default 10yd (80px); heal zones 60px
+      const auraRadius = isHealingTide
+        ? (GROUND_TARGET_SPELL_DEFS.healing_tide?.radius ?? RANGE_40YD_PX)
+        : isTotem
+          ? 80
+          : 60;
+      const centroid = findOptimalGroundAuraCentroid(u, livingAllies, auraRadius, 360);
+      const groundId = `${sp.shortId}_ai_${Date.now()}_${u.id}`;
+      const spellId = sp.shortId === 'spirit_link_totem' ? 'spirit_link' : (isHealingTide ? 'healing_tide' : sp.shortId);
       engine.effectsManager?.addGroundEffect({
-        id: `${sp.shortId}_ai_${Date.now()}_${u.id}`,
-        kind: isHealingTide ? 'TOTEM' : isTotem ? 'TOTEM' : 'HEAL_ZONE',
-        spellId: sp.shortId === 'spirit_link_totem' ? 'spirit_link' : (isHealingTide ? 'healing_tide' : sp.shortId),
+        id: groundId,
+        kind: isTotem ? 'TOTEM' : 'HEAL_ZONE',
+        spellId,
         ownerId: u.id,
         x: centroid.x,
         y: centroid.y,
-        radius: isTotem ? 70 : 58,
+        radius: auraRadius,
         colorHex: sp.shortId === 'power_word_barrier'
           ? '#FACC15'
           : isHealingTide
@@ -156,7 +225,7 @@ export function executeAiNormalizedSpell(
           ? '#56CCF2'
           : isTotem
           ? '#00CED1'
-          : '#4169E1',
+          : '#10B981',
         remainingMs: isHealingTide ? 10000 : isManaTide ? 12000 : isSpiritLink ? 6000 : 10000,
         tickIntervalMs: isHealingTide ? 2000 : isManaTide ? 5000 : 1000,
         tickElapsedMs: 0,
@@ -166,47 +235,34 @@ export function executeAiNormalizedSpell(
             : Math.max(1600, (sp.directHeal || sp.hotTotalHeal * 0.25) * 0.4)) * individualMod
         ),
       });
-      if (isManaTide) {
-        for (const a of livingAllies) {
-          engine.applyBuff(a, {
-            id: `mana_tide_ai_${Date.now()}_${a.id}`,
-            spellId: 'mana_tide',
-            name: '法力之潮',
-            kind: 'BUFF',
-            tags: ['STAT'],
-            sourceUnitId: u.id,
-            targetUnitId: a.id,
-            stacks: 1,
-            maxStacks: 1,
-            durationMs: 12000,
-            remainingMs: 12000,
-            school: 'NATURE',
-          });
-        }
-      }
-      if (isSpiritLink && livingAllies.length > 1) {
-        // Spirit Link / Barrier immediately stabilizes raid HP toward average + small heal
-        const avgPct = livingAllies.reduce((sum, a) => sum + a.hp / a.maxHp, 0) / livingAllies.length;
-        for (const a of livingAllies) {
-          const desiredHp = Math.round(a.maxHp * Math.min(1, avgPct + 0.08));
-          if (desiredHp > a.hp) {
-            engine.healUnit(u, a, desiredHp - a.hp, false, sp.name);
-          }
-        }
-      }
+      // Mana tide / spirit link buffs applied by EffectsManager ticks inside radius only
+      engine.logCombatAction({
+        actorId: u.id,
+        spellId,
+        spellName: sp.name,
+        kind: 'GROUND_PLACE',
+        x: centroid.x,
+        y: centroid.y,
+        groundEffectId: groundId,
+        targetId: primaryTarget?.id ?? null,
+      });
       return;
     }
 
-    // AoE Heals (Chain Heal smart bounce, Wild Growth HoT, Circle/Prayer of Healing, Light of Dawn, Tranquility, Divine Hymn)
+    // AoE Heals — spatial splash / chain jump (Wild Growth 30yd, Chain Heal 10yd jumps, etc.)
     if (sp.isAOE) {
       const maxTargets = Math.max(3, sp.maxAoeTargets || 4);
-      const woundedAllies = [...livingAllies]
-        .sort((a, b) => (a.hp / a.maxHp) - (b.hp / b.maxHp))
-        .slice(0, maxTargets);
+      const seed = primaryTarget || u;
 
-      if (sp.shortId === 'chain_heal') {
+      if (sp.shortId === 'chain_heal' || sp.id.includes('chain_heal')) {
+        const chainTargets = selectChainJumpTargets({
+          allies: livingAllies,
+          seed,
+          jumpRadiusPx: sp.aoeRadiusPx || RANGE_10YD_PX,
+          maxTargets: sp.maxAoeTargets || 4,
+        });
         let jumpAmt = rollAiHeal(u, Math.max(4800, sp.directHeal), isCrit);
-        woundedAllies.forEach((ally, idx) => {
+        chainTargets.forEach((ally, idx) => {
           const bCrit = idx === 0 ? isCrit : Math.random() < ((u.stats.critChance || 0.22) + critMod);
           const amt = Math.round(jumpAmt * (idx === 0 ? 1 : (bCrit ? 1.5 : 1)));
           engine.healUnit(u, ally, amt, bCrit, sp.name);
@@ -214,6 +270,15 @@ export function executeAiNormalizedSpell(
         });
         return;
       }
+
+      const woundedAllies = selectAoeHealTargets({
+        spellId: sp.id,
+        allies: livingAllies,
+        caster: u,
+        primaryTarget: seed,
+        maxAoeTargets: maxTargets,
+        targetType: sp.targetType,
+      });
 
       for (const ally of woundedAllies) {
         const allyCrit = Math.random() < ((u.stats.critChance || 0.22) + critMod);
@@ -231,11 +296,33 @@ export function executeAiNormalizedSpell(
             targetUnitId: ally.id,
             stacks: 1,
             maxStacks: 1,
-            durationMs: 8000,
-            remainingMs: 8000,
+            durationMs: sp.shortId === 'wild_growth' ? 7000 : 8000,
+            remainingMs: sp.shortId === 'wild_growth' ? 7000 : 8000,
             school: sp.school,
-            tickIntervalMs: 2000,
-            tickValue: Math.round((sp.hotTotalHeal / 4) * individualMod),
+            tickIntervalMs: sp.shortId === 'wild_growth' ? 1000 : 2000,
+            tickValue: Math.round(
+              (sp.hotTotalHeal / (sp.shortId === 'wild_growth' ? 7 : 4)) * individualMod
+            ),
+          });
+        }
+      }
+      {
+        const pose = resolveAoePulsePose({
+          caster: u,
+          primaryTarget: seed,
+          radiusPx: sp.aoeRadiusPx || RANGE_30YD_PX,
+          centerMode: sp.aoeCenterMode || 'TARGET',
+        });
+        if (pose) {
+          emitLocalAoePulse(engine, {
+            actor: u,
+            spellId: sp.shortId || sp.id,
+            spellName: sp.name,
+            targetId: seed.id,
+            x: pose.x,
+            y: pose.y,
+            radius: pose.radius,
+            isHeal: true,
           });
         }
       }
@@ -277,6 +364,16 @@ export function executeAiNormalizedSpell(
         engine.refreshLifebloom(primaryTarget, u.id);
       }
     }
+    if (sp.directHeal > 0 || (sp.isHot && sp.hotTotalHeal > 0)) {
+      engine.logCombatAction({
+        actorId: u.id,
+        spellId: sp.shortId || sp.id,
+        spellName: sp.name,
+        kind: 'INSTANT',
+        targetId: primaryTarget.id,
+        visualTone: 'HEAL',
+      });
+    }
     if (sp.isHot && sp.hotTotalHeal > 0) {
       const existingLb = sp.shortId === 'lifebloom'
         ? primaryTarget.buffs.find(b => b.spellId === 'lifebloom' && b.sourceUnitId === u.id)
@@ -302,9 +399,16 @@ export function executeAiNormalizedSpell(
     return;
   }
 
-  // Damage / Tank attack spells (AoE or ST)
+  // Damage / Tank attack spells (AoE or ST) — melee AoE uses caster-centered radius
   if (sp.isAOE) {
-    const targets = activeEnemies.slice(0, Math.max(3, sp.maxAoeTargets || 5));
+    const targets = selectAoeEnemyTargets({
+      spellId: sp.id,
+      enemies: activeEnemies,
+      caster: u,
+      maxAoeTargets: Math.max(3, sp.maxAoeTargets || 5),
+      school: sp.school,
+      targetType: sp.targetType,
+    });
     for (const enemy of targets) {
       const tCrit = Math.random() < ((u.stats.critChance || 0.25) + critMod);
       const baseD = Math.max(2600, sp.directDamage || sp.dotTotalDamage * 0.5);
@@ -312,6 +416,25 @@ export function executeAiNormalizedSpell(
       engine.dealDamage(u, enemy, dmg, sp.school, tCrit, sp.name);
       if (u.role === 'TANK') {
         engine.threatManager.addThreat(enemy.id, u.id, pauseThreat ? 500 : Math.round(dmg * 3.5));
+      }
+    }
+    {
+      const pose = resolveAoePulsePose({
+        caster: u,
+        primaryTarget: targets[0] || boss,
+        radiusPx: sp.aoeRadiusPx || RANGE_30YD_PX,
+        centerMode: sp.aoeCenterMode || 'CASTER',
+      });
+      if (pose) {
+        emitLocalAoePulse(engine, {
+          actor: u,
+          spellId: sp.shortId || sp.id,
+          spellName: sp.name,
+          targetId: (targets[0] || boss)?.id ?? null,
+          x: pose.x,
+          y: pose.y,
+          radius: pose.radius,
+        });
       }
     }
     return;
@@ -353,6 +476,14 @@ export function executeAiNormalizedSpell(
       tickValue: Math.round((sp.dotTotalDamage / 5) * individualMod),
     });
   }
+
+  engine.logCombatAction({
+    actorId: u.id,
+    spellId: sp.shortId || sp.id,
+    spellName: sp.name,
+    kind: 'INSTANT',
+    targetId: enemyTarget.id,
+  });
 }
 
 
@@ -366,7 +497,7 @@ export type FriendlyAiCombatTickCtx = {
   bossAi: BossAI | null;
   aiCasts: Record<string, AiActiveCast>;
   aiCooldowns: Record<string, number>;
-  currentCasts: Record<string, { spellName: string; progress: number }>;
+  currentCasts: Record<string, { spellName: string; progress: number; spellId?: string }>;
   getUnitAIPersonality: (u: Unit) => AIPersonality;
   inferAiSpecForUnit: (u: Unit) => string;
   isAiCdReady: (unitId: string, spellId: string, cdMs: number) => boolean;
@@ -394,42 +525,81 @@ export function runFriendlyAiCombatTick(ctx: FriendlyAiCombatTickCtx): void {
     const ownedSpells = getSpellsForClassSpec(u.classId, specId);
 
     // 1. CC / Stun / Movement cast-interruption check
-    const isCcOrInterrupted = u.buffs?.some(b =>
-      b.tags?.includes('CC') || (b.tags as any)?.includes('STUN') || (b.tags as any)?.includes('SILENCE')
-    );
-    if (isCcOrInterrupted || (u as any).isMoving) {
+    // CC: hard stop. Moving: only cancel cast bars — melee/tank/OT must keep swinging
+    // (previously `continue` on isMoving made OT stand idle whenever they path/fidget).
+    const isCcOrInterrupted =
+      engine.isUnitCrowdControlled?.(u) ||
+      u.buffs?.some(b =>
+        b.spellId === 'asphyxiate' ||
+        (b.tags as any)?.includes('STUN') ||
+        (b.tags as any)?.includes('SILENCE')
+      );
+    const isMovingNow = !!(u as any).isMoving;
+    if (isCcOrInterrupted || isMovingNow) {
       if (ctx.aiCasts[u.id]) {
         delete ctx.aiCasts[u.id];
         engine.effectsManager?.addFloatingText({
           targetId: u.id,
-          text: (u as any).isMoving ? `${u.name} 移动打断施法` : `${u.name} 施法被中断`,
+          text: isMovingNow ? `${u.name} 移动打断施法` : `${u.name} 施法被中断`,
           category: 'STATUS',
           isCrit: false,
         });
       }
-      continue;
+      if (isCcOrInterrupted) continue;
     }
 
-    // 2. Universal Interrupt Check (any AI owning an off-CD interrupt stops Boss interruptible casts)
+    // 2. Universal Interrupt Check — CD / 资源 / 距离满足时，按概率打断可打断的 Boss 读条
     const bossCasting = ctx.bossAi?.currentCasting;
-    const shouldInterruptBoss = bossCasting?.skill.interruptible && (
-      bossCasting.skill.id !== 'stay_of_execution' || bossCasting.elapsedMs >= 3000
+    const shouldInterruptBoss = Boolean(
+      bossCasting?.skill.interruptible &&
+        (bossCasting.skill.id !== 'stay_of_execution' || bossCasting.elapsedMs >= 3000)
     );
-    if (shouldInterruptBoss && (ctx.tickCount + tickOffset) % 16 === 0) {
+    // 每 ~0.8s 检一次（tickOffset 错开），避免全团同帧齐射
+    if (shouldInterruptBoss && bossCasting && (ctx.tickCount + tickOffset) % 16 === 0) {
       const interruptSp = ownedSpells.find(
         sp => sp.isInterrupt && ctx.isAiCdReady(u.id, sp.shortId, sp.cooldownMs || 10000)
       );
-      if (interruptSp && deductAiResource(u, interruptSp.resourceKind, interruptSp.resourceCostAmount)) {
-        const success = ctx.bossAi!.interruptCurrentCast();
-        if (success) {
-          ctx.markAiCdUsed(u.id, interruptSp.shortId);
-          if (u.combatStats) u.combatStats.interruptCount++;
-          engine.effectsManager?.addFloatingText({
-            targetId: boss.id,
-            text: `${u.name} ${interruptSp.name}打断！`,
-            category: 'INTERRUPT',
-            isCrit: true,
-          });
+      if (interruptSp) {
+        const cost = interruptSp.resourceCostAmount || 0;
+        const canAfford =
+          cost <= 0 ||
+          interruptSp.resourceKind === 'NONE' ||
+          getUnitResourceAmount(u, interruptSp.resourceKind) >= cost;
+        const uPos = u.position || { x: 0, y: 0 };
+        const bPos = boss.position || { x: 0, y: 0 };
+        const dist = Math.hypot(uPos.x - bPos.x, uPos.y - bPos.y);
+        const maxRange =
+          interruptSp.rangePx > 0 ? interruptSp.rangePx : RANGE_SHORT_PX;
+        const inRange = dist <= maxRange + 4; // 小容差，避免贴边漏判
+        if (canAfford && inRange) {
+          const castMs = Math.max(1, bossCasting.skill.castTimeMs || 1);
+          const progress = Math.min(1, bossCasting.elapsedMs / castMs);
+          // 读条越靠后越积极；性格 cycleAggression 再缩放；约 25%~75%
+          const baseChance = 0.25 + progress * 0.4;
+          const chance = Math.min(0.78, Math.max(0.18, baseChance * (aiPersonality.cycleAggression || 1)));
+          if (Math.random() < chance) {
+            if (deductAiResource(u, interruptSp.resourceKind, cost)) {
+              const success = ctx.bossAi!.interruptCurrentCast();
+              if (success) {
+                ctx.markAiCdUsed(u.id, interruptSp.shortId);
+                if (u.combatStats) u.combatStats.interruptCount++;
+                engine.effectsManager?.addFloatingText({
+                  targetId: boss.id,
+                  text: `${u.name} ${interruptSp.name}打断！`,
+                  category: 'INTERRUPT',
+                  isCrit: true,
+                });
+                engine.logCombatAction({
+                  actorId: u.id,
+                  spellId: interruptSp.shortId,
+                  spellName: interruptSp.name,
+                  kind: 'INTERRUPT',
+                  targetId: boss.id,
+                  visualTone: 'ENEMY',
+                });
+              }
+            }
+          }
         }
       }
     }
@@ -515,8 +685,15 @@ export function runFriendlyAiCombatTick(ctx: FriendlyAiCombatTickCtx): void {
     // 5. Tank Threat, Taunt & Defensive Cooldown Checks (Universal across Warrior/Paladin/DK/Druid Tanks)
     let tankPauseThreat = false;
     if (u.role === 'TANK') {
-      const allTanks = engine.friendlyUnits.filter(t => t.role === 'TANK' && (t.isAlive ?? t.alive));
-      const threatDecision = evaluateTankThreatDecision(u, allTanks, ctx.bossThreatTargetId, ctx.bossThreatTargetId === u.id);
+      const allTanks = orderTanksByThreatPriority(
+        engine.friendlyUnits.filter((t) => t.role === 'TANK' && (t.isAlive ?? t.alive))
+      );
+      const threatDecision = evaluateTankThreatDecision(
+        u,
+        allTanks,
+        ctx.bossThreatTargetId,
+        ctx.bossThreatTargetId === u.id
+      );
       tankPauseThreat = threatDecision.pauseThreat;
 
       if (threatDecision.shouldTaunt && (ctx.tickCount + tickOffset) % 12 === 0) {
@@ -592,7 +769,11 @@ export function runFriendlyAiCombatTick(ctx: FriendlyAiCombatTickCtx): void {
           }
         }
       } else {
-        ctx.currentCasts[u.id] = { spellName: activeAiCast.spellName, progress };
+        ctx.currentCasts[u.id] = {
+          spellName: activeAiCast.spellName,
+          progress,
+          spellId: activeAiCast.spellId,
+        };
         if (!activeAiCast.isHarmful) {
           ctx.addIncomingCast(activeAiCast.targetId, {
             casterId: u.id,
@@ -608,18 +789,26 @@ export function runFriendlyAiCombatTick(ctx: FriendlyAiCombatTickCtx): void {
     }
 
     // 7. Per-Unit Effective GCD Check (Lv.80 max haste: >= 1000ms NORMAL / 1000ms ROGUE)
-    const unitGcdMs = getEffectiveGcdMs(u.classId === 'ROGUE' || u.classId === 'HUNTER' ? 'ROGUE' : 'NORMAL', u.stats.haste ?? LEVEL_80_MAX_HASTE);
+    const unitGcdMs = getEffectiveGcdMs(
+      u.classId === 'ROGUE' || u.classId === 'HUNTER' ? 'ROGUE' : 'NORMAL',
+      getUnitHaste(u, LEVEL_80_MAX_HASTE)
+    );
     const lastGcdTime = ctx.aiCooldowns[`${u.id}_gcd`] || 0;
     if (nowMs - lastGcdTime < unitGcdMs) continue;
 
     // 8. Build Usable Candidates Dynamically from Unit's Owned Available Skills & Evaluate Universal Rules
     const roleFilter: 'HEAL' | 'DAMAGE' = u.role === 'HEALER' ? 'HEAL' : 'DAMAGE';
-    const usableCandidates = buildUsableCandidatesForUnit(
+    let usableCandidates = buildUsableCandidatesForUnit(
       u,
       specId,
       (sp) => ctx.isAiCdReady(u.id, sp.shortId, sp.cooldownMs),
       { roleFilter, useShortId: true }
     );
+    // While pathing: only instant skills (melee OT keep swinging; no cast→cancel GCD waste)
+    if (isMovingNow) {
+      usableCandidates = usableCandidates.filter((c) => (c.castMs || 0) <= 0);
+      if (usableCandidates.length === 0) continue;
+    }
 
     const decision = evaluateUniversalAIDecision({
       caster: u,
@@ -668,7 +857,11 @@ export function runFriendlyAiCombatTick(ctx: FriendlyAiCombatTickCtx): void {
           school: normSp.school,
           normalizedSpell: normSp,
         };
-        ctx.currentCasts[u.id] = { spellName: chosen.spellName, progress: 0 };
+        ctx.currentCasts[u.id] = {
+          spellName: chosen.spellName,
+          progress: 0,
+          spellId: chosen.spellId,
+        };
         if (!isHarmful) {
           ctx.addIncomingCast(targetUnit.id, {
             casterId: u.id,
@@ -678,6 +871,17 @@ export function runFriendlyAiCombatTick(ctx: FriendlyAiCombatTickCtx): void {
             progress: 0,
             classId: u.classId,
           });
+          // ST heal cast start → snowflake form (skip AOE)
+          if (!chosen.isAOE) {
+            engine.logCombatAction({
+              actorId: u.id,
+              spellId: chosen.spellId,
+              spellName: chosen.spellName,
+              kind: 'CAST_START',
+              targetId: targetUnit.id,
+              visualTone: 'HEAL',
+            });
+          }
         }
       }
     } else if ((ctx.tickCount + tickOffset) % 60 === 0 && u.maxMp && u.maxMp > 0 && (u.mp ?? 0) < 1200) {

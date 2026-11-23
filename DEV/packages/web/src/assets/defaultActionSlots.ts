@@ -39,7 +39,9 @@ export const DEFAULT_SPELL_COOLDOWNS: Record<string, number> = {
   starsurge: 15000,
   natures_swiftness: 120000,
   vendetta: 120000,
-  rebirth: 600000,
+  rebirth: 600000, // Cata 复生 10 分钟
+  soulstone: 900000, // Cata 灵魂石 15 分钟
+  warlock_soulstone: 900000,
 };
 
 for (const cls of Object.values(ALL_CLASSES_NORMALIZED)) {

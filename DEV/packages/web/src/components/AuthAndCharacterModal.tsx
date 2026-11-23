@@ -4,6 +4,12 @@ import type {
   ClassId,
   KeybindingMap,
   DungeonClearCertificate,
+  CharacterUiLayout,
+  CombatDisplayPrefs,
+} from '@cata-raid-sim/engine';
+import {
+  clampIsoViewSensitivity,
+  resolveCombatDisplayPrefs,
 } from '@cata-raid-sim/engine';
 import { CLASS_PIXEL_AVATARS, SPELL_ICONS } from '../assets/pixelIcons.js';
 import { SkillBookModal, getSpellTooltipWithFallback } from './SkillBookModal.js';
@@ -316,10 +322,15 @@ interface Props {
   onDeleteAccount?: (password: string) => Promise<{ success: boolean; error?: string }>;
   /** 顶栏登录/注册点击时递增 id，打开本组件内的登录弹窗 */
   authOpenRequest?: { mode: 'login' | 'register'; id: number } | null;
+  /** Session kick notice: show immediately (avoid window.alert deferral). */
+  sessionKickNotice?: string | null;
+  onDismissSessionKickNotice?: () => void;
   slots?: ActionSlot[];
   onSwapSlots?: (srcIdx: number, destIdx: number, targetCharId?: string, targetSpecId?: string) => void;
   onAssignSlot?: (slotIdx: number, spellId: string, targetCharId?: string, targetSpecId?: string) => void;
   onClearSlot?: (slotIdx: number, targetCharId?: string, targetSpecId?: string) => void;
+  /** Persist combat canvas display prefs (per character ? server via uiLayout). */
+  onSaveUiLayout?: (charId: string, patch: Partial<CharacterUiLayout>) => void;
 }
 
 const REMEMBER_AUTH_KEY = 'cata_raid_sim_remembered_auth_v1';
@@ -367,10 +378,13 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
   onLogout,
   onDeleteAccount,
   authOpenRequest,
+  sessionKickNotice = null,
+  onDismissSessionKickNotice,
   slots,
   onSwapSlots,
   onAssignSlot,
   onClearSlot,
+  onSaveUiLayout,
 }) => {
   const [draggedSlotIdx, setDraggedSlotIdx] = useState<number | null>(null);
   const [sniffingSlotIdx, setSniffingSlotIdx] = useState<number | null>(null);
@@ -433,6 +447,13 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- open on each new request id
   }, [authOpenRequest?.id]);
 
+  // Open login modal as soon as kick notice arrives (do not wait for Login click).
+  useEffect(() => {
+    if (!sessionKickNotice) return;
+    openAuthModal('login');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionKickNotice]);
+
   const handleAuthSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
     const user = authUsername.trim();
@@ -468,6 +489,7 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
       } else {
         clearRememberedAuth();
       }
+      onDismissSessionKickNotice?.();
       setShowLoginModal(false);
       resetAuthForm();
     } finally {
@@ -719,21 +741,22 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
           </div>
 
           {/* Middle & Right Column: Character Details, Spec & Keybindings, Clear Proofs (9 cols / 75%) */}
-          <div className="md:col-span-9 p-5 flex flex-col overflow-y-auto space-y-5 bg-[#141424]">
+          <div className="md:col-span-9 p-5 flex flex-col overflow-hidden bg-[#141424]">
             {selectedChar ? (
               <>
-                {/* Character Profile Banner */}
-                <div className="flex items-center justify-between bg-[#1d1d36] border border-[#343454] p-4 rounded-xl">
-                  <div className="flex items-center space-x-3">
+                {/* Character Profile Banner — locked above scroll (settings etc.) */}
+                <div className="flex-shrink-0 mb-5">
+                  <div className="flex items-center justify-between bg-[#1d1d36] border border-[#343454] p-4 rounded-xl shadow-lg shadow-black/40">
+                  <div className="flex items-center space-x-3 min-w-0">
                     <div
                       className="w-12 h-12 rounded-lg overflow-hidden border-2 border-[#444466] shadow-md flex-shrink-0"
                       dangerouslySetInnerHTML={{ __html: CLASS_PIXEL_AVATARS[selectedChar.classId] }}
                     />
-                    <div>
+                    <div className="min-w-0">
                       <h3 className="text-xl font-bold text-white flex items-center space-x-2">
-                        <span>{selectedChar.name}</span>
+                        <span className="truncate">{selectedChar.name}</span>
                         <span
-                          className="text-xs px-2 py-0.5 rounded font-normal"
+                          className="text-xs px-2 py-0.5 rounded font-normal flex-shrink-0"
                           style={{
                             backgroundColor: `${CLASS_COLORS[selectedChar.classId]}25`,
                             color: CLASS_COLORS[selectedChar.classId],
@@ -754,13 +777,14 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
 
                   <button
                     onClick={onStartAdventure}
-                    className="px-6 py-2.5 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-white font-extrabold rounded-lg shadow-lg hover:shadow-amber-500/20 transform active:scale-95 transition flex items-center space-x-2 text-base"
+                    className="flex-shrink-0 px-6 py-2.5 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-400 text-white font-extrabold rounded-lg shadow-lg hover:shadow-amber-500/20 transform active:scale-95 transition flex items-center space-x-2 text-base"
                   >
                     <span>⚔️</span>
                     <span>进入大厅</span>
                   </button>
                 </div>
-
+                </div>
+                <div className="flex-1 min-h-0 overflow-y-auto space-y-5 pr-1">
                 {/* Spec talents + action bars (left ~46.7%) / intro or spell tip (right) */}
                 <div
                   className="bg-[#1a1a30] border border-[#2e2e4e] p-4 rounded-xl"
@@ -1180,6 +1204,212 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
                     </div>
                   )}
                 </div>
+
+                {/* Game settings (combat display prefs) */}
+                <div className="bg-[#1a1a30] border border-[#2e2e4e] p-4 rounded-xl space-y-3">
+                  <div>
+                    <h4 className="font-bold text-sm text-gray-200">游戏设置</h4>
+                    <p className="text-xs text-gray-400 mt-0.5">
+                      按角色保存：血条/名称、特效、地形光圈、团队框架与跳字范围
+                    </p>
+                  </div>
+                  {(() => {
+                    const prefs = resolveCombatDisplayPrefs(selectedChar.uiLayout?.combatDisplay);
+                    const patchDisplay = (next: CombatDisplayPrefs) => {
+                      if (!onSaveUiLayout) return;
+                      onSaveUiLayout(selectedChar.id, { combatDisplay: next });
+                    };
+                    const toggle = (key: keyof CombatDisplayPrefs) => {
+                      const cur = prefs[key];
+                      if (typeof cur !== 'boolean') return;
+                      patchDisplay({ ...prefs, [key]: !cur });
+                    };
+                    const Check = ({
+                      label,
+                      k,
+                    }: {
+                      label: string;
+                      k: keyof CombatDisplayPrefs;
+                    }) => (
+                      <label className="flex items-center gap-1.5 text-[11px] text-gray-300 cursor-pointer select-none hover:text-white">
+                        <input
+                          type="checkbox"
+                          checked={!!prefs[k]}
+                          onChange={() => toggle(k)}
+                          className="accent-amber-500"
+                        />
+                        <span>{label}</span>
+                      </label>
+                    );
+                    return (
+                      <div className="space-y-3">
+                        <div>
+                          <div className="text-[10px] text-amber-400/80 font-bold mb-1.5">视角</div>
+                          <label className="flex items-center gap-1.5 text-[11px] text-gray-300 cursor-pointer select-none hover:text-white">
+                            <input
+                              type="checkbox"
+                              checked={prefs.canvasViewMode === 'ISO'}
+                              onChange={(e) =>
+                                patchDisplay({
+                                  ...prefs,
+                                  canvasViewMode: e.target.checked ? 'ISO' : 'TOPDOWN',
+                                })
+                              }
+                              className="accent-amber-500"
+                            />
+                            <span>2.5D</span>
+                          </label>
+                          {(() => {
+                            const moveSens = clampIsoViewSensitivity(
+                              prefs.moveSensitivity as number
+                            );
+                            return (
+                              <label className="mt-2 flex flex-col gap-1 text-[11px] text-gray-300">
+                                <span className="flex justify-between gap-2">
+                                  <span>移动灵敏度 (WASD)</span>
+                                  <span className="text-amber-400/90 tabular-nums">
+                                    {moveSens.toFixed(2)}
+                                  </span>
+                                </span>
+                                <input
+                                  type="range"
+                                  min={0.5}
+                                  max={1.5}
+                                  step={0.05}
+                                  value={moveSens}
+                                  onChange={(e) =>
+                                    patchDisplay({
+                                      ...prefs,
+                                      moveSensitivity: Number(e.target.value),
+                                    })
+                                  }
+                                  className="w-full accent-amber-500"
+                                />
+                                <span className="text-[10px] text-gray-500">
+                                  默认 1.00，可调 ±50%（0.50–1.50）
+                                </span>
+                              </label>
+                            );
+                          })()}
+                          {prefs.canvasViewMode === 'ISO' && (() => {
+                            const orbitSens = clampIsoViewSensitivity(
+                              prefs.isoOrbitSensitivity as number
+                            );
+                            const pitchSens = clampIsoViewSensitivity(
+                              prefs.isoPitchSensitivity as number
+                            );
+                            return (
+                            <div className="mt-2 space-y-2 pl-0.5">
+                              <label className="flex flex-col gap-1 text-[11px] text-gray-300">
+                                <span className="flex justify-between gap-2">
+                                  <span>环绕灵敏度</span>
+                                  <span className="text-amber-400/90 tabular-nums">
+                                    {orbitSens.toFixed(2)}
+                                  </span>
+                                </span>
+                                <input
+                                  type="range"
+                                  min={0.5}
+                                  max={1.5}
+                                  step={0.05}
+                                  value={orbitSens}
+                                  onChange={(e) =>
+                                    patchDisplay({
+                                      ...prefs,
+                                      isoOrbitSensitivity: Number(e.target.value),
+                                    })
+                                  }
+                                  className="w-full accent-amber-500"
+                                />
+                              </label>
+                              <label className="flex flex-col gap-1 text-[11px] text-gray-300">
+                                <span className="flex justify-between gap-2">
+                                  <span>俯仰灵敏度</span>
+                                  <span className="text-amber-400/90 tabular-nums">
+                                    {pitchSens.toFixed(2)}
+                                  </span>
+                                </span>
+                                <input
+                                  type="range"
+                                  min={0.5}
+                                  max={1.5}
+                                  step={0.05}
+                                  value={pitchSens}
+                                  onChange={(e) =>
+                                    patchDisplay({
+                                      ...prefs,
+                                      isoPitchSensitivity: Number(e.target.value),
+                                    })
+                                  }
+                                  className="w-full accent-amber-500"
+                                />
+                              </label>
+                              <p className="text-[10px] text-gray-500">
+                                默认 1.00，可调 ±50%（0.50–1.50）
+                              </p>
+                            </div>
+                            );
+                          })()}
+                        </div>
+                        <div>
+                          <div className="text-[10px] text-amber-400/80 font-bold mb-1.5">血条 · 名称</div>
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-3 gap-y-1.5">
+                            <Check label="本人血条" k="showSelfHp" />
+                            <Check label="本人名称" k="showSelfName" />
+                            <Check label="全员血条" k="showAllHp" />
+                            <Check label="全员名称" k="showAllNames" />
+                            <Check label="Boss 血条" k="showBossHp" />
+                            <Check label="Boss 名称" k="showBossName" />
+                            <Check label="目标血条" k="showTargetHp" />
+                            <Check label="目标名称" k="showTargetName" />
+                            <Check label="焦点血条" k="showFocusHp" />
+                            <Check label="焦点名称" k="showFocusName" />
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-[10px] text-amber-400/80 font-bold mb-1.5">投掷物 · 切割</div>
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-3 gap-y-1.5">
+                            <Check label="友方投掷物" k="showFriendlyProjectiles" />
+                            <Check label="友方切割" k="showFriendlySlash" />
+                            <Check label="敌方投掷物" k="showEnemyProjectiles" />
+                            <Check label="敌方切割" k="showEnemySlash" />
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-[10px] text-amber-400/80 font-bold mb-1.5">地形光圈</div>
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-3 gap-y-1.5">
+                            <Check label="治疗地形" k="showHealTerrain" />
+                            <Check label="加成地形" k="showBuffTerrain" />
+                            <Check label="伤害地形" k="showDamageTerrain" />
+                            <Check label="白色描边" k="terrainWhiteOutline" />
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-[10px] text-amber-400/80 font-bold mb-1.5">团队框架</div>
+                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-3 gap-y-1.5">
+                            <Check label="框架名称" k="showRaidFrameNames" />
+                            <Check label="框架 Buff" k="showRaidFrameBuffs" />
+                            <Check label="框架 Debuff" k="showRaidFrameDebuffs" />
+                            <Check label="常驻 Buff" k="showRaidFrameStandingBuffs" />
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-[10px] text-amber-400/80 font-bold mb-1.5">跳字</div>
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-3 gap-y-1.5">
+                            <Check label="我的伤害" k="showSctMyDamage" />
+                            <Check label="我的治疗" k="showSctMyHeal" />
+                            <Check label="治疗于我" k="showSctHealOnMe" />
+                            <Check label="伤害于我" k="showSctDamageOnMe" />
+                            <Check label="友方伤害" k="showSctAllyDamage" />
+                            <Check label="友方治疗" k="showSctAllyHeal" />
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+
+                </div>
               </>
             ) : (
               <div className="text-center py-12 text-gray-500">
@@ -1345,6 +1575,15 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
                 </div>
               </div>
 
+              {sessionKickNotice && (
+                <div
+                  role="alert"
+                  className="mt-3 rounded-lg border border-rose-500/50 bg-rose-950/50 px-3 py-2.5 text-sm text-rose-100 font-semibold leading-snug"
+                >
+                  {sessionKickNotice}
+                </div>
+              )}
+
               <div className="mt-4 grid grid-cols-2 gap-1 p-1 rounded-xl bg-black/35 border border-white/5">
                 <button
                   type="button"
@@ -1456,6 +1695,7 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
                   onClick={() => {
                     setShowLoginModal(false);
                     resetAuthForm(true);
+                    onDismissSessionKickNotice?.();
                   }}
                   className="px-3 py-2 text-xs bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-300 border border-slate-600"
                 >

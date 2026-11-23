@@ -23,6 +23,10 @@ export class BaseBossAI {
     elapsedMs: number;
   } | null = null;
 
+  /** 头顶铭牌：最近一次非普攻技能名（读条开始 / 瞬发释放时刷新） */
+  public lastSkillName: string | null = null;
+  public lastSkillAtMs = 0;
+
   /** 窒息术后安全治疗窗口期（首领行动锁定） */
   public asphyxiatePostDelay = 0;
 
@@ -119,11 +123,20 @@ export class BaseBossAI {
 
     // 3. 推进当前施法读条
     if (this.currentCasting) {
+      // 兼容 encounter 直接塞 currentCasting 的路径，保证头顶能显示技能名
+      if (this.lastSkillName !== this.currentCasting.skill.name) {
+        this.lastSkillName = this.currentCasting.skill.name;
+        this.lastSkillAtMs = engine.nowMs;
+      }
       this.currentCasting.elapsedMs += deltaMs;
       if (this.currentCasting.elapsedMs >= this.currentCasting.skill.castTimeMs) {
         // 施法完成！
-        this.currentCasting.skill.execute(boss, engine);
-        this.currentCasting.skill.lastCastMs = engine.nowMs;
+        const finished = this.currentCasting.skill;
+        finished.execute(boss, engine);
+        finished.lastCastMs = engine.nowMs;
+        this.lastSkillName = finished.name;
+        this.lastSkillAtMs = engine.nowMs;
+        this.emitSkillHitFx(boss, engine, finished, 'CAST_LAND');
         this.currentCasting = null;
       }
       return;
@@ -203,11 +216,58 @@ export class BaseBossAI {
 
       if (chosen.castTimeMs > 0) {
         this.currentCasting = { skill: chosen, elapsedMs: 0 };
+        this.lastSkillName = chosen.name;
+        this.lastSkillAtMs = engine.nowMs;
       } else {
         chosen.execute(boss, engine);
         chosen.lastCastMs = engine.nowMs;
+        this.lastSkillName = chosen.name;
+        this.lastSkillAtMs = engine.nowMs;
+        this.emitSkillHitFx(boss, engine, chosen, 'INSTANT');
       }
     }
+  }
+
+  /** 为头顶铭牌配套：记一条可同步的命中特效（投掷物 / 切割 / AoE 光环） */
+  private emitSkillHitFx(
+    boss: Unit,
+    engine: CombatEngine,
+    skill: BossSkill,
+    kind: 'CAST_LAND' | 'INSTANT'
+  ): void {
+    const targetId =
+      engine.getBossTargetId() ||
+      engine.friendlyUnits.find(u => (u.alive ?? u.isAlive) && (u.hp ?? 0) > 0)?.id ||
+      null;
+    const isAoe =
+      skill.targetKind === 'AOE' ||
+      skill.name.includes('全场') ||
+      skill.name.includes('弹幕') ||
+      skill.name.includes('灾厄');
+    if (isAoe && boss.position) {
+      engine.logCombatAction({
+        actorId: boss.id,
+        spellId: skill.id || skill.name,
+        spellName: skill.name,
+        kind,
+        targetId,
+        x: boss.position.x,
+        y: boss.position.y,
+        radius: Math.max(40, skill.range || 120),
+        aoePulse: true,
+        visualTone: 'ENEMY',
+      });
+      return;
+    }
+    if (!targetId) return;
+    engine.logCombatAction({
+      actorId: boss.id,
+      spellId: skill.id || skill.name,
+      spellName: skill.name,
+      kind,
+      targetId,
+      visualTone: 'ENEMY',
+    });
   }
 
   public isActionLocked(): boolean {
@@ -216,12 +276,18 @@ export class BaseBossAI {
     return false;
   }
 
+  /** 窒息后技能锁定（含 1s 停手 + 5s 仅普攻），不等于禁伤窗 */
   public isHealingGracePeriod(): boolean {
     return this.asphyxiatePostDelay > 0;
   }
 
   public getPostAsphyxiateRemainingMs(): number {
     return this.asphyxiatePostDelay;
+  }
+
+  /** 窒息后仅普攻阶段：技能仍锁，但允许对仇恨目标普攻 */
+  public isMeleeOnlyPeriod(): boolean {
+    return this.asphyxiatePostDelay > 0;
   }
 
   public interruptCurrentCast(): boolean {

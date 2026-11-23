@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { SPELL_ICONS } from '../assets/pixelIcons.js';
 import type { PlayerCastState } from './ActionBar.js';
+import { clampHudPosToViewport } from '../utils/hudLayout.js';
 
 export interface PlayerCastBarProps {
   playerCast: PlayerCastState | null;
@@ -26,8 +27,19 @@ const BAR_HEIGHT = 18;
 const ICON_SIZE = 22;
 const FLASH_MS = 650;
 
-const STORAGE_KEY_POS = 'cata_player_castbar_pos';
+const STORAGE_KEY_POS = 'cata_player_castbar_pos_v5';
 const STORAGE_KEY_LOCKED = 'cata_player_castbar_locked';
+
+/** ActionBar default: bottom-4, 3×h-11 rows + gaps/padding/border */
+const ACTION_BAR_BOTTOM_MARGIN_PX = 16;
+const ACTION_BAR_SLOT_PX = 44; // w-11 h-11
+const ACTION_BAR_HEIGHT_PX =
+  ACTION_BAR_SLOT_PX * 3 + // 3 rows
+  4 * 2 + // space-y-1 between rows
+  8 * 2 + // p-2
+  2 * 2; // border-2
+/** Gap above action-bar top edge = 0.5 slot */
+const CAST_BAR_GAP_ABOVE_ACTION_BAR_PX = ACTION_BAR_SLOT_PX * 0.5;
 
 type FlashKind = 'success' | 'interrupted';
 
@@ -39,13 +51,29 @@ interface FlashState {
   until: number;
 }
 
+/**
+ * Default: horizontally centered; vertically 0.5 action-bar slot above the
+ * default action bar's top edge.
+ */
+function clampCastBarPos(pos: { x: number; y: number }): { x: number; y: number } {
+  const vw = typeof window !== 'undefined' ? window.innerWidth : 1920;
+  const vh = typeof window !== 'undefined' ? window.innerHeight : 1080;
+  return clampHudPosToViewport(pos, vw, vh, FRAME_WIDTH, FRAME_HEIGHT);
+}
+
 function getDefaultPos(): { x: number; y: number } {
   if (typeof window !== 'undefined') {
-    const x = Math.max(0, Math.round((window.innerWidth - FRAME_WIDTH) / 2));
-    const y = Math.max(0, Math.round(window.innerHeight - 250));
-    return { x, y };
+    const x = Math.round((window.innerWidth - FRAME_WIDTH) / 2);
+    const y = Math.round(
+      window.innerHeight -
+        ACTION_BAR_BOTTOM_MARGIN_PX -
+        ACTION_BAR_HEIGHT_PX -
+        CAST_BAR_GAP_ABOVE_ACTION_BAR_PX -
+        FRAME_HEIGHT,
+    );
+    return clampCastBarPos({ x, y });
   }
-  return { x: 400, y: 650 };
+  return clampCastBarPos({ x: 400, y: 650 });
 }
 
 function loadSavedPosition(): { x: number; y: number } {
@@ -54,12 +82,7 @@ function loadSavedPosition(): { x: number; y: number } {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (typeof parsed.x === 'number' && typeof parsed.y === 'number') {
-        const maxX = Math.max(0, (typeof window !== 'undefined' ? window.innerWidth : 1920) - FRAME_WIDTH);
-        const maxY = Math.max(0, (typeof window !== 'undefined' ? window.innerHeight : 1080) - FRAME_HEIGHT);
-        return {
-          x: Math.max(0, Math.min(maxX, parsed.x)),
-          y: Math.max(0, Math.min(maxY, parsed.y)),
-        };
+        return clampCastBarPos(parsed);
       }
     }
   } catch {}
@@ -144,15 +167,6 @@ export const PlayerCastBar: React.FC<PlayerCastBarProps> = ({
     });
   };
 
-  const resetPosition = () => {
-    const def = getDefaultPos();
-    latestPosRef.current = def;
-    setPos(def);
-    try {
-      localStorage.setItem(STORAGE_KEY_POS, JSON.stringify(def));
-    } catch {}
-  };
-
   useEffect(() => {
     const handleToggle = () => toggleLock();
     window.addEventListener('cata_toggle_castbar_lock', handleToggle);
@@ -160,20 +174,16 @@ export const PlayerCastBar: React.FC<PlayerCastBarProps> = ({
   }, []);
 
   useEffect(() => {
-    const handleResize = () => {
+    const pullIn = () => {
       setPos((prev) => {
-        const maxX = Math.max(0, window.innerWidth - FRAME_WIDTH);
-        const maxY = Math.max(0, window.innerHeight - FRAME_HEIGHT);
-        const clamped = {
-          x: Math.max(0, Math.min(maxX, prev.x)),
-          y: Math.max(0, Math.min(maxY, prev.y)),
-        };
+        const clamped = clampCastBarPos(prev);
         latestPosRef.current = clamped;
         return clamped;
       });
     };
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+    pullIn();
+    window.addEventListener('resize', pullIn);
+    return () => window.removeEventListener('resize', pullIn);
   }, []);
 
   useEffect(() => {
@@ -182,12 +192,10 @@ export const PlayerCastBar: React.FC<PlayerCastBarProps> = ({
       if (!dragRef.current) return;
       const dx = e.clientX - dragRef.current.startX;
       const dy = e.clientY - dragRef.current.startY;
-      const maxX = Math.max(0, window.innerWidth - FRAME_WIDTH);
-      const maxY = Math.max(0, window.innerHeight - FRAME_HEIGHT);
-      const nextPos = {
-        x: Math.max(0, Math.min(maxX, dragRef.current.origX + dx)),
-        y: Math.max(0, Math.min(maxY, dragRef.current.origY + dy)),
-      };
+      const nextPos = clampCastBarPos({
+        x: dragRef.current.origX + dx,
+        y: dragRef.current.origY + dy,
+      });
       latestPosRef.current = nextPos;
       setPos(nextPos);
     };
@@ -222,18 +230,29 @@ export const PlayerCastBar: React.FC<PlayerCastBarProps> = ({
   // silence unused nowTick warning by reading it (forces re-render during flash)
   void nowTick;
 
-  if (!playerCast && !activeFlash && isLocked) {
-    return null;
-  }
-
   // ── Layout shell (classic metal frame) ──────────────────────────────────
-  const shellClass = `fixed z-50 select-none ${
+  const shellClass = `group/castbar fixed z-50 select-none ${
     isDragging
       ? 'cursor-grabbing'
       : isLocked
-      ? ''
+      ? 'cursor-default'
       : 'cursor-grab'
   }`;
+
+  const renderLockButton = () => (
+    <button
+      type="button"
+      onMouseDown={(e) => e.stopPropagation()}
+      onClick={(e) => {
+        e.stopPropagation();
+        toggleLock();
+      }}
+      className="absolute -top-1 -right-1 z-40 w-5 h-5 flex items-center justify-center text-[11px] rounded bg-black/70 border border-[#3e3e5c] text-amber-300 opacity-0 pointer-events-none group-hover/castbar:opacity-100 group-hover/castbar:pointer-events-auto transition-opacity hover:bg-black/90"
+      title={isLocked ? '解锁读条位置（可拖动）' : '锁定读条位置'}
+    >
+      {isLocked ? '🔒' : '🔓'}
+    </button>
+  );
 
   const renderClassicBar = (opts: {
     spellName: string;
@@ -269,39 +288,7 @@ export const PlayerCastBar: React.FC<PlayerCastBarProps> = ({
         style={{ width: FRAME_WIDTH }}
         className={`relative ${preview ? 'opacity-80' : ''}`}
       >
-        {/* Toolbar when unlocked */}
-        {!isLocked && (
-          <div className="flex items-center justify-between mb-1 px-0.5">
-            <span className="text-[9px] text-amber-300/90 font-bold tracking-wide">
-              {preview ? '⠿ 拖拽定位读条' : '⠿'}
-            </span>
-            <div className="flex items-center gap-1">
-              {preview && (
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    resetPosition();
-                  }}
-                  className="text-[8px] text-gray-300 hover:text-white px-1 py-0.5 rounded bg-black/50 border border-gray-600"
-                >
-                  重置
-                </button>
-              )}
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  toggleLock(preview ? true : undefined);
-                }}
-                className="text-[8px] text-amber-200 hover:text-amber-100 px-1 py-0.5 rounded bg-black/50 border border-amber-700/60"
-                title={isLocked ? '解锁' : '锁定位置'}
-              >
-                {preview ? '🔒 锁定' : isLocked ? '🔒' : '🔓'}
-              </button>
-            </div>
-          </div>
-        )}
+        {renderLockButton()}
 
         <div className="flex items-center gap-1.5">
           {/* Spell icon */}
@@ -392,27 +379,24 @@ export const PlayerCastBar: React.FC<PlayerCastBarProps> = ({
           </div>
         </div>
 
-        {/* ESC hint under bar while casting */}
-        {!preview && !activeFlash && onCancelCast && (
-          <div className="mt-0.5 text-right">
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onCancelCast();
-              }}
-              className="text-[8px] text-red-400/80 hover:text-red-300 underline"
-            >
-              ESC 打断
-            </button>
-          </div>
-        )}
       </div>
     );
   };
 
-  // Preview anchor when unlocked & idle
+  // Idle: locked → invisible hover hotspot to unlock; unlocked → preview to drag
   if (!playerCast && !activeFlash) {
+    if (isLocked) {
+      // Small top-right hotspot so idle locked cast bar can be unlocked without covering the fight
+      return (
+        <div
+          style={{ left: `${pos.x + FRAME_WIDTH - 28}px`, top: `${pos.y}px`, width: 28, height: 28 }}
+          className={shellClass}
+          title="悬停解锁读条位置"
+        >
+          {renderLockButton()}
+        </div>
+      );
+    }
     return (
       <div
         style={{ left: `${pos.x}px`, top: `${pos.y}px` }}
@@ -446,7 +430,7 @@ export const PlayerCastBar: React.FC<PlayerCastBarProps> = ({
           fillPct: 100,
           fillMode: activeFlash.kind === 'success' ? 'success' : 'interrupted',
           timerText: activeFlash.kind === 'success' ? '0.0' : '',
-          labelOverride: activeFlash.kind === 'interrupted' ? 'Interrupted' : activeFlash.spellName,
+          labelOverride: activeFlash.kind === 'interrupted' ? '打断' : activeFlash.spellName,
           showSpark: false,
         })}
       </div>

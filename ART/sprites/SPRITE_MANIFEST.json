@@ -218,13 +218,20 @@
     }
   ],
   "metadata": {
-    "version": "1.0.0",
+    "version": "1.1.0",
     "createdBy": "art-dev",
     "createdAt": "2026-11-21",
+    "updatedAt": "2026-11-24",
     "totalClasses": 5,
     "totalBosses": 5,
     "spriteFormat": "PNG",
     "backgroundType": "transparent",
-    "coordinateOrigin": "top-left"
+    "coordinateOrigin": "top-left",
+    "runtimeFacing": {
+      "mode": "procedural_8dir",
+      "dirs": ["E", "SE", "S", "SW", "W", "NW", "N", "NE"],
+      "rule": "moveDir when moving, else face cast/attack target",
+      "impl": "DEV/packages/web/src/canvas/eightDirModels.ts"
+    }
   }
 }

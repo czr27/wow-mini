@@ -52,7 +52,17 @@ export interface RuneSlot {
 
 // ── Buff / Debuff ─────────────────────────────────────────────
 export type AuraKind = 'BUFF' | 'DEBUFF';
-export type AuraTag  = 'HOT' | 'DOT' | 'SHIELD' | 'STAT' | 'CC' | 'TAUNT' | 'BLOODLUST' | 'DEBUFF';
+export type AuraTag =
+  | 'HOT'
+  | 'DOT'
+  | 'SHIELD'
+  | 'STAT'
+  | 'CC'
+  | 'STUN'
+  | 'SILENCE'
+  | 'TAUNT'
+  | 'BLOODLUST'
+  | 'DEBUFF';
 
 export interface Buff {
   id: string;
@@ -73,6 +83,11 @@ export interface Buff {
   school?: SpellSchool;
   /** e.g. 20% damage reduction */
   statModifiers?: Partial<UnitStats>;
+  /**
+   * Multiplier applied to healing received while this aura is active (e.g. 0.25 = -75% healing).
+   * For stacking auras like mortal_wound, engine may also derive from stacks when unset.
+   */
+  healingReceivedMod?: number;
   /** Each stack's independent remaining ms for rolling HoTs like Lifebloom */
   stackRemainingMs?: number[];
 }
@@ -109,6 +124,18 @@ export interface Unit {
   isHumanControlled?: boolean;
   isPet?: boolean;
   ownerId?: string;
+  /**
+   * Room-shared spawn identity: PLAYER/AI/PET/ADD/NPC/BOSS.
+   * Synced via NetworkUnitSnapshot so guests keep pets/adds distinct.
+   */
+  unitKind?: 'PLAYER' | 'AI' | 'PET' | 'ADD' | 'NPC' | 'BOSS';
+  /**
+   * Engine elapsedMs when a timed summon (wolf / gargoyle / …) must despawn.
+   * Host removes the unit; guests drop it when the next unit snapshot omits the id.
+   */
+  despawnAtElapsedMs?: number;
+  /** Canonical short spell id that spawned this timed pet (e.g. feral_spirit). */
+  summonSpellId?: string;
   isAlive: boolean;
   alive?: boolean;
   hp: number;
@@ -135,8 +162,12 @@ export interface Unit {
     overhealDone: number;
     damageTaken: number;
     interruptCount: number;
+    /** Outgoing damage by skill display name */
     skillDamage?: Record<string, number>;
+    /** Outgoing healing by skill display name */
     skillHealing?: Record<string, number>;
+    /** Incoming damage by skill / swing that hit this unit */
+    skillDamageTaken?: Record<string, number>;
   };
 }
 
@@ -239,6 +270,10 @@ export interface GroundEffect {
   tickIntervalMs?: number;
   tickElapsedMs?: number;
   tickValue?: number;         // heal or damage per tick
+  /** CONE_WARNING：朝向（弧度，atan2）；缺省朝左 Math.PI */
+  facingRad?: number;
+  /** CONE_WARNING：张开角（弧度）；缺省 60° = Math.PI/3 */
+  coneAngleRad?: number;
 }
 
 // ── Ground Targeting Spell State ─────────────────────────────
@@ -264,44 +299,56 @@ export const GROUND_TARGET_SPELL_DEFS: Record<
   healing_rain: {
     name: '治疗之雨',
     radius: 60,
-    color: '#38bdf8',
+    color: '#10b981', // 与画布治疗光圈绿色一致
     maxRange: 320, // 40 码点地
   },
   spirit_link: {
     name: '灵魂链接图腾',
-    radius: 55,
+    radius: 80, // ≈10 码图腾半径（40码=320）
     color: '#2dd4bf',
-    maxRange: 320, // 与治疗之雨相同：40 码内点地插图腾
+    maxRange: 320,
   },
   healing_tide: {
     name: '治疗之潮图腾',
-    radius: 70,
+    radius: 320, // 40 码 = RANGE_40YD_PX（8px/码）
     color: '#0ea5e9',
-    maxRange: 280,
+    maxRange: 320,
   },
   healing_tide_totem: {
     name: '治疗之潮图腾',
-    radius: 70,
+    radius: 320, // 40 码 = RANGE_40YD_PX
     color: '#0ea5e9',
-    maxRange: 280,
+    maxRange: 320,
+  },
+  shaman_healing_tide_totem: {
+    name: '治疗之潮图腾',
+    radius: 320, // 40 码 = RANGE_40YD_PX
+    color: '#0ea5e9',
+    maxRange: 320,
   },
   mana_tide: {
     name: '法力之潮图腾',
-    radius: 70,
+    radius: 80,
     color: '#38bdf8',
-    maxRange: 280,
+    maxRange: 320,
   },
   mana_tide_totem: {
     name: '法力之潮图腾',
-    radius: 70,
+    radius: 80,
     color: '#38bdf8',
-    maxRange: 280,
+    maxRange: 320,
   },
   spirit_link_totem: {
     name: '灵魂链接图腾',
-    radius: 55,
+    radius: 80,
     color: '#2dd4bf',
-    maxRange: 320, // 与治疗之雨相同：40 码内点地插图腾
+    maxRange: 320,
+  },
+  windfury_totem: {
+    name: '风怒图腾',
+    radius: 80,
+    color: '#e0e0e0',
+    maxRange: 320,
   },
 };
 
@@ -358,6 +405,7 @@ export interface UnitCombatStats {
   deaths: number;
   skillDamage?: Record<string, number>;
   skillHealing?: Record<string, number>;
+  skillDamageTaken?: Record<string, number>;
 }
 
 export interface EncounterReport {
@@ -465,12 +513,150 @@ export interface UiPosition {
   y: number;
 }
 
+export type RaidFramesUiLayout = UiPosition & { width?: number; height?: number };
+
+/** Local combat canvas camera: top-down (default) vs faux-isometric orbit. */
+export type CanvasViewMode = 'TOPDOWN' | 'ISO';
+
+/** Canvas combat overlay toggles — persisted per character on the server. */
+export interface CombatDisplayPrefs {
+  /**
+   * 画布视角：俯视（不可右键转镜） / 伪等距斜视（右键按住平滑无限转）。
+   * 仅影响本机绘制与点选投影，不改变逻辑坐标与多人同步。
+   */
+  canvasViewMode: CanvasViewMode;
+  /**
+   * 2.5D 环绕（yaw）灵敏度倍率。默认 1.0，可调 ±50% → [0.5, 1.5]。
+   * 仅影响本机右键水平拖动，不参与同步。
+   */
+  isoOrbitSensitivity: number;
+  /**
+   * 2.5D 俯仰灵敏度倍率。默认 1.0，可调 ±50% → [0.5, 1.5]。
+   * 仅影响本机右键垂直拖动，不参与同步。
+   */
+  isoPitchSensitivity: number;
+  /**
+   * WASD / 方向键移动速度倍率。默认 1.0，可调 ±50% → [0.5, 1.5]。
+   * 仅影响本机键盘移动，不参与同步。
+   */
+  moveSensitivity: number;
+  /** 本人血条 / 名称 */
+  showSelfHp: boolean;
+  showSelfName: boolean;
+  /** 全员（友方）血条 / 名称 */
+  showAllHp: boolean;
+  showAllNames: boolean;
+  /** Boss 血条 / 名称 */
+  showBossHp: boolean;
+  showBossName: boolean;
+  /** 当前目标（对象）血条 / 名称 */
+  showTargetHp: boolean;
+  showTargetName: boolean;
+  /** 焦点血条 / 名称 */
+  showFocusHp: boolean;
+  showFocusName: boolean;
+  /** 友方投掷物 / 近战切割 */
+  showFriendlyProjectiles: boolean;
+  showFriendlySlash: boolean;
+  /** 敌方投掷物 / 近战切割 */
+  showEnemyProjectiles: boolean;
+  showEnemySlash: boolean;
+  /** 治疗 / 加成 / 伤害地形光环 */
+  showHealTerrain: boolean;
+  showBuffTerrain: boolean;
+  showDamageTerrain: boolean;
+  /** 地形光圈白色描边 */
+  terrainWhiteOutline: boolean;
+  /** 团队框架：名称 / buff / debuff / 常驻团 buff（爪、智、韧、王等） */
+  showRaidFrameNames: boolean;
+  showRaidFrameBuffs: boolean;
+  showRaidFrameDebuffs: boolean;
+  showRaidFrameStandingBuffs: boolean;
+  /**
+   * 氛围跳字范围（默认与旧客户端过滤一致：
+   * 我的伤害 / 我的治疗 / 治疗于我 / 伤害于我 = 开；友方伤害 / 友方治疗 = 关）
+   */
+  showSctMyDamage: boolean;
+  showSctMyHeal: boolean;
+  showSctHealOnMe: boolean;
+  showSctDamageOnMe: boolean;
+  showSctAllyDamage: boolean;
+  showSctAllyHeal: boolean;
+}
+
+/** Defaults match prior hard-coded visibility (self/boss/target/focus nameplates + all FX/terrain). */
+/** 2.5D orbit/pitch sensitivity: default 1.0, clamp ±50%. */
+export const ISO_VIEW_SENSITIVITY_DEFAULT = 1;
+export const ISO_VIEW_SENSITIVITY_MIN = 0.5;
+export const ISO_VIEW_SENSITIVITY_MAX = 1.5;
+
+export function clampIsoViewSensitivity(value: number): number {
+  if (!Number.isFinite(value)) return ISO_VIEW_SENSITIVITY_DEFAULT;
+  return Math.min(
+    ISO_VIEW_SENSITIVITY_MAX,
+    Math.max(ISO_VIEW_SENSITIVITY_MIN, value)
+  );
+}
+
+export const DEFAULT_COMBAT_DISPLAY_PREFS: CombatDisplayPrefs = {
+  canvasViewMode: 'TOPDOWN',
+  isoOrbitSensitivity: ISO_VIEW_SENSITIVITY_DEFAULT,
+  isoPitchSensitivity: ISO_VIEW_SENSITIVITY_DEFAULT,
+  moveSensitivity: ISO_VIEW_SENSITIVITY_DEFAULT,
+  showSelfHp: true,
+  showSelfName: true,
+  showAllHp: false,
+  showAllNames: false,
+  showBossHp: true,
+  showBossName: true,
+  showTargetHp: true,
+  showTargetName: true,
+  showFocusHp: true,
+  showFocusName: true,
+  showFriendlyProjectiles: true,
+  showFriendlySlash: true,
+  showEnemyProjectiles: true,
+  showEnemySlash: true,
+  showHealTerrain: true,
+  showBuffTerrain: true,
+  showDamageTerrain: true,
+  terrainWhiteOutline: false,
+  showRaidFrameNames: true,
+  showRaidFrameBuffs: true,
+  showRaidFrameDebuffs: true,
+  showRaidFrameStandingBuffs: false,
+  showSctMyDamage: true,
+  showSctMyHeal: true,
+  showSctHealOnMe: true,
+  showSctDamageOnMe: true,
+  showSctAllyDamage: false,
+  showSctAllyHeal: false,
+};
+
+export function resolveCombatDisplayPrefs(
+  partial?: Partial<CombatDisplayPrefs> | null
+): CombatDisplayPrefs {
+  const merged = { ...DEFAULT_COMBAT_DISPLAY_PREFS, ...(partial || {}) };
+  merged.canvasViewMode = partial?.canvasViewMode === 'ISO' ? 'ISO' : 'TOPDOWN';
+  merged.isoOrbitSensitivity = clampIsoViewSensitivity(merged.isoOrbitSensitivity as number);
+  merged.isoPitchSensitivity = clampIsoViewSensitivity(merged.isoPitchSensitivity as number);
+  merged.moveSensitivity = clampIsoViewSensitivity(merged.moveSensitivity as number);
+  return merged;
+}
+
 export interface CharacterUiLayout {
-  raidFrames?: (UiPosition & { width?: number; height?: number }) | null;
+  /** @deprecated Prefer raidFrames5man / raidFrames20man; kept for migrate. */
+  raidFrames?: RaidFramesUiLayout | null;
+  /** 5-man (影牙等) 团队框架位置与大小 */
+  raidFrames5man?: RaidFramesUiLayout | null;
+  /** 20-man (巨龙之魂等) 团队框架位置与大小 */
+  raidFrames20man?: RaidFramesUiLayout | null;
   actionBar?: UiPosition | null;
   playerFrame?: UiPosition | null;
   targetFrame?: UiPosition | null;
   statsPanel?: UiPosition | null;
+  /** 画布显示偏好（血条/名称/投掷物/地形） */
+  combatDisplay?: CombatDisplayPrefs | null;
 }
 
 export interface CharacterRecord {

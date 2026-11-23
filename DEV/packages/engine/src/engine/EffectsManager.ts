@@ -1,4 +1,5 @@
 import { GroundEffect, FloatingCombatText, Unit } from '../types.js';
+import { isSeekableHealGroundEffect } from './AoeRingVisual.js';
 
 export class EffectsManager {
   public groundEffects: GroundEffect[] = [];
@@ -53,26 +54,26 @@ export class EffectsManager {
       if (eff.kind === 'DAMAGE_ZONE') {
         if (this.isPositionInEffect(pos, eff)) return true;
       } else if (eff.kind === 'CONE_WARNING') {
-        // Cone facing left from eff.x, eff.y
+        const facing = eff.facingRad ?? Math.PI;
+        const coneAngle = eff.coneAngleRad ?? Math.PI / 3;
         const dx = pos.x - eff.x;
         const dy = pos.y - eff.y;
         const dist = Math.hypot(dx, dy);
-        if (dist <= eff.radius && dx < 0) {
-          // Angle within ±30 degrees of negative X axis
-          const angle = Math.atan2(dy, dx); // [-PI, PI]
-          const diffFromLeft = Math.abs(Math.abs(angle) - Math.PI);
-          if (diffFromLeft <= Math.PI / 6) return true; // 30 deg each side = 60 deg cone
-        }
+        if (dist > eff.radius) continue;
+        const angle = Math.atan2(dy, dx);
+        let diff = Math.abs(angle - facing);
+        while (diff > Math.PI) diff = Math.abs(diff - 2 * Math.PI);
+        if (diff <= coneAngle / 2) return true;
       }
     }
     return false;
   }
 
   /**
-   * Get all active healing zones (Efflorescence, Healing Rain)
+   * Get all active healing zones (Efflorescence, Healing Rain, healing/support totems)
    */
   public getActiveHealZones(): GroundEffect[] {
-    return this.groundEffects.filter(e => e.kind === 'HEAL_ZONE' && e.remainingMs > 0);
+    return this.groundEffects.filter((e) => isSeekableHealGroundEffect(e));
   }
 
   public tick(deltaMsOrUnits: any, deltaMs?: number) {
@@ -105,9 +106,16 @@ export class EffectsManager {
     this.floatingTexts = this.floatingTexts.filter(f => now - f.createdAtMs < 1500);
   }
 
+  private alliesInRadius(eff: GroundEffect): any[] {
+    return this.engine.friendlyUnits.filter(
+      (u: any) => (u.isAlive ?? u.alive) && u.hp > 0 && u.position && this.isPositionInEffect(u.position, eff)
+    );
+  }
+
   private evaluateGroundEffectTick(eff: GroundEffect): void {
     if (!this.engine) return;
-    const value = eff.tickValue || (eff.kind === 'HEAL_ZONE' ? 4500 : 3800);
+    const value = eff.tickValue ?? (eff.kind === 'HEAL_ZONE' ? 4500 : 3800);
+    if (eff.kind === 'DAMAGE_ZONE' && value <= 0) return;
     const spellId = (eff.spellId || '').toLowerCase();
     const isHealingTide =
       spellId === 'healing_tide' ||
@@ -115,13 +123,14 @@ export class EffectsManager {
       spellId === 'shaman_healing_tide_totem' ||
       spellId === '治疗之潮' ||
       spellId === '治疗之潮图腾';
+    const isSpiritLink = spellId.includes('spirit_link');
+    const isManaTide = spellId.includes('mana_tide');
+    const isWindfury = spellId.includes('windfury');
 
     if (eff.kind === 'HEAL_ZONE' || (eff.kind === 'TOTEM' && isHealingTide)) {
       // Heal friendly units standing inside radius (Healing Rain / Healing Tide Totem)
       const owner = (this.engine.units.get(eff.ownerId) || this.engine.friendlyUnits.find((f: any) => f.id === eff.ownerId) || this.engine.friendlyUnits[0]) as any;
-      const living = this.engine.friendlyUnits.filter(
-        (u: any) => (u.isAlive ?? u.alive) && u.hp > 0 && this.isPositionInEffect(u.position, eff)
-      );
+      const living = this.alliesInRadius(eff);
       const targets = isHealingTide
         ? [...living].sort((a: any, b: any) => a.hp / a.maxHp - b.hp / b.maxHp).slice(0, 5)
         : living;
@@ -143,32 +152,142 @@ export class EffectsManager {
           (b: any) => b.spellId === 'unleash_life' || b.spellId === 'shaman_unleash_life'
         );
         if (ulIdx !== -1) owner.buffs.splice(ulIdx, 1);
-        // 标记本地面效果已享受生命释放，后续跳字保持增效且不再重复消耗
         (eff as any)._unleashLifeBoosted = true;
       } else if ((eff as any)._unleashLifeBoosted) {
         tickHeal = Math.round(value * 1.30);
       }
 
       for (const u of targets) {
-        this.engine.healUnit(owner, u, tickHeal, false, healName);
+        // Periodic ground ticks: not "direct heal" for Unleash Life / Ancestral Guidance
+        this.engine.healUnit(owner, u, tickHeal, false, healName, true);
+      }
+    } else if (eff.kind === 'TOTEM' && isSpiritLink) {
+      // 灵魂链接：仅图腾半径内友方 — 每秒均摊生命百分比 + 维持 10% 减伤 buff
+      const inRange = this.alliesInRadius(eff);
+      if (inRange.length === 0) return;
+      const avgPct =
+        inRange.reduce((s: number, u: any) => s + u.hp / Math.max(1, u.maxHp), 0) / inRange.length;
+      for (const u of inRange) {
+        const desired = Math.round(u.maxHp * avgPct);
+        u.hp = Math.max(1, Math.min(u.maxHp, desired));
+        const existing = u.buffs?.find(
+          (b: any) => b.spellId === 'spirit_link' || b.spellId === 'spirit_link_totem'
+        );
+        if (existing) {
+          existing.remainingMs = Math.max(existing.remainingMs, 1500);
+        } else {
+          this.engine.applyBuff(u, {
+            id: `spirit_link_${eff.id}_${u.id}`,
+            spellId: 'spirit_link',
+            name: '灵魂链接',
+            kind: 'BUFF',
+            tags: ['STAT'],
+            sourceUnitId: eff.ownerId,
+            targetUnitId: u.id,
+            stacks: 1,
+            maxStacks: 1,
+            durationMs: 1500,
+            remainingMs: 1500,
+            school: 'NATURE',
+          });
+        }
+      }
+    } else if (eff.kind === 'TOTEM' && isManaTide) {
+      // 法力之潮：仅半径内友方获得回蓝 buff（战斗 tick 读 buff 加速回蓝）
+      const inRange = this.alliesInRadius(eff);
+      for (const u of inRange) {
+        const existing = u.buffs?.find(
+          (b: any) => b.spellId === 'mana_tide' || b.spellId === 'mana_tide_totem'
+        );
+        if (existing) {
+          existing.remainingMs = Math.max(existing.remainingMs, 5500);
+        } else {
+          this.engine.applyBuff(u, {
+            id: `mana_tide_${eff.id}_${u.id}`,
+            spellId: 'mana_tide',
+            name: '法力之潮',
+            kind: 'BUFF',
+            tags: ['STAT'],
+            sourceUnitId: eff.ownerId,
+            targetUnitId: u.id,
+            stacks: 1,
+            maxStacks: 1,
+            durationMs: 5500,
+            remainingMs: 5500,
+            school: 'NATURE',
+          });
+        }
+      }
+    } else if (eff.kind === 'TOTEM' && isWindfury) {
+      // 风怒图腾：半径内近战急速 +16%（haste buff）
+      const inRange = this.alliesInRadius(eff);
+      for (const u of inRange) {
+        const existing = u.buffs?.find(
+          (b: any) => b.spellId === 'windfury' || b.spellId === 'windfury_totem'
+        );
+        if (existing) {
+          existing.remainingMs = Math.max(existing.remainingMs, 2000);
+        } else {
+          this.engine.applyBuff(u, {
+            id: `windfury_${eff.id}_${u.id}`,
+            spellId: 'windfury_totem',
+            name: '风怒图腾',
+            kind: 'BUFF',
+            tags: ['STAT'],
+            sourceUnitId: eff.ownerId,
+            targetUnitId: u.id,
+            stacks: 1,
+            maxStacks: 1,
+            durationMs: 2000,
+            remainingMs: 2000,
+            school: 'PHYSICAL',
+            statModifiers: { haste: 0.16 },
+          });
+        }
       }
     } else if (eff.kind === 'DAMAGE_ZONE') {
-      // If placed by boss: damage any friendly unit inside
+      // tickValue === 0：仅光圈预警，不跳伤（如杜安气泡）
+      if (eff.tickValue === 0) return;
       const boss = this.engine.bossUnit;
       if (eff.ownerId === boss?.id) {
+        const spellName =
+          ({
+            death_and_decay: '凋零凋落',
+            frozen_orb: '寒冰宝珠',
+            desecration: '亵渎',
+            whirlwind: '旋风斩',
+            overdrive: '过载碾压',
+            fire_blossom: '火焰花瓣',
+            frost_blossom: '冰霜花瓣',
+            arcane_bubble: '奥术气泡',
+          } as Record<string, string>)[eff.spellId] || eff.spellId || '地面伤害';
+        const school =
+          eff.spellId === 'fire_blossom' || eff.spellId === 'overdrive'
+            ? 'FIRE'
+            : eff.spellId === 'frost_blossom'
+              ? 'FROST'
+              : eff.spellId === 'whirlwind'
+                ? 'PHYSICAL'
+                : 'SHADOW';
         for (const u of this.engine.friendlyUnits) {
-          if ((u.isAlive ?? u.alive) && this.isPositionInEffect(u.position, eff)) {
-            const spellName = eff.spellId === 'death_and_decay' ? '凋零凋落' : (eff.spellId === 'frozen_orb' ? '寒冰宝珠' : '暗影坍缩');
-            this.engine.dealDamage(boss, u, value, 'SHADOW', false, spellName);
+          if ((u.isAlive ?? u.alive) && u.position && this.isPositionInEffect(u.position, eff)) {
+            this.engine.dealDamage(boss, u, value, school, false, spellName);
           }
         }
       } else {
-        // Placed by player (e.g. Death and Decay, Frozen Orb)
         if (boss && (boss.isAlive ?? boss.alive) && this.isPositionInEffect(boss.position, eff)) {
           const owner = this.engine.units.get(eff.ownerId) || this.engine.friendlyUnits[0];
           const school = eff.spellId === 'frozen_orb' ? 'FROST' : 'SHADOW';
           const spellName = eff.spellId === 'death_and_decay' ? '死亡凋零' : (eff.spellId === 'frozen_orb' ? '寒冰宝珠' : '地面伤害');
           this.engine.dealDamage(owner, boss, value, school, false, spellName);
+        }
+        // Multi-add ready: damage all enemies in radius (boss + adds)
+        for (const enemy of this.engine.enemyUnits) {
+          if (enemy.id === boss?.id) continue;
+          if ((enemy.isAlive ?? enemy.alive) && this.isPositionInEffect(enemy.position, eff)) {
+            const owner = this.engine.units.get(eff.ownerId) || this.engine.friendlyUnits[0];
+            this.engine.dealDamage(owner, enemy, value, 'SHADOW', false, eff.spellId || '地面伤害');
+          }
         }
       }
     }

@@ -86,8 +86,15 @@ export class AccountManager {
   constructor() {
     this.loadFromStorage();
     if (this.accounts.size === 0) {
-      // Create a default initial guest account for immediate instant play
+      // Seed a demo account for tryout — do not leave the session logged in.
       this.initDefaultAccount();
+      this.currentUsername = null;
+      this.currentCharacterId = null;
+      if (typeof localStorage !== 'undefined') {
+        try {
+          localStorage.removeItem(this.activeUserKey);
+        } catch {}
+      }
     }
   }
 
@@ -132,26 +139,11 @@ export class AccountManager {
             this.accounts.set(acc.username.toLowerCase(), acc);
           }
         }
-        const lastUser = localStorage.getItem(this.activeUserKey);
-        if (lastUser && this.accounts.has(lastUser.toLowerCase())) {
-          this.currentUsername = lastUser.toLowerCase();
-          const lastChar = localStorage.getItem(this.activeCharKey);
-          const acc = this.accounts.get(this.currentUsername);
-          if (acc && lastChar && acc.characters.some(c => c.id === lastChar)) {
-            this.currentCharacterId = lastChar;
-          } else if (acc && acc.characters.length > 0) {
-            this.currentCharacterId = acc.characters[0].id;
-          }
-        } else if (this.accounts.size > 0) {
-          const firstKey = this.accounts.keys().next().value;
-          if (firstKey) {
-            this.currentUsername = firstKey;
-            const acc = this.accounts.get(firstKey);
-            if (acc && acc.characters.length > 0) {
-              this.currentCharacterId = acc.characters[0].id;
-            }
-          }
-        }
+        // Cache accounts / last-char preference only — never restore a logged-in
+        // session. Server restart / page reload must go through login again.
+        // (Remember-password UI uses a separate localStorage key.)
+        this.currentUsername = null;
+        this.currentCharacterId = null;
       } catch (err) {
         console.warn('Failed to load accounts from localStorage', err);
       }

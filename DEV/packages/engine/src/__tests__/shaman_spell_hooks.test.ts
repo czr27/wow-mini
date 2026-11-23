@@ -5,18 +5,21 @@ import {
   getSpellByAnyId,
   getSpellGcdCategory,
   ALL_CLASSES_NORMALIZED,
+  RANGE_40YD_PX,
 } from '../classes/ClassRegistry.js';
+import { GROUND_TARGET_SPELL_DEFS } from '../types.js';
 import type { Unit } from '../types.js';
 import { createLevel80BaseStats, LEVEL_80_STATS } from '../engine/TierProfile.js';
 
 function makeShaman(overrides: Partial<Unit> = {}): Unit {
   const maxHp = overrides.maxHp ?? LEVEL_80_STATS.dpsHealerBaseHp;
   const maxMp = overrides.maxMp ?? LEVEL_80_STATS.healerBaseMp;
-  return {
+  const role = overrides.role ?? 'HEALER';
+  const u: Unit = {
     id: overrides.id ?? 'shaman_1',
     name: overrides.name ?? '测试萨满',
     classId: 'SHAMAN',
-    role: overrides.role ?? 'HEALER',
+    role,
     isPlayer: overrides.isPlayer ?? true,
     isAlive: true,
     alive: true,
@@ -35,9 +38,13 @@ function makeShaman(overrides: Partial<Unit> = {}): Unit {
     threatTable: [],
     resources: [{ kind: 'MANA', current: overrides.mp ?? Math.round(maxMp * 0.5), max: maxMp }],
     position: overrides.position ?? { x: 200, y: 200 },
-    stats: createLevel80BaseStats('HEALER', 'SHAMAN'),
+    stats: createLevel80BaseStats(role === 'HEALER' ? 'HEALER' : 'DPS', 'SHAMAN'),
     combatStats: { damageDealt: 0, healingDone: 0, overhealDone: 0, damageTaken: 0, interruptCount: 0 },
   };
+  if ((overrides as { spec?: string }).spec) {
+    (u as { spec?: string }).spec = (overrides as { spec?: string }).spec;
+  }
+  return u;
 }
 
 function makeAlly(id: string, hpRatio = 0.5): Unit {
@@ -220,21 +227,52 @@ describe('萨满核心技能钩子与 80 级数值/GCD', () => {
       school: 'NATURE',
     });
 
+    // HoT / 周期跳字不应消耗生命释放
+    engine.applyHeal(shaman.id, ally.id, 5000, false, 0, 'riptide', false, true);
+    assert.equal(shaman.buffs.some(b => b.spellId === 'unleash_life'), true, 'HoT 跳字不应消耗生命释放');
+
     const before = ally.hp;
     engine.applyHeal(shaman.id, ally.id, 10000, false, 0, 'healing_surge', false);
     assert.ok(ally.hp - before >= 12900, '生命释放应使下一次直接治疗 +30%');
     assert.equal(shaman.buffs.some(b => b.spellId === 'unleash_life'), false, '生命释放 buff 应被消耗');
   });
 
-  it('5. 升腾：伤害 +35% 与治疗复制', () => {
+  it('4b. 生命释放：治疗之潮图腾跳字不消耗', () => {
     const engine = new CombatEngine();
     const shaman = makeShaman();
+    const ally = makeAlly('ally_tide', 0.4);
+    engine.addUnit(shaman);
+    engine.addUnit(ally);
+    engine.applyBuff(shaman, {
+      id: 'ul_tide',
+      spellId: 'unleash_life',
+      name: '生命释放',
+      kind: 'BUFF',
+      tags: ['STAT'],
+      sourceUnitId: shaman.id,
+      targetUnitId: shaman.id,
+      stacks: 1,
+      maxStacks: 1,
+      durationMs: 10_000,
+      remainingMs: 10_000,
+      school: 'NATURE',
+    });
+    engine.healUnit(shaman, ally, 5200, false, '治疗之潮图腾', true);
+    assert.equal(shaman.buffs.some(b => b.spellId === 'unleash_life'), true, '潮图腾跳字不应消耗生命释放');
+  });
+
+  it('5. 升腾：伤害 +35% 与治疗复制', () => {
+    const engine = new CombatEngine();
+    const shaman = makeShaman({ spec: 'RESTORATION' } as Partial<Unit>);
     const allyA = makeAlly('a1', 0.3);
     const allyB = makeAlly('a2', 0.4);
+    const allyFar = makeAlly('far', 0.2);
+    allyFar.position = { x: 200 + RANGE_40YD_PX + 40, y: 200 };
     const boss = makeEnemy();
     engine.addUnit(shaman);
     engine.addUnit(allyA);
     engine.addUnit(allyB);
+    engine.addUnit(allyFar);
     engine.addUnit(boss);
 
     engine.applyBuff(shaman, {
@@ -258,8 +296,40 @@ describe('萨满核心技能钩子与 80 级数值/GCD', () => {
 
     const aBefore = allyA.hp;
     const bBefore = allyB.hp;
+    const farBefore = allyFar.hp;
     engine.applyHeal(shaman.id, shaman.id, 10000, false, 0, 'healing_wave', false);
-    assert.ok(allyA.hp > aBefore || allyB.hp > bBefore, '升腾应复制治疗给受伤友方');
+    assert.ok(allyA.hp > aBefore || allyB.hp > bBefore, '升腾应复制治疗给附近受伤友方');
+    assert.equal(allyFar.hp, farBefore, '升腾复制不应命中 40 码外友方');
+  });
+
+  it('5b. 升腾：元素专精有伤害增幅但无治疗复制', () => {
+    const engine = new CombatEngine();
+    const shaman = makeShaman({ role: 'DPS', spec: 'ELEMENTAL' } as Partial<Unit>);
+    const ally = makeAlly('hurt_ele', 0.3);
+    const boss = makeEnemy();
+    engine.addUnit(shaman);
+    engine.addUnit(ally);
+    engine.addUnit(boss);
+    engine.applyBuff(shaman, {
+      id: 'asc_ele',
+      spellId: 'ascendance',
+      name: '升腾',
+      kind: 'BUFF',
+      tags: ['STAT'],
+      sourceUnitId: shaman.id,
+      targetUnitId: shaman.id,
+      stacks: 1,
+      maxStacks: 1,
+      durationMs: 15_000,
+      remainingMs: 15_000,
+      school: 'NATURE',
+    });
+    const bossHp = boss.hp;
+    engine.applyDamage(shaman.id, boss.id, 10000, false, 'lava_burst', 'FIRE');
+    assert.equal(bossHp - boss.hp, 13500, '元素升腾仍应伤害 +35%');
+    const before = ally.hp;
+    engine.applyHeal(shaman.id, shaman.id, 10000, false, 0, 'healing_surge', false);
+    assert.equal(ally.hp, before, '非恢复专精升腾不应治疗复制');
   });
 
   it('6. 先祖指引：伤害 40% / 治疗 60% 转化为群体治疗', () => {
@@ -293,6 +363,11 @@ describe('萨满核心技能钩子与 80 级数值/GCD', () => {
     const beforeHeal = ally.hp;
     engine.applyHeal(shaman.id, shaman.id, 10000, false, 0, 'healing_surge', false);
     assert.ok(ally.hp - beforeHeal >= 5000, '先祖指引治疗转化应约为 60%');
+
+    // HoT 跳字不应再触发 60% 转化
+    const beforeHot = ally.hp;
+    engine.applyHeal(shaman.id, shaman.id, 10000, false, 0, 'riptide', false, true);
+    assert.equal(ally.hp, beforeHot, '先祖指引不应被 HoT 跳字触发');
   });
 
   it('7. 治疗之潮图腾：地面跳字治疗最多 5 名伤员', () => {
@@ -309,7 +384,7 @@ describe('萨满核心技能钩子与 80 级数值/GCD', () => {
       ownerId: shaman.id,
       x: 200,
       y: 200,
-      radius: 70,
+      radius: RANGE_40YD_PX, // 40 码
       colorHex: '#0EA5E9',
       remainingMs: 10_000,
       tickIntervalMs: 2_000,
@@ -418,5 +493,7 @@ describe('萨满核心技能钩子与 80 级数值/GCD', () => {
     assert.ok(ground, '治疗之潮图腾应生成地面效果');
     assert.equal(ground.kind, 'TOTEM');
     assert.equal(ground.tickValue, 5200);
+    assert.equal(ground.radius, RANGE_40YD_PX, 'castSpell 治疗之潮半径应为 40 码');
+    assert.equal(GROUND_TARGET_SPELL_DEFS.healing_tide.radius, RANGE_40YD_PX, 'GROUND_TARGET_SPELL_DEFS 应为 40 码');
   });
 });

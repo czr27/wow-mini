@@ -22,6 +22,26 @@ function defaultWsUrl(): string {
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 10000;
 
+/** 技能类意图：丢了会重传；MOVE 等高频仍 fire-and-forget（靠后续 COMBAT_STATE 纠偏位置） */
+const RELIABLE_INPUT_KINDS = new Set<PlayerInputPayload['kind']>([
+  'CAST',
+  'GROUND_CAST',
+  'SUMMON',
+  'INTERRUPT',
+  'DISPEL',
+]);
+
+const RELIABLE_RETRY_MS = 280;
+const RELIABLE_MAX_ATTEMPTS = 6;
+const HOST_ACK_RING = 64;
+
+type PendingReliableInput = {
+  roomId: string;
+  payload: PlayerInputPayload;
+  sentAtMs: number;
+  attempts: number;
+};
+
 export class NetClient {
   private ws: WebSocket | null = null;
   private listeners = new Set<NetListener>();
@@ -33,6 +53,13 @@ export class NetClient {
   private _rooms: LobbyRoom[] = [];
   private _onlinePlayerIds: string[] = [];
   private combatSeq = 0;
+  private clientInputSeq = 0;
+  /** Guest: awaiting host ackedInputIds */
+  private pendingReliable = new Map<string, PendingReliableInput>();
+  /** Host: idempotent apply + rolling ack window for guests */
+  private processedGuestInputIds = new Set<string>();
+  private processedGuestInputOrder: string[] = [];
+  private hostAckRing: string[] = [];
   /** Bumps on each new socket so stale onclose handlers cannot flip UI to offline. */
   private socketGen = 0;
   /** Consecutive failed reconnect attempts — drives backoff delay. */
@@ -49,6 +76,18 @@ export class NetClient {
 
   get onlinePlayerIds() {
     return this._onlinePlayerIds;
+  }
+
+  /** Optimistic lobby mirror (e.g. AI fill) before ROOM_UPDATE arrives. */
+  replaceRoom(room: LobbyRoom) {
+    const idx = this._rooms.findIndex((r) => r.id === room.id);
+    if (idx >= 0) {
+      const next = this._rooms.slice();
+      next[idx] = room;
+      this._rooms = next;
+    } else {
+      this._rooms = [...this._rooms, room];
+    }
   }
 
   subscribe(listener: NetListener): () => void {
@@ -123,7 +162,8 @@ export class NetClient {
       this.emit({ type: 'CONNECTED', timeMs: Date.now() });
       this.send({ type: 'AUTH', payload: this.auth! });
       if (this.pingTimer) clearInterval(this.pingTimer);
-      this.pingTimer = setInterval(() => this.send({ type: 'PING' }), 15000);
+      // 服务端心跳超时约 40s；10s 一轮 PING 便于及时剔除掉线房主房间
+      this.pingTimer = setInterval(() => this.send({ type: 'PING' }), 10_000);
     };
 
     ws.onmessage = (ev) => {
@@ -246,12 +286,34 @@ export class NetClient {
     this.send({ type: 'ROOM_LIST' });
   }
 
+  /** Update session profile (spec/role) on the open socket without reconnecting. */
+  refreshAuthProfile(patch: Partial<AuthPayload>) {
+    if (!this.auth) return;
+    this.auth = { ...this.auth, ...patch };
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.send({ type: 'AUTH', payload: this.auth });
+    }
+  }
+
   createRoom(payload: RoomCreatePayload) {
     this.send({ type: 'ROOM_CREATE', payload });
   }
 
-  joinRoom(roomId: string) {
-    this.send({ type: 'ROOM_JOIN', roomId, payload: { roomId } });
+  joinRoom(
+    roomId: string,
+    player?: {
+      id: string;
+      name: string;
+      classId: string;
+      spec: string;
+      role?: string;
+    }
+  ) {
+    this.send({
+      type: 'ROOM_JOIN',
+      roomId,
+      payload: player ? { roomId, player } : { roomId },
+    });
   }
 
   leaveRoom(roomId?: string) {
@@ -272,17 +334,99 @@ export class NetClient {
   }
 
   sendPlayerInput(roomId: string, payload: PlayerInputPayload) {
-    this.send({ type: 'PLAYER_INPUT', roomId, payload });
+    let body = payload;
+    if (RELIABLE_INPUT_KINDS.has(payload.kind)) {
+      const clientInputId =
+        payload.clientInputId || `ci_${++this.clientInputSeq}_${Date.now().toString(36)}`;
+      body = { ...payload, clientInputId };
+      this.pendingReliable.set(clientInputId, {
+        roomId,
+        payload: body,
+        sentAtMs: Date.now(),
+        attempts: 1,
+      });
+    }
+    this.send({ type: 'PLAYER_INPUT', roomId, payload: body });
+  }
+
+  /** Guest: host COMBAT_STATE 回传 ack 后停止重传 */
+  ackReliableInputs(ids: string[] | undefined | null) {
+    if (!ids || ids.length === 0) return;
+    for (const id of ids) {
+      if (id) this.pendingReliable.delete(id);
+    }
+  }
+
+  /** Guest: 未 ack 的可靠意图按间隔重传（技能丢包可补；次数封顶） */
+  flushReliableInputRetries() {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    if (this.pendingReliable.size === 0) return;
+    const now = Date.now();
+    for (const [id, pending] of [...this.pendingReliable.entries()]) {
+      if (now - pending.sentAtMs < RELIABLE_RETRY_MS) continue;
+      if (pending.attempts >= RELIABLE_MAX_ATTEMPTS) {
+        this.pendingReliable.delete(id);
+        continue;
+      }
+      pending.attempts += 1;
+      pending.sentAtMs = now;
+      this.send({ type: 'PLAYER_INPUT', roomId: pending.roomId, payload: pending.payload });
+    }
+  }
+
+  clearReliableInputs() {
+    this.pendingReliable.clear();
+  }
+
+  /** Host: 同一 clientInputId 只结算一次；重复送达仍记 ack 供客人停重传 */
+  shouldApplyGuestInput(clientInputId: string | undefined): boolean {
+    if (!clientInputId) return true;
+    if (this.processedGuestInputIds.has(clientInputId)) {
+      this.noteHostInputAck(clientInputId);
+      return false;
+    }
+    this.processedGuestInputIds.add(clientInputId);
+    this.processedGuestInputOrder.push(clientInputId);
+    while (this.processedGuestInputOrder.length > HOST_ACK_RING) {
+      const old = this.processedGuestInputOrder.shift();
+      if (old) this.processedGuestInputIds.delete(old);
+    }
+    this.noteHostInputAck(clientInputId);
+    return true;
+  }
+
+  noteHostInputAck(clientInputId: string) {
+    if (!clientInputId) return;
+    this.hostAckRing.push(clientInputId);
+    while (this.hostAckRing.length > HOST_ACK_RING) this.hostAckRing.shift();
+  }
+
+  peekHostInputAcks(): string[] {
+    return this.hostAckRing.length ? this.hostAckRing.slice() : [];
+  }
+
+  clearHostInputAckState() {
+    this.processedGuestInputIds.clear();
+    this.processedGuestInputOrder = [];
+    this.hostAckRing = [];
   }
 
   sendCombatState(snapshot: Omit<NetworkCombatSnapshot, 'seq'> & { seq?: number }) {
     const seq = snapshot.seq ?? ++this.combatSeq;
+    const ackedInputIds =
+      snapshot.ackedInputIds && snapshot.ackedInputIds.length > 0
+        ? snapshot.ackedInputIds
+        : this.peekHostInputAcks();
     this.send({
       type: 'COMBAT_STATE',
       roomId: snapshot.roomId,
       seq,
       timeMs: snapshot.timeMs,
-      payload: { ...snapshot, seq },
+      payload: {
+        ...snapshot,
+        seq,
+        ...(ackedInputIds.length ? { ackedInputIds } : {}),
+      },
     });
   }
 
@@ -307,7 +451,12 @@ export class NetClient {
     this.send({
       type: 'VOTE_CAST',
       roomId,
-      payload: { kind, playerId: '', choice },
+      payload: {
+        kind,
+        // Prefer authed character id so server eligibility matches room.members[].id
+        playerId: this.auth?.playerId || '',
+        choice,
+      },
     });
   }
 

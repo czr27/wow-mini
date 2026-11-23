@@ -19,6 +19,11 @@ export interface NetworkUnitSnapshot {
   /** Host marks remote/local humans so guests don't treat them as AI stubs incorrectly */
   isHumanControlled?: boolean;
   isAi?: boolean;
+  /** Pet / hunter companion / water elemental */
+  isPet?: boolean;
+  ownerId?: string;
+  /** PLAYER | AI | PET | ADD | NPC | BOSS — room-shared spawn identity */
+  unitKind?: 'PLAYER' | 'AI' | 'PET' | 'ADD' | 'NPC' | 'BOSS';
   isAlive: boolean;
   hp: number;
   maxHp: number;
@@ -37,6 +42,9 @@ export interface NetworkUnitSnapshot {
     overhealDone: number;
     damageTaken: number;
     interruptCount: number;
+    skillDamage?: Record<string, number>;
+    skillHealing?: Record<string, number>;
+    skillDamageTaken?: Record<string, number>;
   };
 }
 
@@ -84,6 +92,25 @@ export interface NetworkGcdTimeline {
   totalMs: number;
 }
 
+/** Host→guest action echo so clients can play cast/ground/summon VFX on the right target. */
+export interface NetworkCombatAction {
+  id: string;
+  atMs: number;
+  actorId: string;
+  spellId: string;
+  spellName?: string;
+  targetId?: string | null;
+  kind: 'CAST_START' | 'CAST_LAND' | 'INSTANT' | 'GROUND_PLACE' | 'SUMMON' | 'INTERRUPT' | 'DISPEL';
+  x?: number;
+  y?: number;
+  spawnedUnitId?: string;
+  groundEffectId?: string;
+  /** AoE ring radius (canvas px) for shared FX */
+  radius?: number;
+  aoePulse?: boolean;
+  visualTone?: 'HEAL' | 'FRIENDLY' | 'ENEMY';
+}
+
 export interface NetworkCombatSnapshot {
   roomId: string;
   seq: number;
@@ -103,10 +130,45 @@ export interface NetworkCombatSnapshot {
   groundEffects?: NetworkGroundEffectSnapshot[];
   /** Host-authoritative floating combat text — guests mirror for atmosphere numbers */
   floatingTexts?: FloatingCombatText[];
+  /**
+   * Recent player/AI actions (cast on target, place totem, summon pet/add).
+   * Guests use these to trigger local FX tied to actor→target.
+   */
+  recentActions?: NetworkCombatAction[];
   /** Explicit interrupt events since last snapshot (also mirrored on casts[].interrupted) */
   interrupts?: Array<{ unitId: string; spellId?: string; atMs: number }>;
+  /** Prim 迷宫：副本+关卡种子，客人本地同构重建 */
+  mazeSeed?: number;
+  mazeDungeonId?: string;
+  mazeStageIndex?: number;
+  /** 房主权威：小怪血量 / 墓碑 */
+  mazeTrash?: Array<{
+    id: string;
+    hp: number;
+    maxHp: number;
+    isDead: boolean;
+    isTombstone: boolean;
+    dissipateAlpha?: number;
+  }>;
+  /** 房主赶路前锋距离（可选，客人可用于校正） */
+  mazeLeadDist?: number;
+  /** 房主迷宫遭遇跳字（客人按 id 合并本地绘制） */
+  mazeSctEvents?: Array<{
+    id: string;
+    text: string;
+    x: number;
+    y: number;
+    color: string;
+    createdAt: number;
+    isCrit: boolean;
+  }>;
   wipeVote?: NetworkVoteState;
   skipTravelVote?: NetworkVoteState;
+  /**
+   * Host→guest：最近已处理的客人 clientInputId（滚动窗口）。
+   * 客人据此停止重传；丢包后下一帧快照仍会带上，保证可补 ack。
+   */
+  ackedInputIds?: string[];
 }
 
 export type NetworkVoteKind = 'WIPE' | 'SKIP_TRAVEL';
@@ -128,10 +190,13 @@ export interface NetworkVoteState {
 export interface PlayerInputPayload {
   playerId: string;
   spellId?: string;
+  spellName?: string;
   targetId?: string | null;
   slotIndex?: number;
   kind:
     | 'CAST'
+    | 'GROUND_CAST'
+    | 'SUMMON'
     | 'TARGET'
     | 'INTERRUPT'
     | 'MOVE'
@@ -140,10 +205,18 @@ export interface PlayerInputPayload {
     | 'WIPE_VOTE'
     | 'SKIP_TRAVEL_VOTE'
     | 'REQUEST_SKIP_TRAVEL';
+  /** Ground placement / move coordinates (canvas px) */
   x?: number;
   y?: number;
+  /** Optional spawn hint for SUMMON (pet / add template id) */
+  spawnKind?: 'PET' | 'ADD' | 'NPC';
   wipeVote?: WipeVoteChoice;
   skipTravelVote?: SkipTravelVoteChoice;
+  /**
+   * 客人可靠意图 id：房主处理后经 COMBAT_STATE.ackedInputIds 回传；
+   * 未收到 ack 时客人可重传，房主按 id 幂等去重。
+   */
+  clientInputId?: string;
 }
 
 export type NetMessageType =
@@ -202,6 +275,8 @@ export interface RoomCreatePayload {
   difficulty?: DungeonDifficulty;
   customDifficulty?: CustomDifficultySettings;
   host: PlayerInfo;
+  /** Create → fill AI → start in one shot (快速游戏). */
+  quickStart?: boolean;
 }
 
 export interface RoomActionPayload {
@@ -222,6 +297,8 @@ export interface RoomActionPayload {
   classId?: ClassId;
   spec?: string;
   dungeonId?: string;
+  /** AUTO_FILL_AI：先踢光现有 AI 再按配额重分配（一键 AI 按钮） */
+  replaceExistingAi?: boolean;
 }
 
 export interface PresencePayload {
@@ -242,6 +319,11 @@ export interface MemberHotSwapPayload {
   room: LobbyRoom;
   playerId: string;
   replacedAiId: string;
+  /** Explicit joiner identity (avoid relying solely on room.members lookup). */
+  playerName?: string;
+  classId?: string;
+  spec?: string;
+  role?: string;
   /** Inherited combat unit after id remap (host-authoritative). */
   unitSnapshot?: NetworkUnitSnapshot;
 }

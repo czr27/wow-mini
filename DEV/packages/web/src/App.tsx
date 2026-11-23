@@ -7,7 +7,8 @@ import {
   LeaderboardManager,
   ReportManager,
   SHADOWFANG_KEEP_CONFIG,
-  DRAGON_SOUL_CONFIG,
+  getDungeonConfig,
+  SELECTABLE_DUNGEONS,
   ClassId,
   Unit,
   GroundEffect,
@@ -26,6 +27,9 @@ import {
   DUNGEON_ROLE_QUOTAS,
   LEVEL_80_MAX_HASTE,
   getSpellByAnyId,
+  getUnitHaste,
+  RANGE_40YD_PX,
+  useHeroicWill,
 } from '@cata-raid-sim/engine';
 import {
   hasSufficientPlayerResources,
@@ -66,6 +70,7 @@ import { WipeVoteModal } from './components/WipeVoteModal.js';
 import { SummaryPage } from './components/SummaryPage.js';
 import { getDefaultActionSlots, DEFAULT_SPELL_COOLDOWNS } from './assets/defaultActionSlots.js';
 import { SPELL_TOOLTIPS, initArtResourceIcons, subscribeToIconChanges } from './assets/pixelIcons.js';
+import { GameLoadingScreen } from './components/GameLoadingScreen.js';
 import {
   SPELL_MANA_COSTS,
   SPELL_ENERGY_COSTS,
@@ -75,6 +80,12 @@ import {
 import { syncUnitResources } from './combat/unitResources.js';
 import { setupRaidUnits as setupRaidUnitsCore } from './combat/setupRaidUnits.js';
 import {
+  assignRaidSquads,
+  getAltSquadTarget,
+  raidRosterKey,
+  resolveRaidSquads,
+} from './combat/raidSquads.js';
+import {
   applySharedCooldown,
   computePlayerGcdMs,
   resolvePlayerCast as resolvePlayerCastCore,
@@ -82,6 +93,7 @@ import {
 } from './hooks/usePlayerCastActions.js';
 import { type AiActiveCast } from './combat/aiCombatExecutor.js';
 import { confirmGroundTarget } from './combat/confirmGroundTarget.js';
+import { clearMazeSync, setMazeSyncRoomId } from './combat/mazeSyncBridge.js';
 import { dispelUnit } from './combat/dispelUnit.js';
 import {
   getPredictedHealAmount as getPredictedHealAmountCore,
@@ -169,6 +181,8 @@ export function App() {
     mode: 'login' | 'register';
     id: number;
   } | null>(null);
+  /** 别处登录 / 心跳踢下线：立刻展示，不依赖 window.alert */
+  const [sessionKickNotice, setSessionKickNotice] = useState<string | null>(null);
   const [isCertClaimed, setIsCertClaimed] = useState(false);
 
   // Combat runtime state
@@ -181,6 +195,9 @@ export function App() {
   const [floatingTexts, setFloatingTexts] = useState<FloatingCombatText[]>([]);
   const [guestBossCasting, setGuestBossCasting] = useState<{
     spellName: string;
+    spellId?: string;
+    description?: string;
+    school?: string;
     elapsedMs: number;
     castTimeMs: number;
     interruptible: boolean;
@@ -201,7 +218,9 @@ export function App() {
 
   // Dynamic Cast and Resurrection States
   const [playerCast, setPlayerCast] = useState<PlayerCastState | null>(null);
-  const [companionCasts, setCompanionCasts] = useState<Record<string, { spellName: string; progress: number }>>({});
+  const [companionCasts, setCompanionCasts] = useState<
+    Record<string, { spellName: string; progress: number; spellId?: string }>
+  >({});
   const [revivingUnitId, setRevivingUnitId] = useState<string | null>(null);
   const [reviveProgress, setReviveProgress] = useState(0);
   const [isCorpseRunning, setIsCorpseRunning] = useState(false);
@@ -218,6 +237,13 @@ export function App() {
     } catch {}
     return '5man';
   });
+  const [selectedDungeonId, setSelectedDungeonId] = useState<string>(() => {
+    try {
+      const saved = localStorage.getItem('cata_dungeon_id');
+      if (saved && SELECTABLE_DUNGEONS.some(d => d.id === saved)) return saved;
+    } catch {}
+    return 'shadowfang_keep';
+  });
   const [dungeonDifficulty, setDungeonDifficulty] = useState<DungeonDifficulty>(() => {
     const initChar = accountMgrRef.current.getCurrentCharacter();
     if (initChar?.lastDungeonDifficulty) return initChar.lastDungeonDifficulty;
@@ -227,7 +253,7 @@ export function App() {
         return saved;
       }
     } catch {}
-    return 'HEROIC';
+    return 'NORMAL';
   });
   const [customDifficulty, setCustomDifficulty] = useState<CustomDifficultySettings>(() => {
     const initChar = accountMgrRef.current.getCurrentCharacter();
@@ -242,22 +268,31 @@ export function App() {
     return DEFAULT_CUSTOM_DIFFICULTY;
   });
   const [focusTargetId, setFocusTargetId] = useState<string | null>(null);
+  /** 20-man: selected squad for Alt+1~5 (0=小队1). 5-man always squad 0. */
+  const [selectedSquadIndex, setSelectedSquadIndex] = useState(0);
+  /** Stable squad id lists; re-rolled when roster identity changes. */
+  const [raidSquadIds, setRaidSquadIds] = useState<string[][]>([]);
+  const raidRosterKeyRef = useRef('');
   const isShiftPressedRef = useRef(false);
   const [autoApproachTarget, setAutoApproachTarget] = useState<{ targetX: number; targetY: number; desiredDist: number; pendingSlotIdx: number } | null>(null);
   const prevRunPhaseRef = useRef<RunPhase>('LOBBY');
 
+  // Host: paint AoE rings as soon as actionLog records a pulse (boss/AI/player)
+  useEffect(() => {
+    const engine = engineRef.current;
+    engine.onCombatAction = (ev) => {
+      if (!ev.aoePulse) return;
+      window.dispatchEvent(
+        new CustomEvent('cata_combat_actions', { detail: { actions: [ev], local: true } })
+      );
+    };
+    return () => {
+      engine.onCombatAction = null;
+    };
+  }, []);
+
   // Global Shift key tracking for Focus targeting
   useEffect(() => {
-    // 启动时尝试拉取服务器端最新账号数据，实现跨端/联机即时加载
-    accountMgrRef.current.loadFromServer().then((success) => {
-      if (success) {
-        const curAcc = accountMgrRef.current.getCurrentAccount();
-        setAccount(curAcc ? { ...curAcc } : null);
-        const curChar = accountMgrRef.current.getCurrentCharacter();
-        if (curChar) setSelectedCharId(curChar.id);
-      }
-    });
-
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Shift') isShiftPressedRef.current = true;
     };
@@ -348,6 +383,7 @@ export function App() {
 
   useEffect(() => {
     activeRoomIdRef.current = activeRoomId;
+    setMazeSyncRoomId(activeRoomId);
   }, [activeRoomId]);
 
   useEffect(() => {
@@ -386,8 +422,12 @@ export function App() {
     setActiveRoomId,
     setLobbySubView,
     setRunPhase,
+    setIsApproaching,
+    setSessionKickNotice,
+    setAuthOpenRequest,
     setWaitingQueueRoomId,
     setDungeonTier,
+    setSelectedDungeonId,
     setDungeonDifficulty,
     setCustomDifficulty,
     setFriendlyUnits,
@@ -407,19 +447,65 @@ export function App() {
     setGuestBossCasting,
   });
 
-  // ── [Game Load] 游戏加载时，技能/Buff 图标优先从 \ART\resources\ 寻找 ──
+  // ── [Game Load] 启动：下载 ART 图标 + 拉取账号，显示加载进度界面 ──
   const [, setArtIconRevision] = useState(0);
+  const [bootLoading, setBootLoading] = useState(true);
+  const [bootPercent, setBootPercent] = useState(0);
+  const [bootLabel, setBootLabel] = useState('正在启动…');
+
   useEffect(() => {
-    initArtResourceIcons();
+    let cancelled = false;
     const unsubscribe = subscribeToIconChanges(() => {
       setArtIconRevision((prev) => prev + 1);
     });
+
+    (async () => {
+      try {
+        const accountPromise = accountMgrRef.current.loadFromServer().then((success) => {
+          if (cancelled) return;
+          if (success) {
+            const curAcc = accountMgrRef.current.getCurrentAccount();
+            setAccount(curAcc ? { ...curAcc } : null);
+            const curChar = accountMgrRef.current.getCurrentCharacter();
+            if (curChar) setSelectedCharId(curChar.id);
+          }
+        });
+
+        await initArtResourceIcons((p) => {
+          if (cancelled) return;
+          // Reserve top ~8% for account sync after art download
+          setBootPercent(Math.min(92, p.percent * 0.92));
+          setBootLabel(p.label);
+        });
+
+        if (!cancelled) {
+          setBootLabel('同步账号数据…');
+          setBootPercent(94);
+        }
+        await accountPromise;
+
+        if (!cancelled) {
+          setBootPercent(100);
+          setBootLabel('进入游戏');
+          // Brief beat so 100% is visible
+          await new Promise((r) => setTimeout(r, 180));
+          setBootLoading(false);
+        }
+      } catch (e) {
+        console.warn('[Boot] 资源加载异常，仍进入游戏:', e);
+        if (!cancelled) setBootLoading(false);
+      }
+    })();
+
     if (typeof import.meta !== 'undefined' && (import.meta as any).hot) {
       (import.meta as any).hot.on('art-resources-changed', () => {
         initArtResourceIcons();
       });
     }
-    return () => unsubscribe();
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
   }, []);
 
   useEffect(() => {
@@ -483,6 +569,8 @@ export function App() {
     isNetworkHostRef,
     isNetworkGuestRef,
     engineRef,
+    rsmRef,
+    setRunPhase,
     startAdventureRef,
     setActiveRoomId,
     setLobbySubView,
@@ -499,7 +587,7 @@ export function App() {
   useEffect(() => {
     if (currentChar) {
       const tier = currentChar.lastDungeonTier || '5man';
-      const diff = currentChar.lastDungeonDifficulty || 'HEROIC';
+      const diff = currentChar.lastDungeonDifficulty || 'NORMAL';
       const customDiff = currentChar.lastCustomDifficulty || DEFAULT_CUSTOM_DIFFICULTY;
       setDungeonTier(tier);
       setDungeonDifficulty(diff);
@@ -591,7 +679,7 @@ export function App() {
     const gcdMs = computePlayerGcdMs(
       spellId,
       player?.classId,
-      player?.stats?.haste ?? LEVEL_80_MAX_HASTE
+      getUnitHaste(player, LEVEL_80_MAX_HASTE)
     );
     if (gcdMs <= 0) return;
     setPlayerGcdRemainingMs(gcdMs);
@@ -826,7 +914,7 @@ export function App() {
       res[sp] = distToBoss > 80;
     }
 
-    // Ranged attack spells (range <= 360px)
+    // Ranged attack spells (range <= RANGE_40YD_PX ≈40yd)
     const rangedAttackSpells = [
       'fireball', 'living_bomb', 'pyroblast', 'combustion', 'counterspell',
       'death_and_decay', 'dark_command', 'howling_blast', 'starsurge', 'wrath',
@@ -835,17 +923,17 @@ export function App() {
       'deep_freeze', 'frozen_orb', 'arcane_blast', 'arcane_missiles', 'arcane_barrage'
     ];
     for (const sp of rangedAttackSpells) {
-      res[sp] = distToBoss > 360;
+      res[sp] = distToBoss > RANGE_40YD_PX;
     }
 
-    // Friendly targeted spells (range <= 360px)
+    // Friendly targeted spells (range <= RANGE_40YD_PX ≈40yd)
     const healSpells = [
       'rejuvenation', 'lifebloom', 'swiftmend', 'wild_growth', 'regrowth', 'healing_touch',
       'rebirth', 'revive', 'riptide', 'healing_wave', 'chain_heal', 'ancestral_spirit', 'innervate',
       'nourish', 'healing_surge', 'greater_healing_wave', 'natures_cure', 'cleanse_spirit', 'remove_curse', 'remove_corruption'
     ];
     for (const sp of healSpells) {
-      res[sp] = distToTarget > 360;
+      res[sp] = distToTarget > RANGE_40YD_PX;
     }
 
     // Dynamic range check for ALL 10 Cataclysm classes' slotted spells
@@ -855,12 +943,15 @@ export function App() {
       if (!norm) continue;
       if (norm.isDefensive || norm.isResourceRestore) {
         res[slot.spellId] = false;
+      } else if (norm.isRaidBuff || (norm.isBuff && !norm.isDamage)) {
+        // MotW 30yd to ally; Horn/Battle Shout self (rangePx=0)
+        res[slot.spellId] = (norm.rangePx || 0) > 0 && distToTarget > norm.rangePx;
       } else if (norm.isHeal || norm.isShield || norm.isDispel || norm.isResurrect) {
-        res[slot.spellId] = distToTarget > 360;
+        res[slot.spellId] = distToTarget > (norm.rangePx || RANGE_40YD_PX);
       } else if (norm.school === 'PHYSICAL' && norm.classId !== 'HUNTER' && !norm.isTaunt) {
         res[slot.spellId] = distToBoss > 80;
       } else {
-        res[slot.spellId] = distToBoss > 360;
+        res[slot.spellId] = distToBoss > (norm.rangePx || RANGE_40YD_PX);
       }
     }
 
@@ -927,26 +1018,43 @@ export function App() {
     return { insufficientResourceSpells: insufficient, spellResourceErrors: errors };
   }, [friendlyUnits]);
 
-  // Global Alt+1 ~ Alt+9 quick target switching (matching RaidFrames unit order)
+  // Rebuild squads when roster identity / tier changes (20-man random; 5-man single)
+  useEffect(() => {
+    const roster = raidRosterKey(friendlyUnits);
+    const key = roster ? `${dungeonTier}|${roster}` : '';
+    if (!key) {
+      setRaidSquadIds([]);
+      raidRosterKeyRef.current = '';
+      return;
+    }
+    if (key === raidRosterKeyRef.current) return;
+    raidRosterKeyRef.current = key;
+    const squads = assignRaidSquads(friendlyUnits, dungeonTier === '20man');
+    setRaidSquadIds(squads.map((s) => s.map((u) => u.id)));
+    setSelectedSquadIndex(0);
+  }, [friendlyUnits, dungeonTier]);
+
+  const raidSquads = useMemo(
+    () => resolveRaidSquads(raidSquadIds, friendlyUnits),
+    [raidSquadIds, friendlyUnits]
+  );
+
+  // Global Alt+1 ~ Alt+5 → currently selected squad's 1st~5th member
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.altKey && e.key >= '1' && e.key <= '9') {
-        const idx = parseInt(e.key, 10) - 1;
-        const rolePriority: Record<string, number> = { TANK: 0, HEALER: 1, DPS: 2 };
-        const sorted = [...friendlyUnits].sort((a, b) => {
-          const rA = rolePriority[a.role] ?? 99;
-          const rB = rolePriority[b.role] ?? 99;
-          return rA - rB;
-        });
-        if (sorted[idx]) {
-          setSelectedTargetId(sorted[idx].id);
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.altKey && e.key >= '1' && e.key <= '5') {
+        const digit = parseInt(e.key, 10);
+        const target = getAltSquadTarget(raidSquads, selectedSquadIndex, digit);
+        if (target) {
+          setSelectedTargetId(target.id);
           e.preventDefault();
         }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [friendlyUnits]);
+  }, [raidSquads, selectedSquadIndex]);
 
   // Cast Player Spell (P6e: gates in combat/handlePlayerCastSlot)
   const handleCastSlot = (slotIdx: number) => {
@@ -957,6 +1065,7 @@ export function App() {
       isNetworkGuest: isNetworkGuestRef.current,
       netConnected: netClient.connected,
       activeRoomId: activeRoomIdRef.current,
+      guestCdTimelinesRef,
       sendNetworkCast: (payload) => {
         const roomId = activeRoomIdRef.current;
         if (!roomId) return;
@@ -1088,17 +1197,41 @@ export function App() {
       triggerCooldown,
       triggerGcd,
       clearGroundTarget: () => setGroundTargetState(null),
+      isNetworkGuest: isNetworkGuestRef.current,
+      netConnected: netClient.connected,
+      activeRoomId: activeRoomIdRef.current,
+      playerId: currentChar?.id ?? null,
+      playerCooldowns,
+      guestCdTimelines: guestCdTimelinesRef.current,
+      sendGroundCast: (payload) => {
+        const roomId = activeRoomIdRef.current;
+        if (!roomId) return;
+        netClient.sendPlayerInput(roomId, payload);
+      },
     });
   };
 
   // Global Escape & Right-click listener to cancel ground targeting or active cast
+  // Ultraxion: V = 英勇意志（短暂离开暮光领域）
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       if (e.key === 'Escape') {
         if (groundTargetState) {
           setGroundTargetState(null);
         } else if (playerCastRef.current) {
           handleCancelPlayerCast();
+        }
+      }
+      if ((e.key === 'v' || e.key === 'V') && runPhase === 'BOSS_COMBAT') {
+        const engine = engineRef.current;
+        const bossAi = bossAiRef.current;
+        const player = engine?.friendlyUnits.find(u => u.isPlayer);
+        if (engine && bossAi && player && engine.bossUnit?.id === 'ultraxion') {
+          if (useHeroicWill(engine, bossAi as any, player)) {
+            e.preventDefault();
+            setFriendlyUnits([...engine.friendlyUnits]);
+          }
         }
       }
     };
@@ -1113,7 +1246,7 @@ export function App() {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('mousedown', handleMouseDown);
     };
-  }, [groundTargetState]);
+  }, [groundTargetState, runPhase]);
 
   // Claim Clear Certificate & Submit to World Leaderboards (Strictly requires full clear)
   const handleClaimCertificate = useCallback(() => {
@@ -1151,6 +1284,31 @@ export function App() {
     }
   }, [runPhase, isCertClaimed, handleClaimCertificate]);
 
+  // 离开行军阶段时清掉跳过投票面板，避免下一轮 TRAVEL 残留上一轮投票 UI
+  useEffect(() => {
+    if (runPhase !== 'TRAVEL_RECOVERY') {
+      setSkipTravelVote(null);
+      setMySkipVote(null);
+    }
+  }, [runPhase]);
+
+  // 投票已超时但未收到 VOTE_RESULT 时本地收起面板，防止卡死残留
+  useEffect(() => {
+    if (!skipTravelVote || skipTravelVote.resolved || runPhase !== 'TRAVEL_RECOVERY') return;
+    const left =
+      skipTravelVote.timeoutMs - (Date.now() - skipTravelVote.startedAtMs);
+    if (left <= 0) {
+      setSkipTravelVote(null);
+      setMySkipVote(null);
+      return;
+    }
+    const t = setTimeout(() => {
+      setSkipTravelVote(null);
+      setMySkipVote(null);
+    }, left + 50);
+    return () => clearTimeout(t);
+  }, [skipTravelVote, runPhase]);
+
   const handleReturnToLobby = () => {
     const rsm = rsmRef.current;
     const engine = engineRef.current;
@@ -1160,6 +1318,10 @@ export function App() {
     if (engine) {
       engine.reset();
     }
+    setSkipTravelVote(null);
+    setMySkipVote(null);
+    setWipeNetworkVote(null);
+    setMyWipeVote(null);
     // Host return / leave destroys room; guests just leave
     if (activeRoomId && currentChar) {
       if (isNetworkHostRef.current || (!netClient.connected && roomManager.getRoom(activeRoomId)?.hostId === currentChar.id)) {
@@ -1292,17 +1454,54 @@ export function App() {
 
   const handleSkipTravelRequest = () => {
     if (netClient.connected && activeRoomIdRef.current && currentChar) {
-      netClient.requestSkipTravel(activeRoomIdRef.current, currentChar.id);
+      const roomId = activeRoomIdRef.current;
+      const room =
+        roomFacadeRef.current.getRoom(roomId) || roomManager.getRoom(roomId);
+      const eligible = room
+        ? room.members.filter((m) => m.isPlayer && !m.isAi).map((m) => m.id)
+        : [currentChar.id];
+      if (!eligible.includes(currentChar.id)) eligible.push(currentChar.id);
+      // 乐观更新：房主点跳过立刻显示 1 票，等服务端 VOTE_STATE 校准
+      setSkipTravelVote({
+        kind: 'SKIP_TRAVEL',
+        roomId,
+        startedAtMs: Date.now(),
+        timeoutMs: 10_000,
+        votes: { [currentChar.id]: 'YES' },
+        eligiblePlayerIds: eligible,
+        resolved: false,
+        result: null,
+      });
       setMySkipVote('YES');
+      // 点「跳过」即视为同意：服务端记发起票，客户端再补投 YES 防止票数漏记
+      netClient.requestSkipTravel(roomId, currentChar.id);
+      netClient.castVote(roomId, 'SKIP_TRAVEL', 'YES');
       return;
     }
     rsmRef.current?.fastForwardTravel();
-    if (rsmRef.current) setRunPhase(rsmRef.current.phase);
+    if (rsmRef.current) {
+      setRunPhase(rsmRef.current.phase);
+      // Same frame as phase flip — avoid one BOSS_COMBAT tick without PULL_APPROACH (scale/snap jump)
+      if (rsmRef.current.phase === 'BOSS_COMBAT') setIsApproaching(true);
+    }
   };
 
   const handleSkipTravelVote = (choice: 'YES' | 'NO') => {
-    if (!activeRoomIdRef.current) return;
+    if (!activeRoomIdRef.current || !currentChar) return;
+    const myId = currentChar.id;
     setMySkipVote(choice);
+    // 乐观更新同意/反对计数，避免等 VOTE_STATE 期间界面卡在旧票数
+    setSkipTravelVote((prev) => {
+      if (!prev || prev.resolved || prev.kind !== 'SKIP_TRAVEL') return prev;
+      const eligible = prev.eligiblePlayerIds.includes(myId)
+        ? prev.eligiblePlayerIds
+        : [...prev.eligiblePlayerIds, myId];
+      return {
+        ...prev,
+        eligiblePlayerIds: eligible,
+        votes: { ...prev.votes, [myId]: choice },
+      };
+    });
     netClient.castVote(activeRoomIdRef.current, 'SKIP_TRAVEL', choice);
   };
 
@@ -1377,38 +1576,35 @@ export function App() {
       }
     }
 
-    // 4. 副本状态机启动
+    // 4. 副本状态机启动 — 立刻同步行军时钟，避免画布首帧用上一局残留 rem 把小怪判成墓碑
     if (rsm) {
-      rsm.dungeon = effectiveTier === '20man' ? DRAGON_SOUL_CONFIG : SHADOWFANG_KEEP_CONFIG;
+      const dungeonIdFromRoom = effectiveRoom?.dungeonId;
+      const resolvedDungeonId =
+        dungeonIdFromRoom ||
+        (effectiveTier === '20man' ? 'dragon_soul' : selectedDungeonId || 'shadowfang_keep');
+      rsm.dungeon = getDungeonConfig(resolvedDungeonId, effectiveDiff);
+      setSelectedDungeonId(resolvedDungeonId);
+      setDungeonTier(rsm.dungeon.tier);
+      try {
+        localStorage.setItem('cata_dungeon_id', resolvedDungeonId);
+        localStorage.setItem('cata_dungeon_tier', rsm.dungeon.tier);
+      } catch {}
       rsm.startRun();
+      setTravelRemainingMs(rsm.travelRemainingMs);
       setRunPhase(rsm.phase);
       setIsCertClaimed(false);
       setFocusTargetId(null);
     }
 
+    // 5. 本房间副本视觉/迷宫镜像独立重置（不影响其他房间实例）
+    setMazeSyncRoomId(effectiveRoom?.id ?? activeRoomIdRef.current);
+    clearMazeSync(effectiveRoom?.id ?? activeRoomIdRef.current);
     if (engine) {
+      engine.actionLog.clear();
       setFriendlyUnits([...engine.friendlyUnits]);
     }
   };
   startAdventureRef.current = handleStartAdventure;
-
-  const handleExportCsv = () => {
-    const rsm = rsmRef.current;
-    if (!rsm) return;
-    const csv = reportMgrRef.current.exportCsv({
-      dungeonId: rsm.dungeon.id,
-      dungeonName: rsm.dungeon.name,
-      exportedAtIso: new Date().toISOString(),
-      totalDurationSec: rsm.totalRunDurationSec,
-      encounters: rsm.encounterReports,
-    });
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `ShadowfangKeep_Report_${Date.now()}.csv`;
-    link.click();
-  };
 
   const handleExportJson = () => {
     const rsm = rsmRef.current;
@@ -1432,6 +1628,10 @@ export function App() {
   const isBossTargetOT = targetUnit ? targetUnit.role !== 'TANK' : false;
   const deadUnits = friendlyUnits.filter(u => (!u.isAlive && !u.alive) || u.hp <= 0);
 
+  if (bootLoading) {
+    return <GameLoadingScreen percent={bootPercent} label={bootLabel} />;
+  }
+
   return (
     <div className="w-full h-screen max-h-screen bg-[#0c0c16] text-gray-100 flex flex-col font-sans select-none overflow-hidden">
       
@@ -1444,9 +1644,9 @@ export function App() {
           </h1>
         </div>
 
-        <div className="flex items-center space-x-3">
+        <div className="flex items-center gap-3">
           <div
-            className={`px-2 py-1 text-[10px] rounded border font-bold ${
+            className={`h-8 inline-flex items-center px-3 text-xs rounded-lg border font-bold ${
               netConnected
                 ? 'border-emerald-600/60 text-emerald-300 bg-emerald-950/40'
                 : 'border-amber-700/60 text-amber-200 bg-amber-950/40'
@@ -1473,7 +1673,7 @@ export function App() {
                   }
                   setLobbySubView('AUTH_CHAR');
                 }}
-                className="bg-[#1b1b34] border border-[#3b3b5c] px-3 py-1 rounded-lg text-xs font-bold cursor-pointer hover:border-amber-400 transition flex items-center space-x-1.5"
+                className="h-8 inline-flex items-center space-x-1.5 bg-[#1b1b34] border border-[#3b3b5c] px-3 rounded-lg text-xs font-bold cursor-pointer hover:border-amber-400 transition"
                 title={`点击返回主页与角色切换（${roleLabel}）`}
               >
                 <span className="text-gray-400">当前角色:</span>
@@ -1487,15 +1687,28 @@ export function App() {
             );
           })()}
 
-          {runPhase !== 'LOBBY' && runPhase !== 'SUMMARY' && (
-            <div
-              className="px-3 py-1.5 text-xs rounded-lg font-bold shadow flex items-center space-x-1.5 border bg-black/60 border-amber-500/50 text-amber-200"
-              title="副本进行中，模式与难度已锁定"
-            >
-              <span>🔒</span>
-              <span>战斗中已锁定</span>
-            </div>
-          )}
+          {runPhase !== 'LOBBY' && runPhase !== 'SUMMARY' && (() => {
+            const cfg = rsmRef.current?.dungeon || getDungeonConfig(selectedDungeonId, dungeonDifficulty);
+            const dungeonLabel = `${cfg.name.replace(/（.*）/, '')} (${cfg.tier === '20man' ? '20人' : '5人'})`;
+            const diffLabel =
+              dungeonDifficulty === 'HEROIC'
+                ? '英雄模式'
+                : dungeonDifficulty === 'CUSTOM'
+                  ? '自定义模式'
+                  : '普通模式';
+            return (
+              <div
+                className="h-8 inline-flex items-center space-x-1.5 px-3 text-xs rounded-lg font-bold shadow border bg-black/60 border-amber-500/50 text-amber-200 pointer-events-none select-none opacity-90"
+                title="副本进行中，模式与难度已锁定，不可切换"
+                aria-disabled="true"
+              >
+                <span aria-hidden>🔒</span>
+                <span>{dungeonLabel}</span>
+                <span className="text-amber-500/70">·</span>
+                <span>{diffLabel}</span>
+              </div>
+            );
+          })()}
 
           {!account ? (
             <>
@@ -1505,7 +1718,7 @@ export function App() {
                   setLobbySubView('AUTH_CHAR');
                   setAuthOpenRequest({ mode: 'login', id: Date.now() });
                 }}
-                className="px-3 py-1.5 text-xs bg-[#1e2a44] hover:bg-[#263556] rounded-lg transition border border-sky-700/50 text-sky-200 font-semibold"
+                className="h-8 inline-flex items-center px-3 text-xs bg-[#1e2a44] hover:bg-[#263556] rounded-lg transition border border-sky-700/50 text-sky-200 font-semibold"
                 title="登录账号"
               >
                 登录
@@ -1516,7 +1729,7 @@ export function App() {
                   setLobbySubView('AUTH_CHAR');
                   setAuthOpenRequest({ mode: 'register', id: Date.now() });
                 }}
-                className="px-3 py-1.5 text-xs bg-emerald-800/80 hover:bg-emerald-700 rounded-lg transition border border-emerald-500/40 text-emerald-100 font-semibold"
+                className="h-8 inline-flex items-center px-3 text-xs bg-emerald-800/80 hover:bg-emerald-700 rounded-lg transition border border-emerald-500/40 text-emerald-100 font-semibold"
                 title="注册新账号"
               >
                 注册
@@ -1536,7 +1749,7 @@ export function App() {
                   setLobbySubView('AUTH_CHAR');
                   setRunPhase('LOBBY');
                 }}
-                className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 rounded-lg transition border border-slate-500 text-slate-200 font-semibold"
+                className="h-8 inline-flex items-center px-3 text-xs bg-slate-700 hover:bg-slate-600 rounded-lg transition border border-slate-500 text-slate-200 font-semibold"
                 title="注销当前登录会话"
               >
                 注销
@@ -1548,7 +1761,7 @@ export function App() {
                   setHeaderDeleteError(null);
                   setShowHeaderDeleteConfirm(true);
                 }}
-                className="px-3 py-1.5 text-xs bg-red-950/70 hover:bg-red-900 rounded-lg transition border border-red-700/50 text-red-200 font-semibold"
+                className="h-8 inline-flex items-center px-3 text-xs bg-red-950/70 hover:bg-red-900 rounded-lg transition border border-red-700/50 text-red-200 font-semibold"
                 title="从服务器永久删除此账号"
               >
                 删除账号
@@ -1558,7 +1771,7 @@ export function App() {
 
           <button
             onClick={() => setIsLeaderboardOpen(true)}
-            className="px-3 py-1.5 text-xs bg-amber-600 hover:bg-amber-500 text-white rounded-lg font-bold shadow flex items-center space-x-1"
+            className="h-8 inline-flex items-center space-x-1 px-3 text-xs bg-amber-600 hover:bg-amber-500 text-white rounded-lg font-bold shadow"
           >
             <span>🏆</span>
             <span>世界排行</span>
@@ -1567,7 +1780,7 @@ export function App() {
           {runPhase !== 'LOBBY' && (
             <button
               onClick={handleReturnToLobby}
-              className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 rounded-lg text-gray-300 border border-slate-500 font-bold"
+              className="h-8 inline-flex items-center px-3 text-xs bg-slate-700 hover:bg-slate-600 rounded-lg text-gray-300 border border-slate-500 font-bold"
             >
               返回大厅
             </button>
@@ -1610,6 +1823,8 @@ export function App() {
               <AuthAndCharacterModal
             currentAccountName={account?.username || '未登录'}
             authOpenRequest={authOpenRequest}
+            sessionKickNotice={sessionKickNotice}
+            onDismissSessionKickNotice={() => setSessionKickNotice(null)}
             characters={account?.characters || []}
             selectedCharId={selectedCharId}
             onSelectCharacter={(id) => {
@@ -1618,7 +1833,7 @@ export function App() {
               const targetChar = account?.characters.find(c => c.id === id);
               if (targetChar) {
                 const tier = targetChar.lastDungeonTier || '5man';
-                const diff = targetChar.lastDungeonDifficulty || 'HEROIC';
+                const diff = targetChar.lastDungeonDifficulty || 'NORMAL';
                 const customDiff = targetChar.lastCustomDifficulty || DEFAULT_CUSTOM_DIFFICULTY;
                 setDungeonTier(tier);
                 setDungeonDifficulty(diff);
@@ -1641,7 +1856,7 @@ export function App() {
               setAccount(updatedAcc ? { ...updatedAcc } : null);
               setSelectedCharId(newChar.id);
               const tier = newChar.lastDungeonTier || '5man';
-              const diff = newChar.lastDungeonDifficulty || 'HEROIC';
+              const diff = newChar.lastDungeonDifficulty || 'NORMAL';
               const customDiff = newChar.lastCustomDifficulty || DEFAULT_CUSTOM_DIFFICULTY;
               setDungeonTier(tier);
               setDungeonDifficulty(diff);
@@ -1657,7 +1872,7 @@ export function App() {
               setSelectedCharId(nextChar?.id || null);
               if (nextChar) {
                 const tier = nextChar.lastDungeonTier || '5man';
-                const diff = nextChar.lastDungeonDifficulty || 'HEROIC';
+                const diff = nextChar.lastDungeonDifficulty || 'NORMAL';
                 const customDiff = nextChar.lastCustomDifficulty || DEFAULT_CUSTOM_DIFFICULTY;
                 setDungeonTier(tier);
                 setDungeonDifficulty(diff);
@@ -1674,6 +1889,14 @@ export function App() {
                 if (updatedChar) {
                   setCustomSlotLayout(loadSpecCustomSlots(updatedChar.id, updatedChar.lastSpec, updatedChar.classId));
                   setupRaidUnits(updatedChar);
+                  // 立刻刷新服务器 session，避免进房仍用旧专精
+                  netClient.refreshAuthProfile({
+                    playerId: updatedChar.id,
+                    playerName: updatedChar.name,
+                    classId: updatedChar.classId,
+                    spec: updatedChar.lastSpec,
+                    role: getRoleBySpec(updatedChar.classId, updatedChar.lastSpec),
+                  });
                 }
               }
             }}
@@ -1767,6 +1990,11 @@ export function App() {
             onClearSlot={(slotIdx, targetCharId, targetSpecId) =>
               handleClearSlot(slotIdx, targetCharId || selectedCharId, targetSpecId || currentChar?.lastSpec)
             }
+            onSaveUiLayout={(charId, patch) => {
+              accountMgrRef.current.saveCharacterUiLayout(charId, patch);
+              const updatedAcc = accountMgrRef.current.getCurrentAccount();
+              if (updatedAcc) setAccount({ ...updatedAcc });
+            }}
           />
             )}
           />
@@ -1782,10 +2010,8 @@ export function App() {
             characterName={currentChar ? currentChar.name : '勇士'}
             characterClass={currentChar ? currentChar.classId : 'DK'}
             characterSpec={currentChar ? currentChar.lastSpec : 'BLOOD'}
-            onExportCsv={handleExportCsv}
             onExportJson={handleExportJson}
             onClaimCertificate={handleClaimCertificate}
-            onOpenLeaderboard={() => setIsLeaderboardOpen(true)}
             onReturnToLobby={handleReturnToLobby}
             isCertificateClaimed={isCertClaimed}
             isCleared={rsmRef.current ? rsmRef.current.checkIsCleared() : false}
@@ -1803,10 +2029,11 @@ export function App() {
             selectedTargetId={selectedTargetId}
             focusTargetId={focusTargetId}
             dungeonTier={dungeonTier}
+            dungeonId={rsmRef.current?.dungeon?.id}
             targetBossName={targetBossName}
             currentBossIndex={rsmRef.current?.currentBossIndex || 0}
             travelRemainingMs={travelRemainingMs}
-            totalTravelMs={rsmRef.current?.totalTravelMs || 12000}
+            totalTravelMs={rsmRef.current?.totalTravelMs || (dungeonTier === '20man' ? 14000 : 7000)}
             isCorpseRunning={isCorpseRunning}
             corpseRunTimerMs={corpseRunTimerMs}
             revivingUnitId={revivingUnitId}
@@ -1821,6 +2048,9 @@ export function App() {
                 : bossAiRef.current?.currentCasting
                 ? {
                     spellName: bossAiRef.current.currentCasting.skill.name,
+                    spellId: bossAiRef.current.currentCasting.skill.id,
+                    description: bossAiRef.current.currentCasting.skill.description,
+                    school: bossAiRef.current.currentCasting.skill.school,
                     elapsedMs: bossAiRef.current.currentCasting.elapsedMs,
                     castTimeMs: bossAiRef.current.currentCasting.skill.castTimeMs || 1,
                     interruptible: !!bossAiRef.current.currentCasting.skill.interruptible,
@@ -1830,6 +2060,7 @@ export function App() {
             syncRemotePositions={
               !!(netClient.connected && (isNetworkHostRef.current || isNetworkGuestRef.current))
             }
+            isNetworkGuest={!!isNetworkGuestRef.current}
             onNetworkMoveReport={handleNetworkMovePosition}
             deadUnits={deadUnits}
             totalDurationSec={totalDurationSec}
@@ -1851,6 +2082,9 @@ export function App() {
             onSetFocus={(id) => setFocusTargetId(id)}
             onClearTarget={() => setSelectedTargetId(null)}
             onClearFocus={() => setFocusTargetId(null)}
+            raidSquads={raidSquads}
+            selectedSquadIndex={selectedSquadIndex}
+            onSelectSquad={setSelectedSquadIndex}
             onPlayerMove={handlePlayerMove}
             onCancelCast={handleCancelPlayerCast}
             onApproachComplete={() => setIsApproaching(false)}
@@ -1880,6 +2114,8 @@ export function App() {
             onSaveUiLayout={(patch) => {
               if (currentChar) {
                 accountMgrRef.current.saveCharacterUiLayout(currentChar.id, patch);
+                const updatedAcc = accountMgrRef.current.getCurrentAccount();
+                if (updatedAcc) setAccount({ ...updatedAcc });
               }
             }}
             onAccountRefresh={() => {
@@ -2015,6 +2251,13 @@ export function App() {
               const updatedChar = updatedAcc.characters.find(c => c.id === currentChar.id);
               if (updatedChar) {
                 setCustomSlotLayout(loadSpecCustomSlots(updatedChar.id, updatedChar.lastSpec, updatedChar.classId));
+                netClient.refreshAuthProfile({
+                  playerId: updatedChar.id,
+                  playerName: updatedChar.name,
+                  classId: updatedChar.classId,
+                  spec: updatedChar.lastSpec,
+                  role: getRoleBySpec(updatedChar.classId, updatedChar.lastSpec),
+                });
               }
             }
           }}

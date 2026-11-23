@@ -17,11 +17,19 @@ interface Props {
   skipTravelVote?: NetworkVoteState | null;
   mySkipVote?: 'YES' | 'NO' | null;
   onSkipTravelVote?: (choice: 'YES' | 'NO') => void;
+  /** Maze auto-path vs manual control */
+  autoNavActive?: boolean;
+  onToggleAutoNav?: () => void;
+  dungeonTier?: '5man' | '20man';
 }
+
+const shellClass =
+  'w-full max-w-[560px] mx-auto rounded-2xl border backdrop-blur-md shadow-[0_12px_40px_rgba(0,0,0,0.45)] overflow-hidden';
 
 export const TravelRecovery: React.FC<Props> = ({
   targetBossName,
   remainingMs,
+  totalMs = 7000,
   deadUnits = [],
   isReviving = false,
   revivingTargetName = '',
@@ -33,54 +41,42 @@ export const TravelRecovery: React.FC<Props> = ({
   skipTravelVote = null,
   mySkipVote = null,
   onSkipTravelVote,
+  autoNavActive = true,
+  onToggleAutoNav,
+  dungeonTier = '5man',
 }) => {
   const seconds = Math.max(0, Math.ceil(remainingMs / 1000));
   const hasDeadMembers = deadUnits.length > 0;
-  const corpseRunSec = Math.max(0, (corpseRunRemainingMs / 1000)).toFixed(1);
+  const corpseRunSec = Math.max(0, corpseRunRemainingMs / 1000).toFixed(1);
+  const progressPct = Math.min(
+    100,
+    Math.max(0, totalMs > 0 ? ((totalMs - remainingMs) / totalMs) * 100 : 0)
+  );
+  const partyLabel = dungeonTier === '20man' ? '20 人团队' : '5 人小队';
 
   if (isCorpseRunning) {
-    const progressPct = Math.min(100, Math.max(0, (1 - corpseRunRemainingMs / 10000) * 100));
-
+    const runPct = Math.min(100, Math.max(0, (1 - corpseRunRemainingMs / 10000) * 100));
     return (
-      <div className="w-full max-w-2xl mx-auto py-1 px-3">
-        <div className="bg-red-950/90 border-2 border-red-500 rounded-xl p-2.5 shadow-2xl backdrop-blur flex flex-col space-y-1.5 animate-pulse">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-2">
-              <span className="text-xl">💀</span>
-              <div>
-                <div className="text-xs font-black text-red-200 tracking-wide flex items-center space-x-1.5">
-                  <span>所有能够复活的队员均已阵亡！</span>
-                  <span className="bg-red-800 text-white text-[10px] px-1.5 py-0.2 rounded font-mono font-bold">
-                    跑尸惩罚 10s
-                  </span>
-                </div>
-                <div className="text-[10px] text-red-300/80">
-                  全队正在释放灵魂奔回副本，倒计时结束后全员群体复活并开启行军
-                </div>
-              </div>
-            </div>
-
-            <div className="flex items-center space-x-2">
-              <span className="text-sm font-mono font-black text-amber-300 bg-black/60 px-2 py-0.5 rounded border border-amber-400/40">
-                {corpseRunSec}s
-              </span>
-              <button
-                disabled
-                className="px-3 py-1.5 bg-gray-800 text-gray-400 font-bold text-xs rounded-lg border border-gray-700 cursor-not-allowed opacity-60"
-                title="跑尸惩罚期间无法跳过行军"
-              >
-                跑尸中不可跳过
-              </button>
+      <div className={`${shellClass} border-red-500/50 bg-[#1a0608]/92`}>
+        <div className="px-3.5 pt-2.5 pb-2 flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-[11px] font-bold text-red-100 tracking-wide">跑尸惩罚</div>
+            <div className="text-[10px] text-red-200/70 truncate">
+              全员阵亡 · 倒计时结束后群体复活并继续行军
             </div>
           </div>
-
-          {/* Corpse Run Progress Bar */}
-          <div className="w-full bg-black/70 rounded-full h-2 overflow-hidden border border-red-500/40">
-            <div
-              className="bg-gradient-to-r from-red-600 via-orange-500 to-amber-400 h-full transition-all duration-75 ease-linear rounded-full"
-              style={{ width: `${progressPct}%` }}
-            />
+          <div className="flex items-center gap-2 shrink-0">
+            <span className="font-mono text-sm font-bold text-amber-300 tabular-nums">{corpseRunSec}s</span>
+            <span className="px-2.5 py-1 rounded-lg text-[10px] font-semibold text-red-200/60 bg-black/35 border border-red-900/60">
+              不可跳过
+            </span>
           </div>
+        </div>
+        <div className="h-1.5 bg-black/50">
+          <div
+            className="h-full bg-gradient-to-r from-red-700 via-orange-500 to-amber-400 transition-[width] duration-75 ease-linear"
+            style={{ width: `${runPct}%` }}
+          />
         </div>
       </div>
     );
@@ -88,104 +84,182 @@ export const TravelRecovery: React.FC<Props> = ({
 
   if (hasDeadMembers) {
     return (
-      <div className="w-full max-w-2xl mx-auto py-1 px-3">
-        <div className="bg-amber-950/85 border-2 border-amber-500/80 rounded-xl p-2.5 shadow-xl backdrop-blur flex items-center justify-between">
-          <div className="flex items-center space-x-2">
-            <span className="text-xl">🪦</span>
-            <div>
-              <div className="text-xs font-black text-amber-200 tracking-wide flex items-center space-x-1">
-                <span>队友阵亡：{deadUnits.map(u => u.name).join('、')}</span>
-                <span className="bg-amber-800/80 text-amber-100 text-[10px] px-1.5 py-0.2 rounded font-bold">
-                  等待复活
-                </span>
-              </div>
-              <div className="text-[10px] text-amber-300/80">
-                {isReviving
-                  ? `✨ 正在施放【起死回生】复活【${revivingTargetName || '阵亡队员'}】...`
-                  : '等待存活的治疗者施法复活，全员齐备方可行军探索'}
-              </div>
+      <div className={`${shellClass} border-amber-500/45 bg-[#1a1206]/92`}>
+        <div className="px-3.5 py-2.5 flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <div className="text-[11px] font-bold text-amber-100 tracking-wide truncate">
+              等待复活 · {deadUnits.map((u) => u.name).join('、')}
+            </div>
+            <div className="text-[10px] text-amber-200/65 truncate">
+              {isReviving
+                ? `正在复活【${revivingTargetName || '阵亡队员'}】…`
+                : '全员齐备后方可继续行军'}
             </div>
           </div>
-
-          <div className="flex items-center space-x-2">
-            {isPlayerHealer && onPlayerRevive && (
+          <div className="flex items-center gap-2 shrink-0">
+            {isPlayerHealer && onPlayerRevive ? (
               <button
                 type="button"
                 onClick={onPlayerRevive}
-                className="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-lg shadow border border-emerald-400 flex items-center space-x-1"
+                className="px-3 py-1.5 rounded-lg text-[11px] font-bold text-emerald-50 bg-emerald-700/90 hover:bg-emerald-600 border border-emerald-400/40 transition-colors"
               >
-                <span>✨</span>
-                <span>复活队友</span>
+                复活队友
               </button>
-            )}
-
-            <button
-              disabled
-              className="px-3 py-1.5 bg-gray-800 text-gray-400 font-bold text-xs rounded-lg border border-gray-700 cursor-not-allowed opacity-60"
-              title="有队友处于阵亡状态，需等待全部复活后方可推进"
-            >
-              等待复活中
-            </button>
+            ) : null}
+            <span className="px-2.5 py-1 rounded-lg text-[10px] font-semibold text-amber-200/50 bg-black/30 border border-amber-900/50">
+              不可跳过
+            </span>
           </div>
         </div>
       </div>
     );
   }
 
-  if (skipTravelVote && !skipTravelVote.resolved) {
-    const yes = Object.values(skipTravelVote.votes).filter((v) => v === 'YES').length;
-    const no = Object.values(skipTravelVote.votes).filter((v) => v === 'NO').length;
+  const skipVoteActive =
+    !!skipTravelVote &&
+    !skipTravelVote.resolved &&
+    Date.now() - skipTravelVote.startedAtMs < skipTravelVote.timeoutMs;
+
+  if (skipVoteActive && skipTravelVote) {
+    // 只统计可投票人；与服务端 hasMajorityYes 口径一致（发起跳过已记 YES）
+    const yes = skipTravelVote.eligiblePlayerIds.filter(
+      (id) => skipTravelVote.votes[id] === 'YES'
+    ).length;
+    const no = skipTravelVote.eligiblePlayerIds.filter(
+      (id) => skipTravelVote.votes[id] === 'NO'
+    ).length;
     const need = Math.floor(skipTravelVote.eligiblePlayerIds.length / 2) + 1;
     const voteLeftSec = Math.max(
       0,
       Math.ceil((skipTravelVote.timeoutMs - (Date.now() - skipTravelVote.startedAtMs)) / 1000)
     );
     return (
-      <div className="w-full max-w-xl mx-auto py-1 px-3">
-        <div className="bg-amber-950/90 border-2 border-amber-500 rounded-xl p-2.5 shadow-xl backdrop-blur flex flex-col space-y-2">
-          <div className="flex items-center justify-between text-xs">
-            <span className="font-black text-amber-200">跳过行军投票（需多数同意，超时视为不同意）</span>
-            <span className="font-mono text-amber-300">{voteLeftSec}s</span>
+      <div className={`${shellClass} border-amber-400/50 bg-[#1a1408]/94`}>
+        <div className="px-3.5 pt-2.5 pb-2 flex items-center justify-between gap-2">
+          <div className="min-w-0">
+            <div className="text-[11px] font-bold text-amber-100">跳过行军投票</div>
+            <div className="text-[10px] text-amber-200/70">
+              同意 {yes}/{skipTravelVote.eligiblePlayerIds.length}（过半数需 ≥{need}）· 反对 {no} · 超时算不同意
+            </div>
           </div>
-          <div className="text-[10px] text-amber-100/80">
-            同意 {yes}/{skipTravelVote.eligiblePlayerIds.length}（需 ≥{need}）· 反对 {no}
-          </div>
-          <div className="flex items-center justify-center space-x-2">
-            <button
-              type="button"
-              disabled={!!mySkipVote}
-              onClick={() => onSkipTravelVote?.('YES')}
-              className={`px-4 py-1.5 bg-emerald-700 hover:bg-emerald-600 text-white font-bold text-xs rounded-lg border border-emerald-400 ${mySkipVote === 'YES' ? 'ring-2 ring-amber-300' : ''} ${mySkipVote && mySkipVote !== 'YES' ? 'opacity-50' : ''}`}
-            >
-              同意跳过
-            </button>
-            <button
-              type="button"
-              disabled={!!mySkipVote}
-              onClick={() => onSkipTravelVote?.('NO')}
-              className={`px-4 py-1.5 bg-slate-700 hover:bg-slate-600 text-gray-100 font-bold text-xs rounded-lg border border-slate-500 ${mySkipVote === 'NO' ? 'ring-2 ring-amber-300' : ''} ${mySkipVote && mySkipVote !== 'NO' ? 'opacity-50' : ''}`}
-            >
-              不同意
-            </button>
-          </div>
+          <span className="font-mono text-sm font-bold text-amber-300 tabular-nums shrink-0">{voteLeftSec}s</span>
+        </div>
+        <div className="px-3.5 pb-2.5 flex items-center justify-center gap-2">
+          <button
+            type="button"
+            disabled={!!mySkipVote}
+            onClick={() => onSkipTravelVote?.('YES')}
+            className={`px-4 py-1.5 rounded-lg text-[11px] font-bold border transition-colors ${
+              mySkipVote === 'YES'
+                ? 'bg-emerald-600 text-white border-emerald-300 ring-2 ring-amber-300/80'
+                : 'bg-emerald-800/80 hover:bg-emerald-700 text-emerald-50 border-emerald-500/40'
+            } ${mySkipVote && mySkipVote !== 'YES' ? 'opacity-45' : ''}`}
+          >
+            同意跳过
+          </button>
+          <button
+            type="button"
+            disabled={!!mySkipVote}
+            onClick={() => onSkipTravelVote?.('NO')}
+            className={`px-4 py-1.5 rounded-lg text-[11px] font-bold border transition-colors ${
+              mySkipVote === 'NO'
+                ? 'bg-slate-600 text-white border-slate-300 ring-2 ring-amber-300/80'
+                : 'bg-slate-800/80 hover:bg-slate-700 text-slate-100 border-slate-500/40'
+            } ${mySkipVote && mySkipVote !== 'NO' ? 'opacity-45' : ''}`}
+          >
+            不同意
+          </button>
         </div>
       </div>
     );
   }
 
+  // Default: unified march strip — status + progress + skip
   return (
-    <div className="flex items-center justify-center py-1">
-      <button
-        onClick={onFastForward}
-        className="px-6 py-2 bg-gradient-to-r from-amber-600 via-amber-500 to-yellow-500 hover:from-amber-500 hover:to-yellow-400 text-white font-extrabold rounded-xl shadow-lg border border-amber-400/60 flex items-center space-x-2 text-xs transition transform hover:scale-105 active:scale-95 cursor-pointer backdrop-blur"
-        title={`发起跳过行军（联机需多数同意）；单机立即开启与【${targetBossName}】的战斗`}
-      >
-        <span className="text-sm">⏩</span>
-        <span className="tracking-wide">跳过行军</span>
-        <span className="bg-black/40 px-1.5 py-0.5 rounded text-[10px] font-mono text-amber-200 border border-amber-300/30">
-          {seconds}s
-        </span>
-      </button>
+    <div
+      className={`${shellClass} border-cyan-500/25`}
+      style={{
+        background:
+          'linear-gradient(135deg, rgba(8,20,32,0.94) 0%, rgba(12,28,40,0.92) 55%, rgba(18,24,20,0.9) 100%)',
+      }}
+    >
+      <div className="px-3 pt-2.5 pb-2 flex items-center gap-2.5">
+        {/* Auto / manual toggle */}
+        <button
+          type="button"
+          onClick={onToggleAutoNav}
+          title={autoNavActive ? '点击切换为手动操控' : '点击恢复自动寻路'}
+          className={`shrink-0 flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 border transition-all ${
+            autoNavActive
+              ? 'bg-cyan-500/15 border-cyan-400/45 text-cyan-100 shadow-[0_0_16px_rgba(34,211,238,0.12)]'
+              : 'bg-slate-800/70 border-slate-500/40 text-slate-300 hover:border-slate-400/60'
+          }`}
+        >
+          <span
+            className={`inline-block w-1.5 h-1.5 rounded-full ${
+              autoNavActive ? 'bg-cyan-300 animate-pulse' : 'bg-slate-500'
+            }`}
+          />
+          <span className="text-[11px] font-bold tracking-wide whitespace-nowrap">
+            {autoNavActive ? '自动寻路' : '手动操控'}
+          </span>
+        </button>
+
+        {/* March destination + progress */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-baseline justify-between gap-2 mb-1">
+            <div className="text-[11px] font-semibold text-slate-100/95 truncate">
+              <span className="text-slate-400 font-medium">行军 · </span>
+              {targetBossName || '首领'}
+            </div>
+            <div className="text-[10px] text-slate-400 shrink-0 tabular-nums">
+              {partyLabel} · {Math.round(progressPct)}%
+            </div>
+          </div>
+          <div className="h-1.5 rounded-full bg-black/45 overflow-hidden border border-white/5">
+            <div
+              className="h-full rounded-full transition-[width] duration-150 ease-out"
+              style={{
+                width: `${progressPct}%`,
+                background: autoNavActive
+                  ? 'linear-gradient(90deg, #0e7490, #22d3ee, #67e8f9)'
+                  : 'linear-gradient(90deg, #475569, #94a3b8)',
+              }}
+            />
+          </div>
+          <div className="mt-1 text-[9px] text-slate-500 truncate">
+            {autoNavActive
+              ? '阵型疾跑中 · 单击地面或 WASD 可接管'
+              : '单击地面 / WASD 移动 · 点左侧恢复自动寻路'}
+          </div>
+        </div>
+
+        {/* Countdown + skip */}
+        <div className="shrink-0 flex items-center gap-2">
+          <div className="text-right leading-none pr-0.5">
+            <div className="font-mono text-base font-bold text-cyan-100 tabular-nums tracking-tight">
+              {seconds}
+              <span className="text-[10px] font-semibold text-cyan-300/70 ml-0.5">s</span>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onFastForward}
+            title={`发起跳过行军（联机需多数同意）；单机立即开启与【${targetBossName}】的战斗`}
+            className="group relative px-3.5 py-2 rounded-xl text-[11px] font-extrabold tracking-wide text-[#1a1205] border border-amber-300/70 transition-transform hover:scale-[1.03] active:scale-[0.97] shadow-[0_4px_18px_rgba(245,158,11,0.35)]"
+            style={{
+              background: 'linear-gradient(160deg, #fbbf24 0%, #f59e0b 48%, #d97706 100%)',
+            }}
+          >
+            <span className="relative z-10 flex items-center gap-1">
+              <span aria-hidden className="opacity-80 text-[10px]">
+                ▶▶
+              </span>
+              跳过行军
+            </span>
+          </button>
+        </div>
+      </div>
     </div>
   );
 };

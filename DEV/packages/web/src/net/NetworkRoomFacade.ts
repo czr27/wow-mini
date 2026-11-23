@@ -1,5 +1,6 @@
 import {
   RoomManager,
+  validateStartGame as validateStartGameSnapshot,
   type ClassId,
   type CustomDifficultySettings,
   type DungeonDifficulty,
@@ -42,12 +43,17 @@ export class NetworkRoomFacade {
   }
 
   getRoom(roomId: string): LobbyRoom | undefined {
-    // Prefer server-mirrored cache so lobby ready/map/difficulty stay in sync
-    if (this.connected) {
-      const fromNet = netClient.rooms.find((r) => r.id === roomId);
-      if (fromNet) return fromNet;
+    const fromNet = this.connected
+      ? netClient.rooms.find((r) => r.id === roomId)
+      : undefined;
+    const fromLocal = this.local.getRoom(roomId);
+    if (fromNet && fromLocal) {
+      // 乐观 AI 补齐可能领先于服务器推送：取人数更多的那份
+      const netN = fromNet.members?.length || 0;
+      const localN = fromLocal.members?.length || 0;
+      return localN > netN ? fromLocal : fromNet;
     }
-    return this.local.getRoom(roomId);
+    return fromNet || fromLocal;
   }
 
   listRooms(): LobbyRoom[] {
@@ -62,10 +68,30 @@ export class NetworkRoomFacade {
   }
 
   validateStartGame(roomId: string): StartGameValidation {
-    return this.local.validateStartGame(roomId);
+    // 始终校验当前镜像里的这间房，禁止落到过期空房
+    const room = this.getRoom(roomId);
+    if (!room) {
+      return {
+        canStart: false,
+        reasons: ['房间不存在'],
+        isFull: false,
+        isRoleCompositionValid: false,
+        allReady: false,
+      };
+    }
+    this.local.upsertRoom(room);
+    return validateStartGameSnapshot(room);
+  }
+
+  /** 直接校验传入的房间快照（与界面展示的同一份） */
+  validateStartGameRoom(room: LobbyRoom): StartGameValidation {
+    this.local.upsertRoom(room);
+    return validateStartGameSnapshot(room);
   }
 
   validateMapSwitch(roomId: string, dungeonId: string): MapSwitchValidation {
+    const room = this.getRoom(roomId);
+    if (room) this.local.upsertRoom(room);
     return this.local.validateMapSwitch(roomId, dungeonId);
   }
 
@@ -75,15 +101,34 @@ export class NetworkRoomFacade {
     spec: string,
     classId: ClassId
   ): SpecSelectionCheck {
+    const room = this.getRoom(roomId);
+    if (room) this.local.upsertRoom(room);
     return this.local.canSelectSpec(roomId, memberId, spec, classId);
   }
 
-  autoFillAi(roomId: string) {
+  autoFillAi(roomId: string, opts?: { replaceExistingAi?: boolean }) {
     if (this.connected) {
-      netClient.roomAction(roomId, { action: 'AUTO_FILL_AI' });
-      return { success: true, addedCount: 0 };
+      // 先乐观补齐本地+net 镜像，开局校验立刻对上用户看到的名册；服务端 ROOM_UPDATE 再校正
+      const snap = this.getRoom(roomId);
+      if (snap) {
+        const working = JSON.parse(JSON.stringify(snap)) as LobbyRoom;
+        this.local.upsertRoom(working);
+        const result = this.local.autoFillAi(roomId, opts);
+        const filled = this.local.getRoom(roomId);
+        if (filled) netClient.replaceRoom(filled);
+        netClient.roomAction(roomId, {
+          action: 'AUTO_FILL_AI',
+          replaceExistingAi: !!opts?.replaceExistingAi,
+        });
+        return result;
+      }
+      netClient.roomAction(roomId, {
+        action: 'AUTO_FILL_AI',
+        replaceExistingAi: !!opts?.replaceExistingAi,
+      });
+      return { success: true, addedCount: 0, removedCount: 0 };
     }
-    return this.local.autoFillAi(roomId);
+    return this.local.autoFillAi(roomId, opts);
   }
 
   addAiMember(roomId: string, role?: RoleId) {

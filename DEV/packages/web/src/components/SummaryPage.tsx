@@ -1,8 +1,6 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import type {
   EncounterReport,
-  DungeonRunExport,
-  DungeonClearCertificate,
   ClassId,
 } from '@cata-raid-sim/engine';
 import { CLASS_COLORS, CLASS_NAMES } from './AuthAndCharacterModal.js';
@@ -14,10 +12,8 @@ interface Props {
   characterName: string;
   characterClass: ClassId;
   characterSpec: string;
-  onExportCsv: () => void;
   onExportJson: () => void;
   onClaimCertificate?: () => void;
-  onOpenLeaderboard: () => void;
   onReturnToLobby: () => void;
   isCertificateClaimed: boolean;
   isCleared?: boolean;
@@ -27,18 +23,23 @@ export const SummaryPage: React.FC<Props> = ({
   dungeonName,
   totalDurationSec,
   encounters,
-  characterName,
-  characterClass,
-  characterSpec,
-  onExportCsv,
   onExportJson,
-  onClaimCertificate,
-  onOpenLeaderboard,
   onReturnToLobby,
-  isCertificateClaimed,
   isCleared,
 }) => {
   const [viewMode, setViewMode] = useState<'OVERALL' | number>('OVERALL');
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onReturnToLobby();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [onReturnToLobby]);
 
   // Calculate overall roster stats
   const memberMap: Record<
@@ -123,7 +124,6 @@ export const SummaryPage: React.FC<Props> = ({
           </p>
         </div>
 
-        {/* Claim Reward Certificate & View Leaderboard */}
         <div className="flex items-center space-x-2">
           {isTrulyCleared ? (
             <div className="px-3.5 py-2 bg-emerald-950/80 border border-emerald-500/60 rounded-xl shadow-lg flex items-center space-x-2">
@@ -145,14 +145,6 @@ export const SummaryPage: React.FC<Props> = ({
               </div>
             </div>
           )}
-
-          <button
-            onClick={onOpenLeaderboard}
-            className="px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-xl font-bold text-xs text-amber-300 border border-slate-500 shadow flex items-center space-x-1"
-          >
-            <span>🏆</span>
-            <span>查看世界排名</span>
-          </button>
         </div>
       </div>
 
@@ -269,29 +261,19 @@ export const SummaryPage: React.FC<Props> = ({
 
       {/* Export & Navigation Footer */}
       <div className="flex flex-wrap items-center justify-between border-t border-[#252540] pt-4 gap-2">
-        <div className="flex items-center space-x-2">
-          <button
-            onClick={onExportCsv}
-            className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-600 rounded-lg text-xs font-bold flex items-center space-x-1 shadow"
-          >
-            <span>📥</span>
-            <span>导出 CSV (Excel友好)</span>
-          </button>
-
-          <button
-            onClick={onExportJson}
-            className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-blue-300 border border-slate-600 rounded-lg text-xs font-bold flex items-center space-x-1 shadow"
-          >
-            <span>💾</span>
-            <span>导出 JSON (完整分段原始数据)</span>
-          </button>
-        </div>
+        <button
+          onClick={onExportJson}
+          className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-blue-300 border border-slate-600 rounded-lg text-xs font-bold flex items-center space-x-1 shadow"
+        >
+          <span>导出</span>
+        </button>
 
         <button
           onClick={onReturnToLobby}
           className="px-6 py-2.5 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 text-white font-extrabold rounded-xl shadow-lg transition active:scale-95 text-xs"
+          title="按 Esc 也可返回大厅"
         >
-          返回大厅 / 准备下一次挑战
+          返回大厅
         </button>
       </div>
     </div>

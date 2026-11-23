@@ -80,6 +80,17 @@ export class RoomVoteTracker {
     return state;
   }
 
+  /** Merge currently seated humans into an in-flight tally (hot-join / id drift). */
+  ensureEligible(roomId: string, kind: NetworkVoteKind, playerIds: string[]) {
+    const cur = this.votes.get(this.key(roomId, kind));
+    if (!cur || cur.state.resolved) return;
+    for (const id of playerIds) {
+      if (id && !cur.state.eligiblePlayerIds.includes(id)) {
+        cur.state.eligiblePlayerIds.push(id);
+      }
+    }
+  }
+
   cast(
     roomId: string,
     kind: NetworkVoteKind,
@@ -92,12 +103,19 @@ export class RoomVoteTracker {
 
     cur.state.votes[playerId] = choice;
 
+    const snapshot = (): NetworkVoteState => ({
+      ...cur.state,
+      votes: { ...cur.state.votes },
+      eligiblePlayerIds: [...cur.state.eligiblePlayerIds],
+    });
+
     if (kind === 'SKIP_TRAVEL') {
+      // Strict majority: yes > eligible/2（半数以上）
       if (hasMajorityYes(cur.state.eligiblePlayerIds, cur.state.votes, 'YES')) {
         cur.state.resolved = true;
         cur.state.result = 'YES';
         if (cur.timer) clearTimeout(cur.timer);
-        const state = { ...cur.state };
+        const state = snapshot();
         this.votes.delete(this.key(roomId, kind));
         return { state, earlyResult: 'YES' };
       }
@@ -107,7 +125,7 @@ export class RoomVoteTracker {
         cur.state.resolved = true;
         cur.state.result = 'NO';
         if (cur.timer) clearTimeout(cur.timer);
-        const state = { ...cur.state };
+        const state = snapshot();
         this.votes.delete(this.key(roomId, kind));
         return { state, earlyResult: 'NO' };
       }
@@ -122,13 +140,13 @@ export class RoomVoteTracker {
           cur.state.resolved = true;
           cur.state.result = majority;
           if (cur.timer) clearTimeout(cur.timer);
-          const state = { ...cur.state };
+          const state = snapshot();
           this.votes.delete(this.key(roomId, kind));
           return { state, earlyResult: majority };
         }
       }
     }
 
-    return { state: cur.state };
+    return { state: snapshot() };
   }
 }

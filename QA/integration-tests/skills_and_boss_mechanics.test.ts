@@ -191,22 +191,22 @@ export function runSkillsAndBossMechanicsTests() {
   asphyxiate.execute(ashbury, engine);
   assert.strictEqual(woundedHero.hp, 1, '窒息术应强制将全团生命值抽干至恰好 1 点');
   assert.strictEqual(unitInside.hp, 1, '窒息术对全员抽至1点');
-  assert.strictEqual(ashburyAI.asphyxiatePostDelay, 3000, '窒息术后首领应给3秒安全治疗窗口');
-  assert.strictEqual(engine.bossHealingGraceRemainingMs, 3000, '窒息术后引擎应激活3秒治疗保护窗口');
+  assert.strictEqual(ashburyAI.asphyxiatePostDelay, 6000, '窒息术后技能锁定 1s+5s=6s');
+  assert.strictEqual(engine.bossHealingGraceRemainingMs, 1000, '窒息术后引擎应激活1秒治疗保护窗口');
 
-  // Verify damage lockout during 3s grace window: Boss damage must be blocked
+  // Verify damage lockout during 1s grace window: Boss damage must be blocked
   engine.dealDamage(ashbury, woundedHero, 30000, 'PHYSICAL', false, '首领普通攻击');
-  assert.strictEqual(woundedHero.hp, 1, '3秒安全治疗窗口期内首领普攻伤害应被阻断，英雄免于暴毙');
+  assert.strictEqual(woundedHero.hp, 1, '1秒安全治疗窗口期内首领普攻伤害应被阻断，英雄免于暴毙');
 
   // Verify healing can still be applied normally during grace window
   engine.healUnit(woundedHero, woundedHero, 20000, false, '治疗之触');
   assert.strictEqual(woundedHero.hp, 20001, '治疗窗口期内团队治疗应正常生效');
 
-  // Tick 3000ms: Window expires
-  engine.tick(3000);
-  assert.strictEqual(engine.bossHealingGraceRemainingMs, 0, '3秒后治疗窗口期应正常归零解除');
+  // Tick 1000ms: Grace expires (skill lock continues for melee-only phase)
+  engine.tick(1000);
+  assert.strictEqual(engine.bossHealingGraceRemainingMs, 0, '1秒后治疗窗口期应正常归零解除');
 
-  console.log('✓ 亚什布里男爵 窒息术 (抽至1血) 与 3秒安全治疗保护窗口机制验证通过');
+  console.log('✓ 亚什布里男爵 窒息术 (抽至1血) 与 1秒安全治疗 + 5秒仅普攻机制验证通过');
 
   console.log('✅ 真实技能机制与首领技能机制验证全部通过！\n');
 }

@@ -15,6 +15,7 @@ import {
   DUNGEON_ROLE_QUOTAS,
   CLASS_SPECS_MAP,
   getRoleBySpec,
+  coerceDungeonDifficulty,
 } from './RoomTypes.js';
 
 // Lore pool for AI teammates (all 10 Cataclysm classes with authentic lore pairings)
@@ -245,9 +246,74 @@ export function validateMapSwitch(
 /**
  * Pure validation helper for game start
  */
+/** members 为权威名单：按 slotIndex 回写 slots，避免席位与成员脱节导致「看着齐、校验不齐」 */
+export function reconcileRoomRoster(room: LobbyRoom): void {
+  if (!room?.members || !room?.slots) return;
+  const bySlot = new Map<number, (typeof room.members)[0]>();
+  for (const m of room.members) {
+    if (m.isAi) {
+      m.isReady = true;
+      m.isPlayer = false;
+    }
+    bySlot.set(m.slotIndex, m);
+  }
+  for (const slot of room.slots) {
+    const m = bySlot.get(slot.index);
+    if (m) {
+      slot.occupied = true;
+      slot.member = m;
+      slot.role = m.role;
+    } else {
+      slot.occupied = false;
+      slot.member = undefined;
+    }
+  }
+}
+
+/** 自定义难度：不卡职业配额 / 不卡人数下限，只禁超员 */
+export function isCustomDifficultyRoom(room: Pick<LobbyRoom, 'difficulty'>): boolean {
+  return room.difficulty === 'CUSTOM';
+}
+
+/**
+ * 热加入顶替 AI 优先级：坦克（同职业优先）→ DPS → 治疗。
+ * 用于自定义难度（可不限职责）；普通/英雄仍只在同职责池内挑选。
+ */
+export function pickHotJoinAiReplacement(
+  ais: RoomMember[],
+  playerClassId: ClassId
+): RoomMember | undefined {
+  if (!ais.length) return undefined;
+  const roleOrder: RoleId[] = ['TANK', 'DPS', 'HEALER'];
+  for (const role of roleOrder) {
+    const pool = ais.filter((m) => m.role === role);
+    if (!pool.length) continue;
+    const sameClass = pool.filter((m) => m.classId === playerClassId);
+    return sameClass[0] || pool[0];
+  }
+  return ais[0];
+}
+
+/** 大厅/列表：是否还有可进席位（自定义：任意空位或任意 AI；常规：同职责） */
+export function hasJoinableSeat(
+  room: LobbyRoom,
+  playerRole: RoleId
+): boolean {
+  const emptySlots = room.slots || [];
+  if (isCustomDifficultyRoom(room)) {
+    return emptySlots.some((s) => !s.occupied) || room.members.some((m) => m.isAi);
+  }
+  return (
+    emptySlots.some((s) => !s.occupied && s.role === playerRole) ||
+    room.members.some((m) => m.isAi && m.role === playerRole)
+  );
+}
+
 export function validateStartGame(room: LobbyRoom): StartGameValidation {
+  reconcileRoomRoster(room);
   const quota = DUNGEON_ROLE_QUOTAS[room.dungeonId] || DUNGEON_ROLE_QUOTAS.shadowfang_keep;
   const reasons: string[] = [];
+  const custom = isCustomDifficultyRoom(room);
 
   let currentTanks = 0;
   let currentHealers = 0;
@@ -260,39 +326,58 @@ export function validateStartGame(room: LobbyRoom): StartGameValidation {
   }
 
   const isFull = room.members.length === quota.capacity;
+  const overCapacity = room.members.length > quota.capacity;
 
-  if (!isFull) {
-    // Calculate deficits against minimums / standard quotas
-    const needTanks = Math.max(0, quota.roles.TANK.min - currentTanks);
-    const needHealers = Math.max(0, quota.roles.HEALER.min - currentHealers);
-    const targetDps = quota.tier === '20man' ? (currentHealers >= 5 ? 13 : 14) : quota.roles.DPS.min;
-    const needDps = Math.max(0, targetDps - currentDps);
-
-    if (needTanks > 0) reasons.push(`缺少坦克 ${needTanks} 名`);
-    if (needHealers > 0) reasons.push(`缺少治疗 ${needHealers} 名`);
-    if (needDps > 0) reasons.push(`缺少输出 ${needDps} 名`);
+  if (overCapacity) {
+    reasons.push(`人数超出上限（${room.members.length}/${quota.capacity}）`);
   }
 
-  // Validate composition
-  const isRoleCompositionValid = quota.validCompositions.some(
-    c => c.TANK === currentTanks && c.HEALER === currentHealers && c.DPS === currentDps
-  );
+  // 自定义：允许人数不足、不校验职责配比；普通/英雄仍要求满员+合法配比
+  let isRoleCompositionValid = true;
+  if (!custom) {
+    if (!isFull) {
+      reasons.push(`队伍未满（${room.members.length}/${quota.capacity}）`);
+      const needTanks = Math.max(0, quota.roles.TANK.min - currentTanks);
+      const needHealers = Math.max(0, quota.roles.HEALER.min - currentHealers);
+      const targetDps = quota.tier === '20man' ? (currentHealers >= 5 ? 13 : 14) : quota.roles.DPS.min;
+      const needDps = Math.max(0, targetDps - currentDps);
+
+      if (needTanks > 0) reasons.push(`缺少坦克 ${needTanks} 名`);
+      if (needHealers > 0) reasons.push(`缺少治疗 ${needHealers} 名`);
+      if (needDps > 0) reasons.push(`缺少输出 ${needDps} 名`);
+    }
+
+    isRoleCompositionValid = quota.validCompositions.some(
+      (c) => c.TANK === currentTanks && c.HEALER === currentHealers && c.DPS === currentDps
+    );
 
     if (isFull && !isRoleCompositionValid) {
-    const reqText = quota.tier === '5man' ? '1坦 1治 3输出' : '2坦 4~5治 13~14输出';
-    reasons.push(`队伍分工不符合副本要求（当前 ${currentTanks}坦 ${currentHealers}治 ${currentDps}输出，需 ${reqText}）`);
+      const reqText = quota.tier === '5man' ? '1坦 1治 3输出' : '2坦 4~5治 13~14输出';
+      reasons.push(
+        `队伍分工不符合副本要求（当前 ${currentTanks}坦 ${currentHealers}治 ${currentDps}输出，需 ${reqText}）`
+      );
+    }
+  } else if (room.members.length < 1) {
+    reasons.push('房间内没有成员');
   }
 
-  // Check all members ready (players must have isReady = true, AI is always ready)
-  const allReady = room.members.every(m => m.isReady);
+  // 仅真人需准备；AI 一律视为已准备（顺带纠正脏数据里的 AI.isReady=false）
+  for (const m of room.members) {
+    if (m.isAi) m.isReady = true;
+  }
+  const allReady = room.members.every((m) => m.isAi || m.isReady);
   if (!allReady) {
     reasons.push('有玩家未准备');
   }
 
+  const canStart = custom
+    ? room.members.length >= 1 && !overCapacity && allReady
+    : isFull && isRoleCompositionValid && allReady;
+
   return {
-    canStart: isFull && isRoleCompositionValid && allReady,
+    canStart,
     reasons,
-    isFull,
+    isFull: custom ? room.members.length >= 1 && !overCapacity : isFull,
     isRoleCompositionValid,
     allReady,
   };
@@ -341,7 +426,10 @@ export class RoomManager {
     host: PlayerInfo;
   }): LobbyRoom {
     const dungeonId = options.dungeonId || 'shadowfang_keep';
-    const difficulty: DungeonDifficulty = options.difficulty || 'HEROIC';
+    const difficulty: DungeonDifficulty = coerceDungeonDifficulty(
+      dungeonId,
+      options.difficulty || 'HEROIC',
+    );
     const roomId = `room_${this.nextRoomId++}`;
 
     const hostRole = options.host.role || getRoleBySpec(options.host.classId, options.host.spec);
@@ -394,6 +482,7 @@ export class RoomManager {
 
   /** Upsert a room snapshot from the network authority (client mirror). */
   public upsertRoom(room: LobbyRoom): void {
+    reconcileRoomRoster(room);
     this.rooms.set(room.id, room);
   }
 
@@ -502,8 +591,8 @@ export class RoomManager {
 
   /**
    * Join a human into the room:
-   * - empty matching slot, or
-   * - replace same-role AI when human count < capacity (lobby or mid-combat hot-join).
+   * - NORMAL/HEROIC: empty same-role slot, or replace same-role AI (never switch player role).
+   * - CUSTOM: any empty slot / any AI while humans < capacity; hot-join AI pick = T(同职业优先)→DPS→奶.
    */
   public joinOrHotSwapPlayer(
     roomId: string,
@@ -529,10 +618,14 @@ export class RoomManager {
     }
 
     const role = player.role || getRoleBySpec(player.classId, player.spec);
+    const roleLabel = role === 'TANK' ? '坦克' : role === 'HEALER' ? '治疗' : '输出';
+    const custom = isCustomDifficultyRoom(room);
 
-    // Prefer empty slot matching role
+    // Prefer empty seat: same-role first; CUSTOM may take any empty seat
     let slot = room.slots.find((s) => !s.occupied && s.role === role);
-    if (!slot) slot = room.slots.find((s) => !s.occupied);
+    if (!slot && custom) {
+      slot = room.slots.find((s) => !s.occupied);
+    }
 
     if (slot) {
       const member: RoomMember = {
@@ -540,7 +633,7 @@ export class RoomManager {
         name: player.name,
         classId: player.classId,
         spec: player.spec,
-        role: slot.role || role,
+        role,
         isPlayer: true,
         isAi: false,
         isHost: false,
@@ -548,18 +641,26 @@ export class RoomManager {
         slotIndex: slot.index,
       };
       slot.occupied = true;
-      slot.role = member.role;
+      slot.role = role;
       slot.member = member;
       room.members.push(member);
       return { ok: true, room, member };
     }
 
-    // No empty slot: replace same-role AI (hot-join / fill)
-    const matchingAis = room.members.filter((m) => m.isAi && m.role === role);
-    const anyAi = room.members.filter((m) => m.isAi);
-    const replacedAi = matchingAis[0] || anyAi[0];
+    // No empty slot: replace AI
+    const aiPool = custom
+      ? room.members.filter((m) => m.isAi)
+      : room.members.filter((m) => m.isAi && m.role === role);
+    const replacedAi = custom
+      ? pickHotJoinAiReplacement(aiPool, player.classId)
+      : aiPool[0];
     if (!replacedAi) {
-      return { ok: false, reason: '没有可加入的空位或可顶替的 AI' };
+      return {
+        ok: false,
+        reason: custom
+          ? '当前房间没有可加入的空位或 AI'
+          : `当前房间没有可加入的${roleLabel}席位（需同职责空位或同职责 AI）`,
+      };
     }
 
     const newMember: RoomMember = {
@@ -567,7 +668,7 @@ export class RoomManager {
       name: player.name,
       classId: player.classId,
       spec: player.spec,
-      role: replacedAi.role,
+      role,
       isPlayer: true,
       isAi: false,
       isHost: false,
@@ -579,7 +680,7 @@ export class RoomManager {
     const s = room.slots.find((x) => x.index === replacedAi.slotIndex);
     if (s) {
       s.member = newMember;
-      s.role = newMember.role;
+      s.role = role;
     }
     return { ok: true, room, replacedAiId: replacedAi.id, member: newMember };
   }
@@ -636,11 +737,17 @@ export class RoomManager {
   ): boolean {
     const room = this.getRoom(roomId);
     if (!room) return false;
-    const difficultyChanged = room.difficulty !== difficulty;
+    const resolved = coerceDungeonDifficulty(room.dungeonId, difficulty);
+    // Leaving CUSTOM for NORMAL/HEROIC requires roster within role quotas
+    if (resolved === 'NORMAL' || resolved === 'HEROIC') {
+      const gate = validateMapSwitch(room.members, room.dungeonId);
+      if (!gate.canSwitch) return false;
+    }
+    const difficultyChanged = room.difficulty !== resolved;
     const customChanged =
       !!customDifficulty &&
       JSON.stringify(room.customDifficulty || null) !== JSON.stringify(customDifficulty);
-    room.difficulty = difficulty;
+    room.difficulty = resolved;
     if (customDifficulty) {
       room.customDifficulty = { ...customDifficulty };
     }
@@ -659,12 +766,37 @@ export class RoomManager {
   }
 
   /**
-   * One-click AI fill ("一键添加 AI")
-   * Accurately fills missing slots to match role quota with isReady = true
+   * 清掉房间内全部 AI，释放席位（不影响真人）。
    */
-  public autoFillAi(roomId: string): { success: boolean; addedCount: number } {
+  private clearAllAiMembers(room: LobbyRoom): number {
+    let removed = 0;
+    for (let i = room.members.length - 1; i >= 0; i--) {
+      const m = room.members[i];
+      if (!m.isAi) continue;
+      const slot = room.slots.find((s) => s.index === m.slotIndex);
+      if (slot) {
+        slot.occupied = false;
+        slot.member = undefined;
+      }
+      room.members.splice(i, 1);
+      removed++;
+    }
+    return removed;
+  }
+
+  /**
+   * One-click AI fill ("一键添加 AI")
+   * - 默认：只补缺，保留已有 AI
+   * - replaceExistingAi：先踢光全部 AI，再按配额重新分配
+   */
+  public autoFillAi(
+    roomId: string,
+    opts?: { replaceExistingAi?: boolean }
+  ): { success: boolean; addedCount: number; removedCount: number } {
     const room = this.getRoom(roomId);
-    if (!room) return { success: false, addedCount: 0 };
+    if (!room) return { success: false, addedCount: 0, removedCount: 0 };
+
+    const removedCount = opts?.replaceExistingAi ? this.clearAllAiMembers(room) : 0;
 
     const quota = this.getQuota(room.dungeonId);
 
@@ -747,7 +879,8 @@ export class RoomManager {
       addedCount++;
     }
 
-    return { success: true, addedCount };
+    this.normalizeAiReady(roomId);
+    return { success: true, addedCount, removedCount };
   }
 
   /**
@@ -868,6 +1001,11 @@ export class RoomManager {
       return { allowed: true, disabled: false };
     }
 
+    // 自定义难度不限制职业/职责数量
+    if (isCustomDifficultyRoom(room)) {
+      return { allowed: true, disabled: false };
+    }
+
     const quota = this.getQuota(room.dungeonId);
 
     // Count other members
@@ -984,6 +1122,7 @@ export class RoomManager {
     if (!room) return false;
 
     room.dungeonId = targetDungeonId;
+    room.difficulty = coerceDungeonDifficulty(targetDungeonId, room.difficulty);
     this.clearHumanReady(room);
     const targetQuota = this.getQuota(targetDungeonId);
 
@@ -1082,12 +1221,21 @@ export class RoomManager {
       return { success: false, reason: '只有房主可以开始游戏' };
     }
 
+    // 普通/英雄：开局前自动按默认配额补 AI（也覆盖乐观补齐竞态）。
+    // 自定义：允许人数不足开局，不自动补人；房主可手动点「AI 补齐」按默认需求补位。
+    if (!isCustomDifficultyRoom(room)) {
+      this.autoFillAi(roomId);
+      this.normalizeAiReady(roomId);
+    }
+
     const validation = this.validateStartGame(roomId);
     if (!validation.canStart) {
       return { success: false, reason: validation.reasons.join('，') };
     }
 
-    room.status = 'IN_COMBAT';
+    const started = this.getRoom(roomId);
+    if (!started) return { success: false, reason: '房间不存在' };
+    started.status = 'IN_COMBAT';
     return { success: true };
   }
 
@@ -1237,9 +1385,10 @@ export class RoomManager {
   }
 
   /**
-   * Hot-swap waiting players onto same-role AI slots.
+   * Hot-swap waiting players onto AI slots.
+   * NORMAL/HEROIC: same-role AI only.
+   * CUSTOM: any AI; pick order T(同职业优先)→DPS→奶.
    * Inherits HP / resources / Buff / position / threat from the replaced AI unit.
-   * Allowed in TRAVEL_RECOVERY and BOSS_COMBAT (mid-combat drop-in).
    */
   public substituteOutOfCombat(
     roomId: string,
@@ -1251,10 +1400,13 @@ export class RoomManager {
 
     const substituted: { player: RoomMember; replacedAi: RoomMember; unit?: Unit }[] = [];
     if (room.waitingQueue.length === 0) return { substituted };
+    const custom = isCustomDifficultyRoom(room);
 
     const queueCopy = [...room.waitingQueue];
     for (const queued of queueCopy) {
-      const matchingAis = room.members.filter(m => m.isAi && m.role === queued.role);
+      const matchingAis = custom
+        ? room.members.filter((m) => m.isAi)
+        : room.members.filter((m) => m.isAi && m.role === queued.role);
       if (matchingAis.length === 0) continue;
 
       // Prefer AIs that already exist in the combat engine so HP/buff inherit cannot miss
@@ -1262,8 +1414,10 @@ export class RoomManager {
         ? matchingAis.filter((m) => !!combatEngine.getUnit(m.id))
         : [];
       const pool = withCombatUnit.length > 0 ? withCombatUnit : matchingAis;
-      const randIdx = Math.floor(Math.random() * pool.length);
-      const replacedAi = pool[randIdx];
+      const replacedAi = custom
+        ? pickHotJoinAiReplacement(pool, queued.classId) || pool[0]
+        : pool[Math.floor(Math.random() * pool.length)];
+      if (!replacedAi) continue;
 
       const newMember: RoomMember = {
         id: queued.playerId,
@@ -1278,12 +1432,12 @@ export class RoomManager {
         slotIndex: replacedAi.slotIndex,
       };
 
-      const memIdx = room.members.findIndex(m => m.id === replacedAi.id);
+      const memIdx = room.members.findIndex((m) => m.id === replacedAi.id);
       if (memIdx !== -1) {
         room.members[memIdx] = newMember;
       }
 
-      const slot = room.slots.find(s => s.index === replacedAi.slotIndex);
+      const slot = room.slots.find((s) => s.index === replacedAi.slotIndex);
       if (slot) {
         slot.member = newMember;
         slot.role = newMember.role;
@@ -1291,17 +1445,13 @@ export class RoomManager {
 
       let inheritedUnit: Unit | undefined;
       if (combatEngine) {
-        inheritedUnit = this.inheritCombatUnitFromAi(
-          combatEngine,
-          replacedAi.id,
-          {
-            id: queued.playerId,
-            name: queued.playerName,
-            classId: queued.classId,
-            spec: queued.spec,
-            role: queued.role,
-          }
-        );
+        inheritedUnit = this.inheritCombatUnitFromAi(combatEngine, replacedAi.id, {
+          id: queued.playerId,
+          name: queued.playerName,
+          classId: queued.classId,
+          spec: queued.spec,
+          role: queued.role,
+        });
       }
 
       this.leaveWaitingQueue(roomId, queued.playerId);
@@ -1313,14 +1463,43 @@ export class RoomManager {
 
   /**
    * Remap an AI combat unit to a human player while keeping HP/Buff/resources/threat.
+   * Identity (name/class/spec/role) always becomes the joining player; AI casting stops via isHumanControlled.
+   * If `aiUnitId` is missing from the engine (id drift), falls back to an orphan same-role AI seat.
    */
   public inheritCombatUnitFromAi(
     combatEngine: CombatEngine,
     aiUnitId: string,
     player: { id: string; name: string; classId: ClassId; spec: string; role: RoleId }
   ): Unit | undefined {
-    const old = combatEngine.getUnit(aiUnitId);
+    // Already remapped (retry / duplicate MEMBER_HOT_SWAP)
+    const existing = combatEngine.getUnit(player.id);
+    if (existing && (existing.isHumanControlled || existing.isPlayer)) {
+      existing.name = player.name;
+      existing.classId = player.classId;
+      existing.spec = player.spec;
+      existing.role = player.role;
+      existing.isPlayer = false;
+      existing.isHumanControlled = true;
+      delete (existing as { unitKind?: string }).unitKind;
+      return existing;
+    }
+
+    let old = combatEngine.getUnit(aiUnitId);
+    if (!old) {
+      // Id drift: room AI id ≠ engine unit id — claim orphan AI (not in current human roster)
+      const orphans = combatEngine.friendlyUnits.filter(
+        (u) =>
+          !u.isPlayer &&
+          !u.isHumanControlled &&
+          !u.isPet &&
+          u.role === player.role &&
+          u.id !== player.id
+      );
+      old = orphans.find((u) => u.id === aiUnitId) || orphans[0];
+    }
     if (!old) return undefined;
+
+    const oldId = old.id;
 
     // Host engine: joiner is human-controlled but NOT local isPlayer (avoids id/`isPlayer` collisions).
     const inherited: Unit = {
@@ -1332,7 +1511,11 @@ export class RoomManager {
       role: player.role,
       isPlayer: false,
       isHumanControlled: true,
-      buffs: (old.buffs || []).map((b) => ({ ...b })),
+      buffs: (old.buffs || []).map((b) => ({
+        ...b,
+        sourceUnitId: b.sourceUnitId === oldId ? player.id : b.sourceUnitId,
+        targetUnitId: b.targetUnitId === oldId ? player.id : b.targetUnitId,
+      })),
       threatTable: (old.threatTable || []).map((t) => ({ ...t })),
       resources: (old.resources || []).map((r) => ({ ...r })),
       position: old.position ? { ...old.position } : { x: 200, y: 160 },
@@ -1340,8 +1523,11 @@ export class RoomManager {
       combatStats: old.combatStats ? { ...old.combatStats } : undefined,
       runes: old.runes ? old.runes.map((r) => ({ ...r })) : undefined,
     };
+    // Force re-resolve as PLAYER (stale unitKind:'AI' would keep AI labeling in snapshots)
+    delete (inherited as { unitKind?: string }).unitKind;
 
-    combatEngine.removeUnit(aiUnitId);
+    combatEngine.removeUnit(oldId);
+    if (aiUnitId !== oldId) combatEngine.removeUnit(aiUnitId);
     combatEngine.addUnit(inherited);
     return inherited;
   }
@@ -1354,10 +1540,22 @@ export class RoomManager {
     if (!room) return false;
 
     const member = room.members.find(m => m.id === playerId);
-    if (!member) return false;
+    if (!member || member.isAi) return false;
 
     member.isReady = isReady;
     return true;
+  }
+
+  /** Force every AI seat ready (and not marked as human). */
+  public normalizeAiReady(roomId: string): void {
+    const room = this.getRoom(roomId);
+    if (!room) return;
+    for (const m of room.members) {
+      if (m.isAi) {
+        m.isReady = true;
+        m.isPlayer = false;
+      }
+    }
   }
 }
 

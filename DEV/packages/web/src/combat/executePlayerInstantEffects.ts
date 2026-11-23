@@ -2,12 +2,23 @@ import type { BossAI, CombatEngine, NormalizedSpell, Unit } from '@cata-raid-sim
 import {
   findOptimalGroundAuraCentroid,
   getHastedCastTimeMs,
+  getUnitHaste,
   LEVEL_80_MAX_HASTE,
   isChanneledSpell,
+  selectAoeHealTargets,
+  selectAoeEnemyTargets,
+  selectRaidBuffTargets,
+  RANGE_15YD_PX,
+  RANGE_30YD_PX,
+  resolveAoePulsePose,
+  isTimedSummonSpellId,
+  spawnTimedSummons,
+  isValidLifebloomTarget,
 } from '@cata-raid-sim/engine';
 import { DEFAULT_SPELL_COOLDOWNS } from '../assets/defaultActionSlots.js';
 import type { ActionSlot, PlayerCastState } from '../components/ActionBar.js';
 import { syncUnitResources } from './unitResources.js';
+import { emitLocalAoePulse } from './emitLocalAoePulse.js';
 
 export type InstantEffectsCtx = {
   engine: CombatEngine;
@@ -92,6 +103,16 @@ export function executePlayerInstantEffects(ctx: InstantEffectsCtx): boolean {
       return true;
     } else if (slot.spellId === 'lifebloom') {
       const target = effectiveFriendly;
+      // 友方有效；图腾不可作为生命绽放目标
+      if (!isValidLifebloomTarget(target, engine)) {
+        engine.effectsManager?.addFloatingText({
+          targetId: player.id,
+          text: '❌ 无法对图腾施放生命绽放',
+          category: 'STATUS',
+          isCrit: false,
+        });
+        return true;
+      }
       // 生命绽放唯一目标限制：同一释放者同时只能给一个人维持生命绽放；若给其他人施放，立即没收该释放者给其他人施加的生命绽放buff（包括所有层数）
       for (const u of engine.getAllUnits()) {
         if (u.id !== target.id) {
@@ -175,36 +196,17 @@ export function executePlayerInstantEffects(ctx: InstantEffectsCtx): boolean {
       triggerSlotCooldown();
       return true;
     } else if (slot.spellId === 'wild_growth') {
+      // 40yd cast → splash 15yd around selected ally (center), up to 5 lowest HP%
       const centerTarget = effectiveFriendly || player;
-      const tX = centerTarget.position?.x ?? 180;
-      const tY = centerTarget.position?.y ?? 190;
-      const radius = 270; // 30码范围 (40码=360px -> 30码=270px)
-      const maxTargets = 5; // 严格最多 5 个友方（包含自己作为候选目标之一）
-
-      // 筛选目标身边30码范围内的存活友方单位（包含玩家自己，作为可选目标之一）
-      const inRangeAllies = engine.friendlyUnits.filter(u => {
-        const isAlive = (u.isAlive ?? u.alive) && u.hp > 0;
-        if (!isAlive) return false;
-        const uX = u.position?.x ?? tX;
-        const uY = u.position?.y ?? tY;
-        return Math.hypot(uX - tX, uY - tY) <= radius;
+      const wgRadius = normSlotSpell?.aoeRadiusPx || RANGE_15YD_PX;
+      const chosen = selectAoeHealTargets({
+        spellId: 'wild_growth',
+        allies: engine.friendlyUnits,
+        caster: player,
+        primaryTarget: centerTarget,
+        maxAoeTargets: 5,
+        targetType: 'SMART_ALLY',
       });
-
-      // 优先选择血量百分比最低的受伤队友（若百分比相同则缺血数值更多者优先；机制是在范围内挑选血量最低的友方，不保证必加到自己）
-      inRangeAllies.sort((a, b) => {
-        const pctA = a.hp / Math.max(1, a.maxHp);
-        const pctB = b.hp / Math.max(1, b.maxHp);
-        if (Math.abs(pctA - pctB) > 0.0001) {
-          return pctA - pctB;
-        }
-        return (a.hp - a.maxHp) - (b.hp - b.maxHp);
-      });
-
-      // 最多对 5 个目标施加野性成长 HoT（无其他队友时至少作用于主目标）
-      const chosen = inRangeAllies.slice(0, maxTargets);
-      if (chosen.length === 0) {
-        chosen.push(centerTarget);
-      }
 
       for (const u of chosen) {
         engine.applyBuff(u, {
@@ -228,6 +230,18 @@ export function executePlayerInstantEffects(ctx: InstantEffectsCtx): boolean {
           text: '野性成长',
           category: 'HEAL',
           isCrit: false,
+        });
+      }
+      if (centerTarget.position) {
+        emitLocalAoePulse(engine, {
+          actor: player,
+          spellId: 'wild_growth',
+          spellName: '野性成长',
+          targetId: centerTarget.id,
+          x: centerTarget.position.x,
+          y: centerTarget.position.y,
+          radius: wgRadius,
+          isHeal: true,
         });
       }
       triggerSlotCooldown();
@@ -521,7 +535,7 @@ export function executePlayerInstantEffects(ctx: InstantEffectsCtx): boolean {
       return true;
     } else if (slot.spellId === 'chain_heal') {
       // Cataclysm Resto Shaman Chain Heal: 2.5s base cast (1.67s at Lv.80 max haste), 0s CD!
-      const hastedMs = getHastedCastTimeMs(2500, player.stats?.haste ?? LEVEL_80_MAX_HASTE);
+      const hastedMs = getHastedCastTimeMs(2500, getUnitHaste(player, LEVEL_80_MAX_HASTE));
       startPlayerCast({
         spellId: 'chain_heal',
         spellName: '治疗链',
@@ -544,7 +558,7 @@ export function executePlayerInstantEffects(ctx: InstantEffectsCtx): boolean {
         x: rainPos.x,
         y: rainPos.y,
         radius: 60,
-        colorHex: '#4169E1',
+        colorHex: '#10B981',
         remainingMs: 10000,
         tickIntervalMs: 1000,
         tickElapsedMs: 0,
@@ -552,23 +566,23 @@ export function executePlayerInstantEffects(ctx: InstantEffectsCtx): boolean {
       });
       triggerSlotCooldown();
       return true;
-    } else if (slot.spellId === 'spirit_link') {
-      const target = selectedTargetId
-        ? engine.friendlyUnits.find(u => u.id === selectedTargetId) || player
-        : player;
+    } else if (slot.spellId === 'spirit_link' || slot.spellId === 'spirit_link_totem') {
+      // Player casts go through ground-target reticle (40yd like Healing Rain).
+      // This branch is fallback/AI-style: place near injured allies centroid, never force at feet.
+      const linkPos = findOptimalGroundAuraCentroid(player, engine.friendlyUnits, 80, 320);
       engine.effectsManager?.addGroundEffect({
         id: `slt_${Date.now()}`,
         kind: 'TOTEM',
         spellId: 'spirit_link',
         ownerId: player.id,
-        x: target.position.x || 200,
-        y: target.position.y || 200,
-        radius: 55,
+        x: linkPos.x,
+        y: linkPos.y,
+        radius: 80,
         colorHex: '#00CED1',
         remainingMs: 6000,
         tickIntervalMs: 1000,
         tickElapsedMs: 0,
-        tickValue: 2000,
+        tickValue: 0,
       });
       triggerSlotCooldown();
       return true;
@@ -888,7 +902,7 @@ export function executePlayerInstantEffects(ctx: InstantEffectsCtx): boolean {
         const baseDurMs = normIsChannel
           ? (normSlotSpell.channelDurationMs > 0 ? normSlotSpell.channelDurationMs : Math.max(2000, normSlotSpell.castTimeMs))
           : normSlotSpell.castTimeMs;
-        const hastedMs = getHastedCastTimeMs(baseDurMs, player.stats?.haste ?? LEVEL_80_MAX_HASTE);
+        const hastedMs = getHastedCastTimeMs(baseDurMs, getUnitHaste(player, LEVEL_80_MAX_HASTE));
         const defaultCd = DEFAULT_SPELL_COOLDOWNS[slot.spellId] ?? normSlotSpell.cooldownMs ?? 0;
         startPlayerCast({
           spellId: slot.spellId,
@@ -954,7 +968,7 @@ export function executePlayerInstantEffects(ctx: InstantEffectsCtx): boolean {
       return true;
       }
 
-      // Buff-only / Buff+Heal skills (Earth Shield / Ascendance / Ancestral Guidance / Unleash Life)
+      // Buff-only / Buff+Heal skills (Earth Shield / Ascendance / MotW raid buff / …)
       if (normSlotSpell.isBuff && !normSlotSpell.isDefensive && !normSlotSpell.isShield) {
         const shortId = normSlotSpell.shortId;
         const isUnleashLife = shortId === 'unleash_life';
@@ -966,44 +980,97 @@ export function executePlayerInstantEffects(ctx: InstantEffectsCtx): boolean {
         const buffTarget = isSelfBuff ? player : effectiveFriendly;
         const auraSpellId = normSlotSpell.auraId || shortId;
         const stacks = isEarthShield ? 9 : 1;
+        const isLust =
+          auraSpellId === 'heroism' ||
+          auraSpellId === 'bloodlust' ||
+          auraSpellId === 'time_warp' ||
+          shortId === 'heroism' ||
+          shortId === 'bloodlust' ||
+          shortId === 'time_warp' ||
+          normSlotSpell.id.includes('heroism') ||
+          normSlotSpell.id.includes('time_warp');
+        const durationMs = isLust
+          ? Math.max(1_000, normSlotSpell.durationMs || 40_000)
+          : Math.max(
+              normSlotSpell.isRaidBuff ? 3_600_000 : 10000,
+              normSlotSpell.durationMs || 15000
+            );
 
         if (isUnleashLife || (normSlotSpell.isHeal && normSlotSpell.directHeal > 0 && !isSelfBuff)) {
           const healVal = Math.round((normSlotSpell.directHeal || 8500) + (player.stats.spellPower || 3200) * 0.35);
           engine.healUnit(player, effectiveFriendly, healVal, Math.random() < (player.stats.critChance || 0.25), normSlotSpell.name);
         }
 
-        // Unleash Life next-heal buff resides on the caster
-        const auraTarget = isUnleashLife ? player : buffTarget;
-        engine.applyBuff(auraTarget, {
-          id: `${auraSpellId}_${Date.now()}`,
-          spellId: auraSpellId,
-          name: isEarthShield ? `${normSlotSpell.name} (${stacks}层)` : normSlotSpell.name,
-          kind: 'BUFF',
-          tags: isEarthShield ? ['SHIELD'] : ['STAT'],
-          sourceUnitId: player.id,
-          targetUnitId: auraTarget.id,
-          stacks,
-          maxStacks: stacks,
-          durationMs: Math.max(10000, normSlotSpell.durationMs || 15000),
-          remainingMs: Math.max(10000, normSlotSpell.durationMs || 15000),
-          school: normSlotSpell.school,
-        });
+        // Raid buffs (MotW / Arcane Brilliance / 嗜血…): apply to whole raid (or caster 30yd for shouts)
+        const auraTargets =
+          normSlotSpell.isRaidBuff || normSlotSpell.aoeCenterMode === 'RAID' || isLust
+            ? selectRaidBuffTargets({
+                spellId: normSlotSpell.id,
+                allies: engine.friendlyUnits,
+                caster: player,
+                isRaidBuff: true,
+              })
+            : [isUnleashLife ? player : buffTarget];
 
-        // Ascendance also enables resto heal-duplication via same buff id checked in CombatEngine
-        if (shortId === 'ascendance' && (player.classId === 'SHAMAN')) {
+        for (const auraTarget of auraTargets) {
+          engine.applyBuff(auraTarget, {
+            id: `${auraSpellId}_${Date.now()}_${auraTarget.id}`,
+            spellId: auraSpellId,
+            name: isEarthShield ? `${normSlotSpell.name} (${stacks}层)` : normSlotSpell.name,
+            kind: 'BUFF',
+            tags: isEarthShield ? ['SHIELD'] : isLust ? ['BLOODLUST', 'STAT'] : ['STAT'],
+            sourceUnitId: player.id,
+            targetUnitId: auraTarget.id,
+            stacks,
+            maxStacks: stacks,
+            durationMs,
+            remainingMs: durationMs,
+            school: normSlotSpell.school,
+          });
+        }
+
+        const floatTarget = auraTargets[0] || buffTarget;
+        if (shortId === 'ascendance' && player.classId === 'SHAMAN') {
+          const spec = String((player as { spec?: string }).spec || '').toUpperCase();
+          const isResto =
+            spec === 'RESTORATION' ||
+            spec === 'RESTO' ||
+            spec === 'RESTO_HEAL' ||
+            (!spec && player.role === 'HEALER');
           engine.effectsManager?.addFloatingText({
             targetId: player.id,
-            text: '升腾！伤害+35% / 治疗复制',
+            text: isResto ? '升腾！伤害+35% / 治疗复制' : '升腾！伤害+35%',
             category: 'CRIT',
             isCrit: true,
           });
         } else {
           engine.effectsManager?.addFloatingText({
-            targetId: auraTarget.id,
-            text: `✨ ${normSlotSpell.name}`,
+            targetId: floatTarget.id,
+            text:
+              auraTargets.length > 1
+                ? `✨ ${normSlotSpell.name}（全团 ${auraTargets.length}）`
+                : `✨ ${normSlotSpell.name}`,
             category: 'HEAL',
             isCrit: false,
           });
+        }
+
+        // Timed summons (wolves / gargoyle): real PET units → canvas + host unit snapshots
+        if (isTimedSummonSpellId(shortId) || isTimedSummonSpellId(normSlotSpell.id)) {
+          const pets = spawnTimedSummons(engine, player, shortId || normSlotSpell.id);
+          for (const pet of pets) {
+            engine.logCombatAction({
+              actorId: player.id,
+              spellId: shortId || normSlotSpell.id,
+              spellName: normSlotSpell.name,
+              kind: 'SUMMON',
+              spawnedUnitId: pet.id,
+              x: pet.position?.x,
+              y: pet.position?.y,
+              targetId: effectiveTarget?.id ?? null,
+            });
+          }
+          if (pets.length > 0) onFriendlyUnitsChanged();
         }
 
         triggerSlotCooldown(normSlotSpell.cooldownMs);
@@ -1074,14 +1141,35 @@ export function executePlayerInstantEffects(ctx: InstantEffectsCtx): boolean {
         const spPower = player.stats.spellPower || 3200;
         const isCrit = Math.random() < (player.stats.critChance || 0.25);
         if (normSlotSpell.isAOE) {
-          const maxT = Math.max(3, normSlotSpell.maxAoeTargets || 5);
-          const wounded = engine.friendlyUnits
-            .filter(u => (u.alive || u.isAlive) && u.hp > 0)
-            .sort((a, b) => (a.hp / a.maxHp) - (b.hp / b.maxHp))
-            .slice(0, maxT);
+          const wounded = selectAoeHealTargets({
+            spellId: normSlotSpell.id,
+            allies: engine.friendlyUnits,
+            caster: player,
+            primaryTarget: effectiveFriendly || player,
+            maxAoeTargets: Math.max(3, normSlotSpell.maxAoeTargets || 5),
+            targetType: normSlotSpell.targetType,
+          });
           const perHeal = Math.round(Math.max(3800, normSlotSpell.directHeal || normSlotSpell.hotTotalHeal * 0.45) + spPower * 0.4);
           for (const ally of wounded) {
             engine.healUnit(player, ally, perHeal, Math.random() < (player.stats.critChance || 0.25), normSlotSpell.name);
+          }
+          const pose = resolveAoePulsePose({
+            caster: player,
+            primaryTarget: effectiveFriendly || player,
+            radiusPx: normSlotSpell.aoeRadiusPx || RANGE_30YD_PX,
+            centerMode: normSlotSpell.aoeCenterMode,
+          });
+          if (pose) {
+            emitLocalAoePulse(engine, {
+              actor: player,
+              spellId: normSlotSpell.shortId || normSlotSpell.id,
+              spellName: normSlotSpell.name,
+              targetId: (effectiveFriendly || player).id,
+              x: pose.x,
+              y: pose.y,
+              radius: pose.radius,
+              isHeal: true,
+            });
           }
         } else {
           if (normSlotSpell.directHeal > 0) {
@@ -1106,6 +1194,14 @@ export function executePlayerInstantEffects(ctx: InstantEffectsCtx): boolean {
               tickValue: Math.round(normSlotSpell.hotTotalHeal / 4),
             });
           }
+          engine.logCombatAction({
+            actorId: player.id,
+            spellId: normSlotSpell.shortId || normSlotSpell.id,
+            spellName: normSlotSpell.name,
+            kind: 'INSTANT',
+            targetId: effectiveFriendly.id,
+            visualTone: 'HEAL',
+          });
         }
         triggerSlotCooldown(normSlotSpell.cooldownMs);
       return true;
@@ -1114,12 +1210,37 @@ export function executePlayerInstantEffects(ctx: InstantEffectsCtx): boolean {
       // Instant Damage (AoE or ST / DoT)
       const power = normSlotSpell.school === 'PHYSICAL' ? (player.stats.attackPower || 3200) : (player.stats.spellPower || 3200);
       if (normSlotSpell.isAOE) {
-        const livingEnemies = engine.enemyUnits.filter(e => (e.isAlive ?? e.alive) && e.hp > 0);
-        const targets = livingEnemies.slice(0, Math.max(3, normSlotSpell.maxAoeTargets || 6));
+        const targets = selectAoeEnemyTargets({
+          spellId: normSlotSpell.id,
+          enemies: engine.enemyUnits,
+          caster: player,
+          maxAoeTargets: Math.max(3, normSlotSpell.maxAoeTargets || 6),
+          school: normSlotSpell.school,
+          targetType: normSlotSpell.targetType,
+        });
         const perDmg = Math.round(Math.max(3200, normSlotSpell.directDamage || normSlotSpell.dotTotalDamage * 0.5) + power * 0.45);
         for (const enemy of targets) {
           engine.dealDamage(player, enemy, perDmg, normSlotSpell.school, Math.random() < (player.stats.critChance || 0.28), normSlotSpell.name);
           engine.threatManager.addThreat(enemy.id, player.id, player.role === 'TANK' ? perDmg * 3 : perDmg);
+        }
+        {
+          const pose = resolveAoePulsePose({
+            caster: player,
+            primaryTarget: targets[0] || boss,
+            radiusPx: normSlotSpell.aoeRadiusPx || RANGE_30YD_PX,
+            centerMode: normSlotSpell.aoeCenterMode || 'CASTER',
+          });
+          if (pose) {
+            emitLocalAoePulse(engine, {
+              actor: player,
+              spellId: normSlotSpell.shortId || normSlotSpell.id,
+              spellName: normSlotSpell.name,
+              targetId: (targets[0] || boss)?.id ?? null,
+              x: pose.x,
+              y: pose.y,
+              radius: pose.radius,
+            });
+          }
         }
         triggerSlotCooldown(normSlotSpell.cooldownMs);
       return true;
@@ -1149,6 +1270,13 @@ export function executePlayerInstantEffects(ctx: InstantEffectsCtx): boolean {
             tickValue: Math.round(normSlotSpell.dotTotalDamage / 5),
           });
         }
+        engine.logCombatAction({
+          actorId: player.id,
+          spellId: normSlotSpell.shortId || normSlotSpell.id,
+          spellName: normSlotSpell.name,
+          kind: 'INSTANT',
+          targetId: boss.id,
+        });
         triggerSlotCooldown(normSlotSpell.cooldownMs);
       return true;
       }
@@ -1162,6 +1290,13 @@ export function executePlayerInstantEffects(ctx: InstantEffectsCtx): boolean {
       }
       engine.dealDamage(player, boss, 6500, 'PHYSICAL', isCrit, slot.name || '攻击');
       engine.threatManager.addThreat(boss.id, player.id, 6500);
+      engine.logCombatAction({
+        actorId: player.id,
+        spellId: slot.spellId || 'attack',
+        spellName: slot.name || '攻击',
+        kind: 'INSTANT',
+        targetId: boss.id,
+      });
       triggerSlotCooldown();
     }
       return true;

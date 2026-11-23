@@ -1,12 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import type { Unit, ClassId } from '@cata-raid-sim/engine';
-import { CLASS_PIXEL_AVATARS, SPELL_ICONS } from '../assets/pixelIcons.js';
+import { CLASS_PIXEL_AVATARS } from '../assets/pixelIcons.js';
 import { CLASS_COLORS_CATA } from './RaidFrames.js';
-import { AuraIconList } from './AuraTooltip.js';
+import { clampHudPosToViewport } from '../utils/hudLayout.js';
 
 export interface PlayerUnitFrameProps {
   player: Unit;
-  allUnits?: Unit[];
   isInCombat?: boolean;
   dkRunes?: Array<{ type: 'BLOOD' | 'FROST' | 'UNHOLY'; cdMs: number }>;
   onSelect?: () => void;
@@ -18,27 +17,27 @@ const DEFAULT_POS = { x: 24, y: 64 };
 const FRAME_WIDTH = 250;
 const FRAME_HEIGHT = 110;
 
+function clampFramePos(pos: { x: number; y: number }): { x: number; y: number } {
+  const vw = typeof window !== 'undefined' ? window.innerWidth : 1920;
+  const vh = typeof window !== 'undefined' ? window.innerHeight : 1080;
+  return clampHudPosToViewport(pos, vw, vh, FRAME_WIDTH, FRAME_HEIGHT);
+}
+
 function loadSavedPosition(): { x: number; y: number } {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
       if (typeof parsed.x === 'number' && typeof parsed.y === 'number') {
-        const maxX = Math.max(0, (typeof window !== 'undefined' ? window.innerWidth : 1920) - FRAME_WIDTH);
-        const maxY = Math.max(0, (typeof window !== 'undefined' ? window.innerHeight : 1080) - FRAME_HEIGHT);
-        return {
-          x: Math.max(0, Math.min(maxX, parsed.x)),
-          y: Math.max(0, Math.min(maxY, parsed.y)),
-        };
+        return clampFramePos(parsed);
       }
     }
   } catch {}
-  return DEFAULT_POS;
+  return clampFramePos(DEFAULT_POS);
 }
 
 export const PlayerUnitFrame: React.FC<PlayerUnitFrameProps> = ({
   player,
-  allUnits = [],
   isInCombat = false,
   dkRunes,
   onSelect,
@@ -49,6 +48,14 @@ export const PlayerUnitFrame: React.FC<PlayerUnitFrameProps> = ({
   const [isLocked, setIsLocked] = useState(false);
   const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
 
+  // 已出界（含压到标题区）自动拉回
+  useEffect(() => {
+    setPos((prev) => clampFramePos(prev));
+    const onResize = () => setPos((prev) => clampFramePos(prev));
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
   // Drag listeners with boundary clamping
   useEffect(() => {
     if (!isDragging) return;
@@ -57,11 +64,12 @@ export const PlayerUnitFrame: React.FC<PlayerUnitFrameProps> = ({
       if (!dragRef.current) return;
       const dx = e.clientX - dragRef.current.startX;
       const dy = e.clientY - dragRef.current.startY;
-      const maxX = Math.max(0, window.innerWidth - FRAME_WIDTH);
-      const maxY = Math.max(0, window.innerHeight - FRAME_HEIGHT);
-      const newX = Math.max(0, Math.min(maxX, dragRef.current.origX + dx));
-      const newY = Math.max(0, Math.min(maxY, dragRef.current.origY + dy));
-      setPos({ x: newX, y: newY });
+      setPos(
+        clampFramePos({
+          x: dragRef.current.origX + dx,
+          y: dragRef.current.origY + dy,
+        })
+      );
     };
 
     const handleMouseUp = () => {
@@ -144,11 +152,6 @@ export const PlayerUnitFrame: React.FC<PlayerUnitFrameProps> = ({
     powerText = `${powerCurrent} / ${powerMax}`;
     powerPct = powerMax > 0 ? Math.max(0, Math.min(100, (powerCurrent / powerMax) * 100)) : 0;
   }
-
-  // Active beneficial buffs & harmful debuffs
-  const allAuras = player.buffs || [];
-  const activeBuffs = allAuras.filter(b => b.kind === 'BUFF');
-  const activeDebuffs = allAuras.filter(b => b.kind === 'DEBUFF');
 
   // Fallback default DK runes if none provided
   const activeDkRunes = isDK
@@ -347,17 +350,6 @@ export const PlayerUnitFrame: React.FC<PlayerUnitFrameProps> = ({
           </div>
         </div>
 
-        {/* ── Buffs & Debuffs Complete Icon List with Rich Hover Tooltip ── */}
-        {(activeDebuffs.length > 0 || activeBuffs.length > 0) && (
-          <div className="mt-1.5 pt-1 border-t border-[#2d2d44]/50 space-y-1">
-            {activeDebuffs.length > 0 && (
-              <AuraIconList buffs={activeDebuffs} allUnits={allUnits} iconSize="w-[18px] h-[18px]" maxVisible={16} />
-            )}
-            {activeBuffs.length > 0 && (
-              <AuraIconList buffs={activeBuffs} allUnits={allUnits} iconSize="w-[18px] h-[18px]" maxVisible={16} />
-            )}
-          </div>
-        )}
       </div>
     </div>
   );

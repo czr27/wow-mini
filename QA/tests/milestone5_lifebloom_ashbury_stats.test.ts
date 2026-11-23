@@ -6,7 +6,7 @@ import type { Unit } from '../../DEV/packages/engine/src/types.js';
 
 describe('Milestone 5 — Lifebloom Independent Timers, Baron Ashbury Grace & Full Stats', () => {
 
-  it('1. 影牙1号男爵窒息术后3秒治疗窗口：期间首领与环境严禁造成任何伤害', () => {
+  it('1. 影牙1号男爵窒息术后1秒治疗窗口：期间首领与环境严禁造成任何伤害', () => {
     const engine = new CombatEngine();
     const boss = engine.spawnBoss('ashbury', '亚什布里男爵', 500000);
     const tank: Unit = {
@@ -32,24 +32,27 @@ describe('Milestone 5 — Lifebloom Independent Timers, Baron Ashbury Grace & Fu
     const asphyxiate = (bossAi as any).skills.find((s: any) => s.id === 'asphyxiate');
     assert.ok(asphyxiate, '必须包含窒息术技能');
 
-    // 释放窒息术，全员降至1血
+    // 结束态 execute：开启 1s 禁伤 + 6s 技能锁（引导压血由 onTick 完成）
+    tank.hp = 1;
     asphyxiate.execute(boss, engine);
-    assert.strictEqual(tank.hp, 1, '窒息术应将全员生命抽至1点');
+    assert.strictEqual(tank.hp, 1, '窒息结束执行不应额外改血');
     assert.strictEqual(engine.isBossHealingGraceActive(), true, '窒息术后安全治疗窗口必须激活');
     assert.strictEqual(bossAi.isActionLocked(), true, 'BossAI应处于行动锁定状态');
+    assert.strictEqual(bossAi.asphyxiatePostDelay, 6000, '技能锁应为 6s');
+    assert.strictEqual(engine.bossHealingGraceRemainingMs, 1000, '禁伤窗应为 1s');
 
     // 在治疗窗口期内尝试对坦克普攻与环境伤害，验证被严格阻断
     engine.dealDamage(boss, tank, 25000, 'PHYSICAL', false, '首领普通攻击');
-    assert.strictEqual(tank.hp, 1, '3秒安全治疗窗口期内，首领普攻伤害必须被完全阻断');
+    assert.strictEqual(tank.hp, 1, '1秒安全治疗窗口期内，首领普攻伤害必须被完全阻断');
 
     engine.applyDamage(boss.id, tank.id, 8000, false, 'ambient_shadow', 'SHADOW');
-    assert.strictEqual(tank.hp, 1, '3秒安全治疗窗口期内，环境暗影伤害必须被完全阻断');
+    assert.strictEqual(tank.hp, 1, '1秒安全治疗窗口期内，环境暗影伤害必须被完全阻断');
 
-    // 推进时间 3100ms（治疗窗口结束）
-    engine.tick(3100);
-    assert.strictEqual(engine.isBossHealingGraceActive(), false, '3秒后治疗窗口应已解除');
+    // 推进时间 1100ms（治疗窗口结束，进入仅普攻阶段）
+    engine.tick(1100);
+    assert.strictEqual(engine.isBossHealingGraceActive(), false, '1秒后治疗窗口应已解除');
 
-    // 窗口结束后，首领恢复正常造成伤害
+    // 窗口结束后，首领恢复正常造成伤害（技能仍可能锁定）
     engine.dealDamage(boss, tank, 15000, 'PHYSICAL', false, '首领普通攻击');
     assert.ok(tank.hp < 1 || tank.hp === 0, '治疗窗口结束后首领可正常命中');
   });

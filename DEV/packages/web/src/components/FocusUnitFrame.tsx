@@ -2,18 +2,13 @@ import React, { useState, useEffect, useRef } from 'react';
 import type { Unit } from '@cata-raid-sim/engine';
 import { CLASS_PIXEL_AVATARS, SPELL_ICONS } from '../assets/pixelIcons.js';
 import { CLASS_COLORS_CATA } from './RaidFrames.js';
-import { AuraIconList } from './AuraTooltip.js';
+import { AuraIconList, CastBarSpellHover, type UnitFrameCastState } from './AuraTooltip.js';
+import { clampHudPosToViewport } from '../utils/hudLayout.js';
 
 export interface FocusUnitFrameProps {
   unit: Unit;
   allUnits?: Unit[];
-  castState?: {
-    spellName: string;
-    spellIcon?: string;
-    progress: number; // 0..1
-    interruptible?: boolean;
-    isChannel?: boolean;
-  } | null;
+  castState?: UnitFrameCastState | null;
   onClearFocus?: () => void;
   onSelectTarget?: (id: string) => void;
   onSetFocus?: (id: string) => void;
@@ -24,22 +19,23 @@ const DEFAULT_POS = { x: 285, y: 200 };
 const FRAME_WIDTH = 230;
 const FRAME_HEIGHT = 125;
 
+function clampFramePos(pos: { x: number; y: number }): { x: number; y: number } {
+  const vw = typeof window !== 'undefined' ? window.innerWidth : 1920;
+  const vh = typeof window !== 'undefined' ? window.innerHeight : 1080;
+  return clampHudPosToViewport(pos, vw, vh, FRAME_WIDTH, FRAME_HEIGHT);
+}
+
 function loadSavedPosition(): { x: number; y: number } {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
       if (typeof parsed.x === 'number' && typeof parsed.y === 'number') {
-        const maxX = Math.max(0, (typeof window !== 'undefined' ? window.innerWidth : 1920) - FRAME_WIDTH);
-        const maxY = Math.max(0, (typeof window !== 'undefined' ? window.innerHeight : 1080) - FRAME_HEIGHT);
-        return {
-          x: Math.max(0, Math.min(maxX, parsed.x)),
-          y: Math.max(0, Math.min(maxY, parsed.y)),
-        };
+        return clampFramePos(parsed);
       }
     }
   } catch {}
-  return DEFAULT_POS;
+  return clampFramePos(DEFAULT_POS);
 }
 
 export const FocusUnitFrame: React.FC<FocusUnitFrameProps> = ({
@@ -55,6 +51,13 @@ export const FocusUnitFrame: React.FC<FocusUnitFrameProps> = ({
   const [isLocked, setIsLocked] = useState(false);
   const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
 
+  useEffect(() => {
+    setPos((prev) => clampFramePos(prev));
+    const onResize = () => setPos((prev) => clampFramePos(prev));
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, []);
+
   // Drag listeners with boundary clamping
   useEffect(() => {
     if (!isDragging) return;
@@ -63,11 +66,12 @@ export const FocusUnitFrame: React.FC<FocusUnitFrameProps> = ({
       if (!dragRef.current) return;
       const dx = e.clientX - dragRef.current.startX;
       const dy = e.clientY - dragRef.current.startY;
-      const maxX = Math.max(0, window.innerWidth - FRAME_WIDTH);
-      const maxY = Math.max(0, window.innerHeight - FRAME_HEIGHT);
-      const newX = Math.max(0, Math.min(maxX, dragRef.current.origX + dx));
-      const newY = Math.max(0, Math.min(maxY, dragRef.current.origY + dy));
-      setPos({ x: newX, y: newY });
+      setPos(
+        clampFramePos({
+          x: dragRef.current.origX + dx,
+          y: dragRef.current.origY + dy,
+        })
+      );
     };
 
     const handleMouseUp = () => {
@@ -172,20 +176,20 @@ export const FocusUnitFrame: React.FC<FocusUnitFrameProps> = ({
   return (
     <div
       style={{ left: `${pos.x}px`, top: `${pos.y}px` }}
-      className={`fixed z-40 select-none transition-shadow ${
-        isDragging ? 'cursor-grabbing shadow-[0_0_24px_rgba(245,158,11,0.5)]' : 'shadow-2xl'
+      className={`fixed z-40 select-none transition-shadow group/focus-frame ${
+        isDragging ? 'cursor-grabbing shadow-[0_0_24px_rgba(245,158,11,0.5)]' : ''
       }`}
       onClick={handleClickFrame}
     >
-      {/* Subordinate Metallic Beveled Focus Target Frame */}
+      {/* Transparent plate; hover → semi-transparent; lock/clear only on hover */}
       <div
         onMouseDown={handleMouseDown}
-        className={`relative bg-gradient-to-b from-[#1e1e2d] via-[#12121e] to-[#0a0a14] border-2 border-[#6d6d82] rounded-xl p-1.5 shadow-[0_6px_20px_rgba(0,0,0,0.85)] ring-1 ring-white/10 w-[230px] ${
+        className={`relative bg-transparent border-0 rounded-xl p-1.5 w-[230px] transition-colors group-hover/focus-frame:bg-black/45 ${
           isLocked ? 'cursor-default' : 'cursor-grab'
         }`}
       >
         {/* Header Bar: Focus Target Title + Name + Lock & Close Buttons */}
-        <div className="flex items-center justify-between px-1 pb-1 border-b border-[#2d2d44]/70 mb-1">
+        <div className="flex items-center justify-between px-1 pb-1 mb-1">
           <div className="flex items-center space-x-1">
             <span className="text-[9px] px-1 py-0.2 rounded font-black bg-purple-900/60 text-purple-300 border border-purple-500/50">
               焦点
@@ -202,10 +206,10 @@ export const FocusUnitFrame: React.FC<FocusUnitFrameProps> = ({
             </span>
           </div>
 
-          <div className="flex items-center space-x-1">
+          <div className="flex items-center space-x-1 opacity-0 pointer-events-none group-hover/focus-frame:opacity-100 group-hover/focus-frame:pointer-events-auto transition-opacity">
             <button
               onClick={() => setIsLocked(!isLocked)}
-              className="text-[10px] text-gray-400 hover:text-amber-300 px-0.5 rounded hover:bg-white/10 transition"
+              className="text-[10px] text-gray-400 hover:text-amber-300 px-0.5 rounded hover:bg-black/40 transition"
               title={isLocked ? '已锁定位置 (点击解锁)' : '未锁定位置 (按住拖拽)'}
             >
               {isLocked ? '🔒' : '🔓'}
@@ -216,7 +220,7 @@ export const FocusUnitFrame: React.FC<FocusUnitFrameProps> = ({
                   e.stopPropagation();
                   onClearFocus();
                 }}
-                className="text-[10px] text-gray-400 hover:text-red-400 px-1 rounded hover:bg-white/10 transition font-bold"
+                className="text-[10px] text-gray-400 hover:text-red-400 px-1 rounded hover:bg-black/40 transition font-bold"
                 title="清除焦点目标"
               >
                 ✕
@@ -321,57 +325,51 @@ export const FocusUnitFrame: React.FC<FocusUnitFrameProps> = ({
           </div>
         )}
 
-        {/* ── Real-time Focus Cast Bar ───────────────────────────────────── */}
+        {/* ── Real-time Focus Cast Bar (hover → spell description) ───────── */}
         {castState && (
           <div className="mt-1.5 pt-1 border-t border-[#2d2d44]/70">
-            <div className="relative h-[18px] rounded bg-[#0e0e18] border border-amber-500/60 overflow-hidden shadow-md flex items-center justify-between px-1.5">
-              {/* Progress animation bar */}
-              <div
-                className="absolute inset-y-0 left-0 transition-all duration-100 z-0 bg-gradient-to-r from-amber-600 via-amber-500 to-yellow-400"
-                style={{
-                  width: `${Math.min(100, Math.max(0, (castState.progress || 0) * 100))}%`,
-                }}
-              />
+            <CastBarSpellHover castState={castState}>
+              <div className="relative h-[18px] rounded bg-[#0e0e18] border border-amber-500/60 overflow-hidden shadow-md flex items-center justify-between px-1.5 cursor-help">
+                <div
+                  className="absolute inset-y-0 left-0 transition-all duration-100 z-0 bg-gradient-to-r from-amber-600 via-amber-500 to-yellow-400"
+                  style={{
+                    width: `${Math.min(100, Math.max(0, (castState.progress || 0) * 100))}%`,
+                  }}
+                />
 
-              {/* Spell Name & Icon */}
-              <div className="relative z-10 flex items-center space-x-1 pointer-events-none truncate max-w-[155px]">
-                {castState.spellIcon && SPELL_ICONS[castState.spellIcon] ? (
-                  <div
-                    className="w-3.5 h-3.5 rounded overflow-hidden flex-shrink-0"
-                    dangerouslySetInnerHTML={{ __html: SPELL_ICONS[castState.spellIcon] }}
-                  />
-                ) : (
-                  <span className="text-[10px]">✨</span>
-                )}
-                <span
-                  className="text-[9.5px] font-bold text-white tracking-wide truncate"
-                  style={{ textShadow: '0 0 2px #000, 0 1px 2px #000' }}
-                >
-                  {castState.spellName}
-                </span>
-              </div>
-
-              {/* Interruptibility Indicator: ONLY for ENEMY casts! NEVER for friendly teammates */}
-              {!isFriendly && (
-                <div className="relative z-10 flex items-center pointer-events-none flex-shrink-0 ml-1">
-                  {isShielded ? (
-                    <span
-                      className="text-[10px] text-amber-300 filter drop-shadow"
-                      title="免打断 / 不可打断法术"
-                    >
-                      🛡️
-                    </span>
+                <div className="relative z-10 flex items-center space-x-1 pointer-events-none truncate max-w-[155px]">
+                  {(castState.spellIcon || castState.spellId) &&
+                  SPELL_ICONS[castState.spellIcon || castState.spellId || ''] ? (
+                    <div
+                      className="w-3.5 h-3.5 rounded overflow-hidden flex-shrink-0"
+                      dangerouslySetInnerHTML={{
+                        __html: SPELL_ICONS[castState.spellIcon || castState.spellId || ''],
+                      }}
+                    />
                   ) : (
-                    <span
-                      className="text-[8px] font-bold text-emerald-300 bg-black/60 px-0.5 rounded border border-emerald-500/40"
-                      title="可打断法术"
-                    >
-                      打断
-                    </span>
+                    <span className="text-[10px]">✨</span>
                   )}
+                  <span
+                    className="text-[9.5px] font-bold text-white tracking-wide truncate"
+                    style={{ textShadow: '0 0 2px #000, 0 1px 2px #000' }}
+                  >
+                    {castState.spellName}
+                  </span>
                 </div>
-              )}
-            </div>
+
+                {!isFriendly && (
+                  <div className="relative z-10 flex items-center pointer-events-none flex-shrink-0 ml-1">
+                    {isShielded ? (
+                      <span className="text-[10px] text-amber-300 filter drop-shadow">🛡️</span>
+                    ) : (
+                      <span className="text-[8px] font-bold text-emerald-300 bg-black/60 px-0.5 rounded border border-emerald-500/40">
+                        打断
+                      </span>
+                    )}
+                  </div>
+                )}
+              </div>
+            </CastBarSpellHover>
           </div>
         )}
       </div>

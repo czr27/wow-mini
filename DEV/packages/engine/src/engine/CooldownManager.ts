@@ -1,4 +1,5 @@
 import type { Unit, Spell } from '../types.js';
+import { getUnitHaste } from './BuffEffects.js';
 import { getEffectiveGcdMs } from './TierProfile.js';
 
 interface CooldownEntry {
@@ -69,7 +70,7 @@ export class CooldownManager {
         : 'NORMAL');
 
     if (rawCat !== 'OFF_GCD') {
-      const haste = unit?.stats?.haste ?? 0;
+      const haste = getUnitHaste(unit, 0);
       const effectiveGcd = getEffectiveGcdMs(rawCat, haste);
       this.gcdMap.set(unitId, effectiveGcd);
     }

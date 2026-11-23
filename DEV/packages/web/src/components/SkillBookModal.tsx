@@ -11,6 +11,7 @@ import { SPELL_ICONS, SPELL_TOOLTIPS, type SpellTooltipInfo } from '../assets/pi
 import { CLASS_NAMES, CLASS_COLORS, CLASS_SPECS } from './AuthAndCharacterModal.js';
 import type { ActionSlot } from './ActionBar.js';
 import { resolveSlotHotkey } from './ActionBar.js';
+import { DismissibleModal } from './DismissibleModal.js';
 
 interface Props {
   isOpen: boolean;
@@ -343,15 +344,14 @@ export const SkillBookModal: React.FC<Props> = ({
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 bg-black/85 flex items-center justify-center p-3 backdrop-blur-sm select-none"
-      onClick={onClose}
+    <DismissibleModal
+      open={isOpen}
+      onClose={onClose}
+      closeOnEscape={sniffingSlotIdx === null}
+      overlayClassName="bg-black/85 p-3"
+      panelClassName="bg-[#121224] border-2 border-[#45456b] rounded-2xl w-full max-w-6xl xl:max-w-[1360px] 2xl:max-w-[1440px] h-[min(92vh,920px)] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150"
+      aria-label="技能书与快捷键配置中心"
     >
-      {/* Modal shell: viewport-bounded; bottom bars locked; top scrolls */}
-      <div
-        className="bg-[#121224] border-2 border-[#45456b] rounded-2xl w-full max-w-6xl xl:max-w-[1360px] 2xl:max-w-[1440px] h-[min(92vh,920px)] flex flex-col shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150"
-        onClick={e => e.stopPropagation()}
-      >
 
         {/* Header — fixed */}
         <div className="flex-shrink-0 bg-[#1a1a36] px-4 py-2 border-b border-[#2d2d4e] flex items-center justify-between">
@@ -569,7 +569,6 @@ export const SkillBookModal: React.FC<Props> = ({
             </div>
           </div>
         </div>
-      </div>
-    </div>
+    </DismissibleModal>
   );
 };

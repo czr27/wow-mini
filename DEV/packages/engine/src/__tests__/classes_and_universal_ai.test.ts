@@ -164,6 +164,22 @@ describe('Cataclysm Full 10-Class Roster, Level 80 Max-Haste, GCD & Universal AI
       );
       assert.equal(isOffGcdSpellId(id), true, `isOffGcdSpellId(${id}) 必须返回 true`);
     }
+
+    // 打断技能：标记 isInterrupt；近战踢 / 责难 / 心灵冰冻 = 80px，远程打断 = 200px
+    const meleeInterrupts = ['rogue_kick', 'warrior_pummel', 'paladin_rebuke', 'dk_mind_freeze'];
+    const rangedInterrupts = ['shaman_wind_shear', 'mage_counterspell', 'hunter_silencing_shot'];
+    for (const id of meleeInterrupts) {
+      const sp = getSpellByAnyId(id);
+      assert.ok(sp, id);
+      assert.equal(sp!.isInterrupt, true, `${id} 须标记 isInterrupt`);
+      assert.equal(sp!.rangePx, 80, `${id} 近战打断射程应为 80`);
+    }
+    for (const id of rangedInterrupts) {
+      const sp = getSpellByAnyId(id);
+      assert.ok(sp, id);
+      assert.equal(sp!.isInterrupt, true, `${id} 须标记 isInterrupt`);
+      assert.equal(sp!.rangePx, 200, `${id} 短距打断射程应为 200`);
+    }
   });
 
   it('3. 通用治疗 AI 规则验证（奶萨/奶德/神牧/戒律牧/奶骑 零专精硬编码）', () => {

@@ -174,6 +174,29 @@ export const ActionBar: React.FC<Props> = ({
     }
   }, [initialPos]);
 
+  // 自定义坐标：禁止压标题区 / 出屏；已出界自动拉回
+  useEffect(() => {
+    if (pos == null) return;
+    const pullIn = () => {
+      const el = barContainerRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      setPos((prev) => {
+        if (!prev) return prev;
+        return clampHudPosToViewport(
+          prev,
+          window.innerWidth,
+          window.innerHeight,
+          rect.width || 560,
+          rect.height || 180
+        );
+      });
+    };
+    pullIn();
+    window.addEventListener('resize', pullIn);
+    return () => window.removeEventListener('resize', pullIn);
+  }, [pos == null]);
+
   useEffect(() => {
     if (!isDraggingBar) return;
 
@@ -476,57 +499,19 @@ export const ActionBar: React.FC<Props> = ({
     };
   }, [keybindings, handleSlotCast, playerCast, onCancelCast]);
 
+  const handleBarChromeMouseDown = (e: React.MouseEvent) => {
+    // Drag only from outer padding / gaps — not from skill slots
+    if ((e.target as HTMLElement).closest('[data-action-slot]')) return;
+    handleBarDragStart(e);
+  };
+
   return (
     <div
       ref={barContainerRef}
       data-testid="action-bar-container"
-      className={`flex flex-col items-center select-none space-y-1.5 ${pos ? 'fixed z-30' : 'relative'}`}
+      className={`group/action-bar flex flex-col items-center select-none space-y-1.5 ${pos ? 'fixed z-30' : 'relative'}`}
       style={pos ? { left: `${pos.x}px`, top: `${pos.y}px` } : undefined}
     >
-      {/* Top Draggable Gripper Bar */}
-      <div
-        onMouseDown={handleBarDragStart}
-        data-testid="action-bar-drag-handle"
-        className={`w-full flex items-center justify-between px-2.5 py-0.5 rounded-lg select-none text-[9.5px] font-mono transition border ${
-          isLocked
-            ? 'bg-[#10101e]/80 text-gray-500 border-transparent cursor-default'
-            : 'bg-[#1a1a36]/90 hover:bg-[#25254a] text-gray-300 hover:text-amber-300 border-[#2f2f4e] cursor-move shadow-inner'
-        }`}
-        title={isLocked ? "动作条已锁定 (点击右侧解锁即可自由拖动)" : "按住此栏可自由拖拽动作条至屏幕任意位置"}
-      >
-        <div className="flex items-center space-x-1.5 pointer-events-none">
-          <span className="text-gray-400 font-bold">⠿</span>
-        </div>
-        <div className="flex items-center space-x-2">
-          <button
-            type="button"
-            onClick={(e) => {
-              e.stopPropagation();
-              setIsLocked(!isLocked);
-            }}
-            className="text-[9px] px-1.5 py-0.2 rounded hover:bg-black/50 text-amber-300 transition"
-          >
-            {isLocked ? '🔒 锁定' : '🔓 解锁'}
-          </button>
-          {pos && (
-            <button
-              type="button"
-              aria-label="重置动作条位置"
-              onClick={(e) => {
-                e.stopPropagation();
-                setPos(null);
-                if (onSavePos) {
-                  onSavePos(null);
-                }
-              }}
-              className="text-[9px] text-gray-400 hover:text-red-400 px-1 rounded transition"
-              title="重置回窗体下方中部默认位置"
-            >
-              重置
-            </button>
-          )}
-        </div>
-      </div>
       {/* DK Runes or Rogue Combo Points Bar */}
       {classId === 'DK' && dkRunes && (
         <div className="flex items-center space-x-2 bg-[#121220]/90 border border-[#3b3b5c] px-3 py-1 rounded-lg backdrop-blur">
@@ -614,9 +599,29 @@ export const ActionBar: React.FC<Props> = ({
         </div>
       )}
 
-      {/* 3 Action Bars: Bar 3 (F1~F12), Bar 2 (Shift+1~Shift+=), Bar 1 (1~=) */}
-      <div className="flex flex-col items-center space-y-1 bg-[#141424]/95 border-2 border-[#2f2f4c] p-2 rounded-xl shadow-2xl backdrop-blur">
-        
+      {/* 3 Action Bars: outer border only on hover; drag padding/gaps to move when unlocked */}
+      <div
+        data-testid="action-bar-drag-handle"
+        onMouseDown={handleBarChromeMouseDown}
+        className={`relative flex flex-col items-center space-y-1 bg-[#141424]/95 border-2 border-transparent group-hover/action-bar:border-[#2f2f4c] p-2 rounded-xl shadow-2xl backdrop-blur transition-colors ${
+          isLocked ? 'cursor-default' : 'cursor-move'
+        }`}
+        title={isLocked ? '动作条已锁定' : '拖动边框或空白处可移动动作条'}
+      >
+        <button
+          type="button"
+          data-testid="action-bar-lock"
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            setIsLocked(!isLocked);
+          }}
+          className="absolute -top-1 -right-1 z-40 w-5 h-5 flex items-center justify-center text-[11px] rounded bg-black/70 border border-[#3e3e5c] text-amber-300 opacity-0 pointer-events-none group-hover/action-bar:opacity-100 group-hover/action-bar:pointer-events-auto transition-opacity hover:bg-black/90"
+          title={isLocked ? '解锁动作条位置' : '锁定动作条位置'}
+        >
+          {isLocked ? '🔒' : '🔓'}
+        </button>
+
         {/* Helper to render a 12-slot row - all 3 rows identically sized (w-11 h-11) and aligned */}
         {([
           { rowName: '动作条 3 (F1~F12)', startIdx: 24, sizeCls: 'w-11 h-11', textCls: 'text-[10px]' },
@@ -665,6 +670,7 @@ export const ActionBar: React.FC<Props> = ({
               return (
                 <div
                   key={idx}
+                  data-action-slot={idx}
                   draggable={!isPlayerDead && !!slot}
                   onDragStart={(e) => {
                     if (!slot) return;
@@ -890,21 +896,6 @@ export const ActionBar: React.FC<Props> = ({
             })}
           </div>
         ))}
-      </div>
-
-      <div className="text-[10px] text-gray-500 font-mono flex items-center space-x-2">
-        <span>当前专精：<span className="text-amber-400">{specId}</span></span>
-        <span>·</span>
-        <span className="text-gray-400">💡 提示：技能栏可直接拖动交换位置，悬停查看原版 4.3 技能详细说明</span>
-        <span>·</span>
-        <button
-          type="button"
-          onClick={() => window.dispatchEvent(new CustomEvent('cata_toggle_castbar_lock'))}
-          className="text-amber-400 hover:text-amber-300 underline cursor-pointer font-bold"
-          title="点击解锁/锁定玩家技能读条窗体，可在屏幕上自由拖拽定位"
-        >
-          ⚡ 调整读条窗体位置
-        </button>
       </div>
 
       {/* Authentic WoW Cataclysm Spell Tooltip (with ClassRegistry fallback for all 10 classes) */}

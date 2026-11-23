@@ -6,6 +6,7 @@
 // ============================================================
 
 import type { ClassDef, ClassId, ResourceKind, RoleId, Spell as ModernSpell, SpellSchool } from '../types.js';
+import { GROUND_TARGET_SPELL_DEFS } from '../types.js';
 import type { ClassSpec, Spell as LegacySpell } from './DeathKnight.js';
 import { DEATH_KNIGHT } from './DeathKnight.js';
 import { DRUID } from './Druid.js';
@@ -18,6 +19,146 @@ import { HUNTER } from './Hunter.js';
 import { PRIEST } from './Priest.js';
 import { WARLOCK } from './Warlock.js';
 import { CLASS_SPECS_MAP } from '../room/RoomTypes.js';
+
+/** Canvas px ≈ yards: 80≈10yd (melee/chain jump), 120≈15yd (Wild Growth), 200≈25yd, 240≈30yd splash, 320≈40yd cast/ground */
+export const RANGE_MELEE_PX = 80;
+export const RANGE_10YD_PX = 80;
+export const RANGE_15YD_PX = 120;
+export const RANGE_SHORT_PX = 200;
+export const RANGE_30YD_PX = 240;
+export const RANGE_40YD_PX = 320;
+
+/** Convert yards → canvas px (40yd = 320px). */
+export function yardsToPx(yards: number): number {
+  return Math.round((yards / 40) * RANGE_40YD_PX);
+}
+
+/** Cata raid/party buffs: MotW / Arcane Brilliance / Fort / Kings = 30yd cast → whole raid. */
+export function isRaidWideBuffSpellId(spellId: string): boolean {
+  const id = (spellId || '').toLowerCase();
+  return (
+    id.includes('mark_of_the_wild') ||
+    id.includes('arcane_brilliance') ||
+    id.includes('power_word_fortitude') ||
+    id.includes('blessing_of_kings') ||
+    id.includes('blessing_of_might') ||
+    id === 'pw_fortitude'
+  );
+}
+
+/** Shout-style buffs: cast on self, ~30yd around caster (Horn / Battle Shout). */
+export function isCasterRadiusRaidBuffSpellId(spellId: string): boolean {
+  const id = (spellId || '').toLowerCase();
+  return id.includes('horn_of_winter') || id.includes('battle_shout') || id.includes('commanding_shout');
+}
+
+function resolveSpellAoeMeta(opts: {
+  spellId: string;
+  shortId: string;
+  targetType: NormalizedTargetType;
+  school: SpellSchool;
+  maxAoeTargets: number;
+  isAOE: boolean;
+  isRaidBuff?: boolean;
+}): { aoeRadiusPx: number; aoeCenterMode: 'TARGET' | 'CASTER' | 'RAID' | 'NONE' } {
+  const id = opts.spellId;
+  const short = opts.shortId;
+
+  // Raid-wide buffs (MotW): no splash radius — entire living raid
+  if (opts.isRaidBuff || isRaidWideBuffSpellId(id) || isRaidWideBuffSpellId(short)) {
+    if (isCasterRadiusRaidBuffSpellId(id) || isCasterRadiusRaidBuffSpellId(short)) {
+      return { aoeRadiusPx: RANGE_30YD_PX, aoeCenterMode: 'CASTER' };
+    }
+    return { aoeRadiusPx: 0, aoeCenterMode: 'RAID' };
+  }
+
+  if (!opts.isAOE) return { aoeRadiusPx: 0, aoeCenterMode: 'NONE' };
+  // 野性成长：选中目标为圆心，15 码溅射
+  if (short === 'wild_growth' || id.includes('wild_growth')) {
+    return { aoeRadiusPx: RANGE_15YD_PX, aoeCenterMode: 'TARGET' };
+  }
+  if (
+    short === 'circle_of_healing' ||
+    id.includes('circle_of_healing') ||
+    short === 'prayer_of_healing' ||
+    id.includes('prayer_of_healing') ||
+    short === 'holy_radiance' ||
+    id.includes('holy_radiance')
+  ) {
+    return { aoeRadiusPx: RANGE_30YD_PX, aoeCenterMode: 'TARGET' };
+  }
+  if (short === 'chain_heal' || id.includes('chain_heal')) {
+    return { aoeRadiusPx: RANGE_10YD_PX, aoeCenterMode: 'TARGET' };
+  }
+  if (short === 'light_of_dawn' || id.includes('light_of_dawn')) {
+    return { aoeRadiusPx: RANGE_30YD_PX, aoeCenterMode: 'CASTER' };
+  }
+  if (short === 'tranquility' || id.includes('tranquility')) {
+    return { aoeRadiusPx: RANGE_40YD_PX, aoeCenterMode: 'CASTER' };
+  }
+  if (opts.targetType === 'AOE_ENEMY' && opts.school === 'PHYSICAL') {
+    return { aoeRadiusPx: RANGE_MELEE_PX + 40, aoeCenterMode: 'CASTER' };
+  }
+  if (opts.targetType === 'SMART_ALLY' || opts.targetType === 'AOE_ALLY') {
+    return { aoeRadiusPx: RANGE_30YD_PX, aoeCenterMode: 'TARGET' };
+  }
+  if (opts.targetType === 'GROUND') {
+    return { aoeRadiusPx: 0, aoeCenterMode: 'NONE' };
+  }
+  return { aoeRadiusPx: RANGE_30YD_PX, aoeCenterMode: 'TARGET' };
+}
+
+function resolveSpellRangePx(opts: {
+  classId: ClassId;
+  spellId: string;
+  shortId: string;
+  targetType: NormalizedTargetType;
+  school: SpellSchool;
+  isInterrupt?: boolean;
+  explicitRange?: number;
+  isRaidBuff?: boolean;
+}): number {
+  if (opts.explicitRange && opts.explicitRange > 0) return opts.explicitRange;
+  const ground =
+    GROUND_TARGET_SPELL_DEFS[opts.shortId] ||
+    GROUND_TARGET_SPELL_DEFS[opts.spellId] ||
+    GROUND_TARGET_SPELL_DEFS[opts.spellId.replace(/^[^_]+_/, '')];
+  if (ground) return ground.maxRange;
+  if (opts.targetType === 'GROUND') return RANGE_40YD_PX;
+  if (opts.isInterrupt) {
+    // Kick / Pummel / Rebuke / Mind Freeze / Skull Bash = melee; others (Counterspell etc.) = short
+    const meleeInterruptIds = new Set([
+      'pummel',
+      'kick',
+      'rebuke',
+      'mind_freeze',
+      'skull_bash',
+    ]);
+    return meleeInterruptIds.has(opts.shortId) ? RANGE_MELEE_PX : RANGE_SHORT_PX;
+  }
+  if (isCasterRadiusRaidBuffSpellId(opts.spellId) || isCasterRadiusRaidBuffSpellId(opts.shortId)) {
+    return 0;
+  }
+  if (opts.isRaidBuff || isRaidWideBuffSpellId(opts.spellId) || isRaidWideBuffSpellId(opts.shortId)) {
+    return RANGE_30YD_PX;
+  }
+  const meleeClass =
+    opts.classId === 'ROGUE' ||
+    opts.classId === 'WARRIOR' ||
+    opts.classId === 'DK' ||
+    (opts.classId === 'PALADIN' && opts.targetType === 'SINGLE_ENEMY' && opts.school === 'PHYSICAL') ||
+    (opts.classId === 'SHAMAN' && (opts.shortId.includes('stormstrike') || opts.shortId.includes('lava_lash'))) ||
+    (opts.classId === 'DRUID' && (opts.shortId.includes('mangle') || opts.shortId.includes('shred') || opts.shortId.includes('swipe') || opts.shortId.includes('lacerate')));
+  if (
+    meleeClass &&
+    opts.school === 'PHYSICAL' &&
+    (opts.targetType === 'SINGLE_ENEMY' || opts.targetType === 'AOE_ENEMY')
+  ) {
+    return RANGE_MELEE_PX;
+  }
+  if (opts.targetType === 'SELF') return 0;
+  return RANGE_40YD_PX;
+}
 
 export type NormalizedGcdCategory = 'NORMAL' | 'ROGUE' | 'OFF_GCD';
 
@@ -84,6 +225,21 @@ export interface NormalizedSpell {
   groundKind?: 'TOTEM' | 'HEAL_ZONE' | 'DAMAGE_ZONE' | 'CONE_WARNING';
   groundColorHex?: string;
   groundRadius?: number;
+  /**
+   * Max cast/placement range in canvas pixels.
+   * Convention: ~80 melee, ~200 short (25yd interrupts), ~320 ≈ 40 yards (heals / ground).
+   */
+  rangePx: number;
+  /**
+   * Multi-target splash / jump radius in px (0 = single-target or ground-handled).
+   * Smart heals like Wild Growth / Circle of Healing: 240 ≈ 30yd around target.
+   */
+  aoeRadiusPx: number;
+  /**
+   * Who anchors multi-target effects:
+   * TARGET / CASTER = spatial radius; RAID = entire living raid (MotW etc.); NONE = single.
+   */
+  aoeCenterMode: 'TARGET' | 'CASTER' | 'RAID' | 'NONE';
   dispelTypes?: string[];
   description: string;
 }
@@ -131,6 +287,8 @@ const SHORT_ID_ALIASES: Record<string, string> = {
   ascendance: 'shaman_ascendance',
   ancestral_guidance: 'shaman_ancestral_guidance',
   bloodlust: 'shaman_heroism',
+  heroism: 'shaman_heroism',
+  time_warp: 'mage_time_warp',
   icebound: 'dk_icebound_fortitude',
   ams: 'dk_anti_magic_shell',
   kidney_shot: 'rogue_kick',
@@ -157,6 +315,49 @@ export function toShortSpellId(spellId: string, classId?: ClassId): string {
     }
   }
   return spellId;
+}
+
+/**
+ * All IDs that should share one cooldown for UI/network sync
+ * (e.g. bloodlust ↔ heroism ↔ shaman_heroism).
+ */
+export function resolveCooldownSpellIds(
+  spellId: string,
+  preferredClassId?: ClassId | 'BOSS' | 'NPC'
+): string[] {
+  if (!spellId) return [];
+  const ids = new Set<string>([spellId]);
+  const aliased = SHORT_ID_ALIASES[spellId] ?? spellId;
+  ids.add(aliased);
+  const sp = getSpellByAnyId(spellId, preferredClassId);
+  if (sp) {
+    ids.add(sp.id);
+    ids.add(sp.shortId);
+    if (sp.auraId) ids.add(sp.auraId);
+  }
+  for (const [alias, canon] of Object.entries(SHORT_ID_ALIASES)) {
+    if (ids.has(canon) || ids.has(alias)) {
+      ids.add(alias);
+      ids.add(canon);
+    }
+  }
+  return [...ids].filter(Boolean);
+}
+
+/** 嗜血 / 英勇 / 时间扭曲 — raid-wide haste lust */
+export function isBloodlustSpellId(spellId: string, preferredClassId?: ClassId | 'BOSS' | 'NPC'): boolean {
+  const keys = resolveCooldownSpellIds(spellId, preferredClassId).map((k) => k.toLowerCase());
+  return keys.some(
+    (k) =>
+      k === 'bloodlust' ||
+      k === 'heroism' ||
+      k === 'shaman_heroism' ||
+      k === 'time_warp' ||
+      k === 'mage_time_warp' ||
+      k.includes('heroism') ||
+      k.includes('time_warp') ||
+      k.includes('bloodlust')
+  );
 }
 
 function mapLegacySpecTagToCanonicalSpecs(classId: ClassId, specTag?: string): string[] {
@@ -241,6 +442,12 @@ const RESURRECT_SPELL_IDS = new Set([
   'shaman_ancestral_spirit',
   'paladin_redemption',
   'priest_resurrection',
+  'warlock_soulstone',
+]);
+
+/** Combat-usable battle rez (in-combat). Others are travel/OOC only. */
+const BATTLE_REZ_SPELL_IDS = new Set([
+  'druid_rebirth',
   'warlock_soulstone',
 ]);
 
@@ -361,12 +568,16 @@ function normalizeLegacySpell(classId: ClassId, sp: LegacySpell): NormalizedSpel
     sp.id === 'shaman_spirit_link_totem' ||
     sp.id === 'shaman_healing_tide_totem';
   const isGroundDamage = groundKind === 'DAMAGE_ZONE';
+  // 单体目标附带 HEAL_ZONE（如迅捷治愈→百花）仍按单体决策，不进群疗池
+  const groundImpliesAoe =
+    (isGroundHeal || isGroundDamage) &&
+    targetType !== 'SINGLE_ALLY' &&
+    targetType !== 'SELF';
   const isAOE =
     targetType === 'AOE_ENEMY' ||
     targetType === 'AOE_ALLY' ||
     targetType === 'SMART_ALLY' ||
-    isGroundHeal ||
-    isGroundDamage ||
+    groundImpliesAoe ||
     sp.id === 'druid_wild_growth' ||
     sp.id === 'druid_tranquility' ||
     sp.id === 'mage_living_bomb' ||
@@ -377,7 +588,9 @@ function normalizeLegacySpell(classId: ClassId, sp: LegacySpell): NormalizedSpel
   const isDamage = directDamage > 0 || dotTotalDamage > 0 || isGroundDamage;
   const isDefensive = DEFENSIVE_SPELL_KEYWORDS.some(k => sp.id.includes(k));
   const isMajorCd = sp.cooldownMs >= 45_000;
-  const isOutOfCombatOnly = Boolean(sp.travelOnly || (isResurrect && sp.id !== 'druid_rebirth'));
+  const isOutOfCombatOnly = Boolean(
+    sp.travelOnly || (isResurrect && !BATTLE_REZ_SPELL_IDS.has(sp.id))
+  );
 
   const maxAoeTargets = !isAOE
     ? 1
@@ -439,6 +652,25 @@ function normalizeLegacySpell(classId: ClassId, sp: LegacySpell): NormalizedSpel
     groundKind,
     groundColorHex,
     groundRadius,
+    rangePx: resolveSpellRangePx({
+      classId,
+      spellId: sp.id,
+      shortId,
+      targetType,
+      school: sp.school,
+      isInterrupt,
+      explicitRange: (sp as LegacySpell).range,
+      isRaidBuff: Boolean(sp.isRaidBuff),
+    }),
+    ...resolveSpellAoeMeta({
+      spellId: sp.id,
+      shortId,
+      targetType,
+      school: sp.school,
+      maxAoeTargets,
+      isAOE: isAOE || Boolean(sp.isRaidBuff),
+      isRaidBuff: Boolean(sp.isRaidBuff),
+    }),
     description: descParts.join('；') || sp.name,
   };
 }
@@ -619,6 +851,25 @@ function normalizeModernSpell(classId: ClassId, specId: string, sp: ModernSpell)
     durationMs,
     tickIntervalMs,
     maxStacks,
+    rangePx: resolveSpellRangePx({
+      classId,
+      spellId: sp.id,
+      shortId,
+      targetType,
+      school: sp.school,
+      isInterrupt,
+      explicitRange: sp.range,
+      isRaidBuff,
+    }),
+    ...resolveSpellAoeMeta({
+      spellId: sp.id,
+      shortId,
+      targetType,
+      school: sp.school,
+      maxAoeTargets,
+      isAOE: isAOE || isRaidBuff,
+      isRaidBuff,
+    }),
     dispelTypes,
     description: sp.description || sp.name,
   };

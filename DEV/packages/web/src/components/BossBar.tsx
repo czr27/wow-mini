@@ -59,14 +59,8 @@ export const BossBar: React.FC<Props> = ({
               <span className={`font-bold ${isTargetOT ? 'text-red-400 font-extrabold' : 'text-amber-300'}`}>
                 {targetName}
               </span>
-              {isTargetOT ? (
-                <span className="text-[10px] bg-red-600 text-white px-1 rounded animate-bounce">
-                  OT!
-                </span>
-              ) : (
-                <span className="text-[10px] text-gray-400">
-                  {targetRole === 'TANK' ? '(坦克)' : ''}
-                </span>
+              {!isTargetOT && targetRole === 'TANK' && (
+                <span className="text-[10px] text-gray-400">(坦克)</span>
               )}
             </div>
           )}

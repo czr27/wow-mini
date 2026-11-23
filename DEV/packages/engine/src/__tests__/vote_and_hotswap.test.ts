@@ -95,5 +95,59 @@ test('substituteOutOfCombat inherits HP and buffs from replaced AI', () => {
   assert.equal(unit!.position.x, 111);
   assert.equal(unit!.isPlayer, false);
   assert.equal(unit!.isHumanControlled, true);
+  assert.equal(unit!.name, '新人', '热顶替后名字应为加入玩家');
+  assert.equal(unit!.classId, 'MAGE', '热顶替后职业应为加入玩家');
   assert.equal(engine.getUnit(ai!.id), undefined);
+});
+
+test('inheritCombatUnitFromAi remaps identity and stops AI control even on id drift', () => {
+  const mgr = new RoomManager();
+  const engine = new CombatEngine();
+  const orphanAi: Unit = {
+    id: 'engine_orphan_ai',
+    name: '吉安娜',
+    classId: 'MAGE',
+    spec: 'FIRE',
+    role: 'DPS',
+    isPlayer: false,
+    isAlive: true,
+    hp: 9000,
+    maxHp: 36000,
+    absorb: 0,
+    resources: [],
+    buffs: [],
+    threatTable: [],
+    position: { x: 50, y: 60 },
+    unitKind: 'AI',
+    stats: {
+      attackPower: 1,
+      spellPower: 1,
+      critChance: 0,
+      haste: 0,
+      armor: 0,
+      spellResist: 0,
+      block: 0,
+      parry: 0,
+      dodge: 0,
+      mastery: 0,
+      versatility: 0,
+      speed: 1,
+    },
+  };
+  engine.addUnit(orphanAi);
+
+  const inherited = mgr.inheritCombatUnitFromAi(engine, 'missing_room_ai_id', {
+    id: 'joiner_1',
+    name: '火法玩家',
+    classId: 'MAGE',
+    spec: 'FIRE',
+    role: 'DPS',
+  });
+  assert.ok(inherited);
+  assert.equal(inherited!.id, 'joiner_1');
+  assert.equal(inherited!.name, '火法玩家');
+  assert.equal(inherited!.isHumanControlled, true);
+  assert.equal(inherited!.unitKind, undefined);
+  assert.equal(engine.getUnit('engine_orphan_ai'), undefined);
+  assert.equal(inherited!.hp, 9000);
 });

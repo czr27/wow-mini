@@ -1,6 +1,72 @@
 import React, { useState } from 'react';
-import type { ClassId, DungeonDifficulty, CustomDifficultySettings } from '@cata-raid-sim/engine';
-import { type LobbyRoom, DUNGEON_ROLE_QUOTAS, DEFAULT_CUSTOM_DIFFICULTY } from '@cata-raid-sim/engine';
+import type {
+  ClassId,
+  DungeonDifficulty,
+  CustomDifficultySettings,
+} from '@cata-raid-sim/engine';
+import {
+  type LobbyRoom,
+  DUNGEON_ROLE_QUOTAS,
+  SELECTABLE_DUNGEONS,
+  DEFAULT_CUSTOM_DIFFICULTY,
+  getRoleBySpec,
+  hasJoinableSeat,
+} from '@cata-raid-sim/engine';
+import { DismissibleModal } from '../DismissibleModal.js';
+import { DungeonPicker } from './DungeonPicker.js';
+
+const LAST_CREATE_ROOM_KEY = 'cata_last_create_room';
+
+type LastCreateRoomPrefs = {
+  dungeonId: string;
+  difficulty: DungeonDifficulty;
+};
+
+function loadLastCreateRoomPrefs(): LastCreateRoomPrefs {
+  try {
+    const raw = localStorage.getItem(LAST_CREATE_ROOM_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<LastCreateRoomPrefs>;
+      const dungeonId =
+        typeof parsed.dungeonId === 'string' &&
+        SELECTABLE_DUNGEONS.some((d) => d.id === parsed.dungeonId)
+          ? parsed.dungeonId
+          : 'shadowfang_keep';
+      const difficulty: DungeonDifficulty =
+        parsed.difficulty === 'NORMAL' ||
+        parsed.difficulty === 'HEROIC' ||
+        parsed.difficulty === 'CUSTOM'
+          ? parsed.difficulty
+          : 'NORMAL';
+      return { dungeonId, difficulty };
+    }
+  } catch {}
+  // Fallback: reuse adventure-level dungeon prefs if present
+  try {
+    const savedDungeon = localStorage.getItem('cata_dungeon_id');
+    const savedDiff = localStorage.getItem('cata_dungeon_difficulty');
+    const dungeonId =
+      savedDungeon && SELECTABLE_DUNGEONS.some((d) => d.id === savedDungeon)
+        ? savedDungeon
+        : 'shadowfang_keep';
+    const difficulty: DungeonDifficulty =
+      savedDiff === 'NORMAL' || savedDiff === 'HEROIC' || savedDiff === 'CUSTOM'
+        ? savedDiff
+        : 'NORMAL';
+    return { dungeonId, difficulty };
+  } catch {}
+  return { dungeonId: 'shadowfang_keep', difficulty: 'NORMAL' };
+}
+
+function saveLastCreateRoomPrefs(prefs: LastCreateRoomPrefs) {
+  try {
+    localStorage.setItem(LAST_CREATE_ROOM_KEY, JSON.stringify(prefs));
+    localStorage.setItem('cata_dungeon_id', prefs.dungeonId);
+    localStorage.setItem('cata_dungeon_difficulty', prefs.difficulty);
+    const dungeon = SELECTABLE_DUNGEONS.find((d) => d.id === prefs.dungeonId);
+    if (dungeon) localStorage.setItem('cata_dungeon_tier', dungeon.tier);
+  } catch {}
+}
 
 interface RoomListViewProps {
   rooms: LobbyRoom[];
@@ -39,8 +105,12 @@ export const RoomListView: React.FC<RoomListViewProps> = ({
   const [selectedMapFilter, setSelectedMapFilter] = useState<string>('ALL');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newRoomName, setNewRoomName] = useState(`${player.name}的队伍`);
-  const [newDungeonId, setNewDungeonId] = useState<string>('shadowfang_keep');
-  const [newDifficulty, setNewDifficulty] = useState<DungeonDifficulty>('HEROIC');
+  const [newDungeonId, setNewDungeonId] = useState<string>(
+    () => loadLastCreateRoomPrefs().dungeonId
+  );
+  const [newDifficulty, setNewDifficulty] = useState<DungeonDifficulty>(
+    () => loadLastCreateRoomPrefs().difficulty
+  );
 
   const updateCoeff = (key: keyof CustomDifficultySettings, val: number) => {
     if (onChangeCustomDifficulty) {
@@ -61,6 +131,7 @@ export const RoomListView: React.FC<RoomListViewProps> = ({
   const handleCreateSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newRoomName.trim()) return;
+    saveLastCreateRoomPrefs({ dungeonId: newDungeonId, difficulty: newDifficulty });
     onCreateRoom(
       newRoomName.trim(),
       newDungeonId,
@@ -103,7 +174,7 @@ export const RoomListView: React.FC<RoomListViewProps> = ({
         {/* Action Toolbar */}
         <div className="shrink-0 flex flex-wrap items-center justify-between gap-4 bg-slate-900/90 p-3 rounded-lg border border-slate-800 shadow">
           {/* Left search & filter */}
-          <div className="flex items-center space-x-3">
+          <div className="flex flex-wrap items-center gap-3">
             <div className="relative">
               <input
                 type="text"
@@ -122,39 +193,12 @@ export const RoomListView: React.FC<RoomListViewProps> = ({
               )}
             </div>
 
-            <div className="flex items-center space-x-1 text-xs">
-              <span className="text-slate-400 mr-1">地图筛选:</span>
-              <button
-                onClick={() => setSelectedMapFilter('ALL')}
-                className={`px-2.5 py-1 rounded text-xs transition ${
-                  selectedMapFilter === 'ALL'
-                    ? 'bg-amber-600 text-white font-bold'
-                    : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
-                }`}
-              >
-                全部
-              </button>
-              <button
-                onClick={() => setSelectedMapFilter('shadowfang_keep')}
-                className={`px-2.5 py-1 rounded text-xs transition ${
-                  selectedMapFilter === 'shadowfang_keep'
-                    ? 'bg-amber-600 text-white font-bold'
-                    : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
-                }`}
-              >
-                影牙城堡 (5人)
-              </button>
-              <button
-                onClick={() => setSelectedMapFilter('dragon_soul')}
-                className={`px-2.5 py-1 rounded text-xs transition ${
-                  selectedMapFilter === 'dragon_soul'
-                    ? 'bg-amber-600 text-white font-bold'
-                    : 'bg-slate-800 text-slate-400 hover:bg-slate-700'
-                }`}
-              >
-                巨龙之魂 (20人)
-              </button>
-            </div>
+            <DungeonPicker
+              mode="filter"
+              label="地图筛选"
+              value={selectedMapFilter}
+              onChange={setSelectedMapFilter}
+            />
           </div>
 
           {/* Right Action Buttons */}
@@ -163,7 +207,7 @@ export const RoomListView: React.FC<RoomListViewProps> = ({
               onClick={onQuickJoin}
               className="px-4 py-2 rounded font-bold text-xs bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white shadow transition flex items-center space-x-1"
             >
-              <span>⚡ 快速加入游戏</span>
+              <span>⚡ 快速游戏</span>
             </button>
             <button
               onClick={() => setShowCreateModal(true)}
@@ -205,13 +249,22 @@ export const RoomListView: React.FC<RoomListViewProps> = ({
                   const totalCount = room.members.length;
                   const playersFull = humanCount >= quota.capacity;
                   const isInCombat = room.status === 'IN_COMBAT' || room.status === 'OUT_OF_COMBAT';
-                  const canJoin = !playersFull;
+                  const playerRole = getRoleBySpec(player.classId, player.spec);
+                  const hasSeat = hasJoinableSeat(room, playerRole);
+                  const canJoin = !playersFull && hasSeat;
+                  const joinBlockedReason = playersFull
+                    ? '人数已满'
+                    : !hasSeat
+                      ? room.difficulty === 'CUSTOM'
+                        ? '无空位'
+                        : '职责满员'
+                      : '';
 
                   return (
                     <tr
                       key={room.id}
                       className={`transition ${
-                        playersFull
+                        !canJoin
                           ? 'bg-slate-950/80 opacity-45 cursor-not-allowed'
                           : 'hover:bg-slate-800/50 cursor-pointer'
                       }`}
@@ -288,14 +341,21 @@ export const RoomListView: React.FC<RoomListViewProps> = ({
                       </td>
                       <td className="py-3 px-4 text-center">
                         {!canJoin ? (
-                          <span className="px-3 py-1 rounded font-bold text-xs bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed">
-                            人数已满
+                          <span
+                            className="px-3 py-1 rounded font-bold text-xs bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed"
+                            title={joinBlockedReason}
+                          >
+                            {joinBlockedReason || '无法加入'}
                           </span>
                         ) : isInCombat ? (
                           <button
                             onClick={() => onJoinRoom(room.id)}
                             className="px-3 py-1 rounded font-bold text-xs bg-rose-600 hover:bg-rose-500 text-white shadow transition"
-                            title="战斗中可加入游戏并顶替同职责 AI"
+                            title={
+                              room.difficulty === 'CUSTOM'
+                                ? '战斗中可加入并顶替 AI（优先坦克同职业→输出→治疗）'
+                                : '战斗中可加入游戏并顶替同职责 AI'
+                            }
                           >
                             加入游戏
                           </button>
@@ -319,18 +379,16 @@ export const RoomListView: React.FC<RoomListViewProps> = ({
 
       {/* Create Room Modal */}
       {showCreateModal && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
-          onClick={() => setShowCreateModal(false)}
+        <DismissibleModal
+          onClose={() => setShowCreateModal(false)}
+          overlayClassName="bg-black/70"
+          panelClassName="bg-slate-900 border border-amber-500/40 rounded-xl shadow-2xl max-w-lg w-full p-6 text-slate-100 animate-in fade-in zoom-in-95 duration-150"
+          aria-label="创建房间"
         >
-          <div
-            className="bg-slate-900 border border-amber-500/40 rounded-xl shadow-2xl max-w-md w-full p-6 text-slate-100 animate-in fade-in zoom-in-95 duration-150"
-            onClick={e => e.stopPropagation()}
-          >
             <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-4">
               <h2 className="text-base font-bold text-amber-300 flex items-center space-x-2">
                 <span>➕</span>
-                <span>创建全新副本房间</span>
+                <span>创建房间</span>
               </h2>
               <button
                 type="button"
@@ -356,32 +414,14 @@ export const RoomListView: React.FC<RoomListViewProps> = ({
 
               <div>
                 <label className="block text-slate-300 font-semibold mb-1">副本地图</label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setNewDungeonId('shadowfang_keep')}
-                    className={`p-3 rounded-lg border text-left transition ${
-                      newDungeonId === 'shadowfang_keep'
-                        ? 'border-amber-500 bg-amber-950/30 text-amber-300'
-                        : 'border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700'
-                    }`}
-                  >
-                    <div className="font-bold text-xs">影牙城堡</div>
-                    <div className="text-[10px] text-slate-500 mt-0.5">5人小队 (1T 1H 3DPS)</div>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setNewDungeonId('dragon_soul')}
-                    className={`p-3 rounded-lg border text-left transition ${
-                      newDungeonId === 'dragon_soul'
-                        ? 'border-amber-500 bg-amber-950/30 text-amber-300'
-                        : 'border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700'
-                    }`}
-                  >
-                    <div className="font-bold text-xs">巨龙之魂</div>
-                    <div className="text-[10px] text-slate-500 mt-0.5">20人团本 (2T 4-5H 13-14DPS)</div>
-                  </button>
-                </div>
+                <DungeonPicker
+                  mode="select"
+                  value={newDungeonId}
+                  onChange={(id) => {
+                    setNewDungeonId(id);
+                  }}
+                  listMaxHeightClassName="max-h-56"
+                />
               </div>
 
               <div>
@@ -500,12 +540,11 @@ export const RoomListView: React.FC<RoomListViewProps> = ({
                   type="submit"
                   className="px-5 py-2 rounded font-bold bg-amber-500 hover:bg-amber-400 text-slate-950 text-xs transition shadow"
                 >
-                  确定创建
+                  创建
                 </button>
               </div>
             </form>
-          </div>
-        </div>
+        </DismissibleModal>
       )}
     </div>
   );

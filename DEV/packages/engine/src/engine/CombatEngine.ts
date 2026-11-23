@@ -6,8 +6,38 @@ import { AuraManager } from './AuraManager.js';
 import { ResourceManager } from './ResourceManager.js';
 import { CooldownManager } from './CooldownManager.js';
 import { EffectsManager } from './EffectsManager.js';
-import { getHastedCastTimeMs, LEVEL_80_BOSS_DAMAGE_SCALE } from './TierProfile.js';
+import {
+  getHastedCastTimeMs,
+  LEVEL_80_BOSS_DAMAGE_SCALE,
+  HEROIC_DIFFICULTY_MULT,
+  getDifficultyNumericMult,
+} from './TierProfile.js';
 import { classifySpellCastMode, getCastLifecyclePolicy, type SpellCastMode } from './CastLifecycle.js';
+import { selectAoeHealTargets, selectRaidBuffTargets } from './AoeTargeting.js';
+import {
+  getSpellByAnyId,
+  isCasterRadiusRaidBuffSpellId,
+  isRaidWideBuffSpellId,
+  RANGE_40YD_PX,
+  toShortSpellId,
+  yardsToPx,
+} from '../classes/ClassRegistry.js';
+import {
+  applyRaidBuffResourceBonuses,
+  applyStaminaRaidBuffHpBonus,
+  getIncomingDamageMultiplier,
+  getOutgoingDamageMultiplier,
+  getUnitHaste,
+  unitHasImmunity,
+} from './BuffEffects.js';
+import { CombatActionLog, type CombatActionEvent } from './CombatActionLog.js';
+import {
+  resolveUnitKind,
+  spawnTimedSummons,
+  tickTimedSummons,
+  syncPetFollowPositions,
+  isTimedSummonSpellId,
+} from './UnitSpawn.js';
 
 /** Collapse bounce / bloom / HoT / copy-heal label variants into one meter key. */
 export function normalizeCombatSkillName(raw: string): string {
@@ -15,9 +45,51 @@ export function normalizeCombatSkillName(raw: string): string {
     .replace(/[（(]第\d+跳[）)]/g, '')
     .replace(/\s*[（(]大绽放[）)]/g, '')
     .replace(/\s*[（(]HoT[）)]/gi, '')
+    .replace(/\s*[（(]DoT[）)]/gi, '')
     .replace(/\s*[（(]\d+层[）)]/g, '')
     .replace(/\s*[（(]复制治疗[）)]/g, '')
     .trim();
+}
+
+const HAS_CJK = /[\u4e00-\u9fff]/;
+const AURA_SUFFIX_RE = /_(?:dot|hot|buff|debuff|aura|channel|window|stun|slow|armor_bypass|disease_extend|reset|dup)$/i;
+
+/**
+ * Resolve a spell id / shortId / already-Chinese name into the meter display key.
+ * Prefer SPELL_ID_TO_NAME, then ClassRegistry spell.name, so English ids like
+ * `immolation` / `warlock_immolation` never leak into combat stats.
+ */
+export function resolveCombatSkillDisplayName(
+  spellIdOrName: string | undefined,
+  fallback = '普通攻击',
+): string {
+  if (!spellIdOrName) return fallback;
+  const raw = String(spellIdOrName).trim();
+  if (!raw) return fallback;
+  if (HAS_CJK.test(raw)) return normalizeCombatSkillName(raw);
+
+  const tryMapped = (id: string): string | undefined => {
+    const hit = SPELL_ID_TO_NAME[id];
+    return hit ? normalizeCombatSkillName(hit) : undefined;
+  };
+
+  const candidates = [raw];
+  const short = toShortSpellId(raw);
+  if (short && short !== raw) candidates.push(short);
+  const stripped = raw.replace(AURA_SUFFIX_RE, '');
+  if (stripped && stripped !== raw) candidates.push(stripped);
+  const shortStripped = short ? short.replace(AURA_SUFFIX_RE, '') : '';
+  if (shortStripped && !candidates.includes(shortStripped)) candidates.push(shortStripped);
+
+  for (const id of candidates) {
+    const mapped = tryMapped(id);
+    if (mapped) return mapped;
+  }
+  for (const id of candidates) {
+    const sp = getSpellByAnyId(id);
+    if (sp?.name) return normalizeCombatSkillName(sp.name);
+  }
+  return normalizeCombatSkillName(raw);
 }
 
 export const SPELL_ID_TO_NAME: Record<string, string> = {
@@ -256,6 +328,9 @@ export const SPELL_ID_TO_NAME: Record<string, string> = {
   immolation_aura: '献祭光环',
   hellfire: '地狱烈焰',
   immolate: '献祭',
+  immolation: '献祭',
+  warlock_immolation: '献祭',
+  warlock_immolation_aura: '献祭光环',
   incinerate: '烧尽',
   conflagrate: '燃烧',
   chaos_bolt: '混乱之箭',
@@ -353,6 +428,10 @@ export class CombatEngine {
   readonly resourceManager: ResourceManager;
   readonly cooldownManager: CooldownManager;
   readonly effectsManager: EffectsManager;
+  /** Host→guest action echo (cast/ground/summon) for FX sync */
+  readonly actionLog: CombatActionLog;
+  /** Optional hook so host UI can paint FX immediately when actions are logged */
+  onCombatAction: ((ev: CombatActionEvent) => void) | null = null;
 
   private static readonly TICK_MS = 50; // 20 Hz
 
@@ -363,6 +442,23 @@ export class CombatEngine {
     this.resourceManager = new ResourceManager(this);
     this.cooldownManager = new CooldownManager();
     this.effectsManager  = new EffectsManager(this);
+    this.actionLog       = new CombatActionLog();
+  }
+
+  /** Record a player/AI action for room FX sync (host only). */
+  logCombatAction(partial: Omit<CombatActionEvent, 'id' | 'atMs'> & { id?: string; atMs?: number }): CombatActionEvent {
+    const ev = this.actionLog.push(partial);
+    try {
+      this.onCombatAction?.(ev);
+    } catch {
+      /* UI hook must never break sim */
+    }
+    return ev;
+  }
+
+  /** Drain recent actions for the next COMBAT_STATE broadcast. */
+  drainRecentActions(): CombatActionEvent[] {
+    return this.actionLog.drain();
   }
 
   // ── Unit registry ────────────────────────────────────────────
@@ -459,8 +555,12 @@ export class CombatEngine {
     // 3. Tick auras (HoT / DoT / buff durations)
     this.auraManager.tickAll(this.units, deltaMs);
 
-    // 4. Tick ground effects
+    // 4. Tick ground effects (totems / zones expire + splice out)
     this.effectsManager.tick(this.units, deltaMs);
+
+    // 4.5 Timed summons expire; pets follow owners (positions → unit snapshots)
+    tickTimedSummons(this);
+    syncPetFollowPositions(this);
 
     // 5. Advance pending casts
     this.tickPendingCasts(deltaMs);
@@ -585,6 +685,9 @@ export class CombatEngine {
     const spell  = this.spellBook.get(spellId);
     if (!caster || !caster.isAlive || !target || !spell) return false;
 
+    // Hard CC (Asphyxiate airborne stun, etc.): cannot start new casts
+    if (this.isUnitCrowdControlled(caster)) return false;
+
     if (!this.cooldownManager.canCastSpell(casterId, spell, caster)) return false;
     if (spell.school && this.isSchoolLocked(casterId, spell.school)) return false;
 
@@ -660,7 +763,7 @@ export class CombatEngine {
     });
 
     if (castMode === 'CASTED') {
-      const hastedCastMs = getHastedCastTimeMs(spell.castTimeMs, caster.stats?.haste ?? 0);
+      const hastedCastMs = getHastedCastTimeMs(spell.castTimeMs, getUnitHaste(caster, 0));
       this.pendingCasts.push({
         casterId,
         spell,
@@ -675,7 +778,7 @@ export class CombatEngine {
       const baseChannelMs = (spell as any).channelDurationMs && (spell as any).channelDurationMs > 0
         ? (spell as any).channelDurationMs
         : (spell.castTimeMs > 0 ? spell.castTimeMs : 4000);
-      const hastedChannelMs = getHastedCastTimeMs(baseChannelMs, caster.stats?.haste ?? 0);
+      const hastedChannelMs = getHastedCastTimeMs(baseChannelMs, getUnitHaste(caster, 0));
       this.pendingCasts.push({
         casterId,
         spell,
@@ -825,6 +928,8 @@ export class CombatEngine {
             }
             if (tickIntervalMs > 0) applied.tickIntervalMs = tickIntervalMs;
           }
+          // Template path skips applyBuff — still apply MotW/Kings/Fort HP/MP bumps
+          applyRaidBuffResourceBonuses(auraTarget, auraId || opts.spellId);
           return;
         }
         this.applyBuff(auraTarget, {
@@ -864,8 +969,11 @@ export class CombatEngine {
         case 'HEAL': {
           const variance = 1 + (Math.random() * 2 - 1) * valueVariance;
           const base = baseValue * variance;
-          const { healing, isCrit, overheal } = this.calculator.calcHealing(caster, target, base);
-          this.applyHeal(casterId, targetId, healing, isCrit, overheal, spell.id);
+          const healTargets = this.expandSmartHealTargets(caster, target, spell);
+          for (const ht of healTargets) {
+            const { healing, isCrit, overheal } = this.calculator.calcHealing(caster, ht, base);
+            this.applyHeal(casterId, ht.id, healing, isCrit, overheal, spell.id);
+          }
           break;
         }
 
@@ -882,15 +990,28 @@ export class CombatEngine {
         }
 
         case 'APPLY_HOT': {
-          const hotTargetId = target.role === 'ENEMY' ? casterId : targetId;
-          applyTimedAura(hotTargetId, {
-            spellId: auraId || spell.id,
-            name: `${spell.name} (HoT)`,
-            kind: 'BUFF',
-            tags: ['HOT'],
-            tickValue: baseValue,
-            stacks: 1,
-          });
+          if (target.role === 'ENEMY') {
+            applyTimedAura(casterId, {
+              spellId: auraId || spell.id,
+              name: `${spell.name} (HoT)`,
+              kind: 'BUFF',
+              tags: ['HOT'],
+              tickValue: baseValue,
+              stacks: 1,
+            });
+          } else {
+            const hotTargets = this.expandSmartHealTargets(caster, target, spell);
+            for (const ht of hotTargets) {
+              applyTimedAura(ht.id, {
+                spellId: auraId || spell.id,
+                name: `${spell.name} (HoT)`,
+                kind: 'BUFF',
+                tags: ['HOT'],
+                tickValue: baseValue,
+                stacks: 1,
+              });
+            }
+          }
           break;
         }
 
@@ -914,31 +1035,50 @@ export class CombatEngine {
             auraId === 'unleash_life' ||
             auraId === 'ascendance' ||
             auraId === 'ancestral_guidance';
-          const buffTargetId = isDebuff
-            ? targetId
-            : isSelfBuff
-            ? casterId
-            : target.role === 'ENEMY'
-            ? casterId
-            : targetId;
           const stacks =
             auraId === 'earth_shield' || spell.id === 'shaman_earth_shield' ? Math.max(9, maxStacks) : 1;
-          applyTimedAura(buffTargetId, {
-            spellId: auraId || spell.id,
-            name:
-              auraId === 'earth_shield' || spell.id === 'shaman_earth_shield'
-                ? `${spell.name} (${stacks}层)`
-                : spell.name,
-            kind: isDebuff ? 'DEBUFF' : 'BUFF',
-            tags:
-              auraId === 'earth_shield' || spell.id === 'shaman_earth_shield'
-                ? ['SHIELD']
-                : isDebuff
-                ? ['STAT']
-                : ['STAT'],
-            tickValue: tickIntervalMs > 0 && baseValue > 0 ? baseValue : undefined,
-            stacks,
-          });
+          const isRaidBuff =
+            Boolean((spell as any).isRaidBuff) ||
+            isRaidWideBuffSpellId(spell.id) ||
+            isCasterRadiusRaidBuffSpellId(spell.id);
+
+          const applyOne = (buffTargetId: string) => {
+            applyTimedAura(buffTargetId, {
+              spellId: auraId || spell.id,
+              name:
+                auraId === 'earth_shield' || spell.id === 'shaman_earth_shield'
+                  ? `${spell.name} (${stacks}层)`
+                  : spell.name,
+              kind: isDebuff ? 'DEBUFF' : 'BUFF',
+              tags:
+                auraId === 'earth_shield' || spell.id === 'shaman_earth_shield'
+                  ? ['SHIELD']
+                  : isDebuff
+                  ? ['STAT']
+                  : ['STAT'],
+              tickValue: tickIntervalMs > 0 && baseValue > 0 ? baseValue : undefined,
+              stacks,
+            });
+          };
+
+          if (!isDebuff && isRaidBuff) {
+            const recipients = selectRaidBuffTargets({
+              spellId: spell.id,
+              allies: this.friendlyUnits,
+              caster,
+              isRaidBuff: true,
+            });
+            for (const r of recipients) applyOne(r.id);
+          } else {
+            const buffTargetId = isDebuff
+              ? targetId
+              : isSelfBuff
+              ? casterId
+              : target.role === 'ENEMY'
+              ? casterId
+              : targetId;
+            applyOne(buffTargetId);
+          }
           break;
         }
 
@@ -947,9 +1087,13 @@ export class CombatEngine {
           this.emitEvent({ kind: 'INTERRUPT', sourceId: casterId, targetId, spellId: spell.id, timestamp: this.elapsedMs });
           break;
 
-        case 'TAUNT':
+        case 'TAUNT': {
+          // Non-tank AI must never taunt (Feral Growl etc. stay tank-role only)
+          const isAiCaster = !caster.isPlayer && !caster.isHumanControlled;
+          if (isAiCaster && caster.role !== 'TANK') break;
           this.threatManager.applyTaunt(targetId, casterId);
           break;
+        }
 
         case 'RESOURCE_RESTORE': {
           let resKind = effect.resourceKind;
@@ -975,6 +1119,11 @@ export class CombatEngine {
             const isHealingTide =
               spell.id === 'shaman_healing_tide_totem' ||
               spell.id.includes('healing_tide');
+            // Registry groundRadius is yards (HTT=40 → RANGE_40YD_PX); convert to canvas px.
+            const radiusYd = isHealingTide
+              ? 40
+              : (effect.groundRadius ?? (groundKind === 'TOTEM' ? 10 : 8));
+            const radiusPx = yardsToPx(radiusYd);
             this.effectsManager.addGroundEffect({
               id: `${spell.id}_${this.elapsedMs}`,
               kind: groundKind,
@@ -982,7 +1131,7 @@ export class CombatEngine {
               ownerId: casterId,
               x: target.position?.x ?? caster.position?.x ?? 0,
               y: target.position?.y ?? caster.position?.y ?? 0,
-              radius: effect.groundRadius ?? (groundKind === 'TOTEM' ? 40 : 8),
+              radius: radiusPx,
               colorHex: effect.groundColorHex ?? '#38BDF8',
               remainingMs: durationMs || 10_000,
               tickIntervalMs: tickIntervalMs || (isHealingTide ? 2_000 : 1_000),
@@ -994,6 +1143,48 @@ export class CombatEngine {
         }
       }
     }
+  }
+
+  /** Expand SMART/AOE ally heals (Wild Growth, Circle of Healing, …) to spatial targets. */
+  private expandSmartHealTargets(caster: Unit, primary: Unit, spell: Spell): Unit[] {
+    const tt = String(spell.targetType || '');
+    const id = spell.id || '';
+    const needsSplash =
+      tt === 'SMART_ALLY' ||
+      tt === 'AOE_ALLY' ||
+      tt === 'AOE_FRIEND' ||
+      id.includes('wild_growth') ||
+      id.includes('circle_of_healing') ||
+      id.includes('prayer_of_healing') ||
+      id.includes('light_of_dawn') ||
+      id.includes('tranquility') ||
+      id.includes('holy_radiance');
+    if (!needsSplash) return [primary];
+    const picked = selectAoeHealTargets({
+      spellId: id,
+      allies: this.friendlyUnits,
+      caster,
+      primaryTarget: primary,
+      maxAoeTargets: (spell as any).maxAoeTargets || 5,
+      targetType: tt,
+    });
+    return picked.length > 0 ? picked : [primary];
+  }
+
+  /** Local-seat or networked human (host or guest). */
+  private isHumanUnit(unit: Unit | undefined | null): boolean {
+    return Boolean(unit && (unit.isPlayer || unit.isHumanControlled));
+  }
+
+  /** Outgoing FCT: human caster or pet owned by a human. */
+  private isFromHumanOrPet(source: Unit | undefined | null): boolean {
+    if (!source) return false;
+    if (this.isHumanUnit(source)) return true;
+    if (source.isPet || source.ownerId) {
+      const owner = source.ownerId ? this.units.get(source.ownerId) : undefined;
+      return this.isHumanUnit(owner);
+    }
+    return false;
   }
 
   // ── Damage application ────────────────────────────────────────
@@ -1010,10 +1201,8 @@ export class CombatEngine {
     if (!target || !target.isAlive) return;
 
     const source = this.units.get(sourceId);
-    const isPlayerSource = Boolean(source?.isPlayer);
-    const isPetSource = Boolean(source?.isPet || (source?.ownerId && this.units.get(source.ownerId)?.isPlayer));
-    const isFromPlayerOrPet = isPlayerSource || isPetSource;
-    const isToPlayer = Boolean(target.isPlayer);
+    const isFromPlayerOrPet = this.isFromHumanOrPet(source);
+    const isToPlayer = this.isHumanUnit(target);
 
     // 影牙1号窒息术后安全治疗窗口保护：若首领处于窒息后治疗窗口期，严格阻断来自首领/环境对友方的非窒息伤害
     if (this.bossHealingGraceRemainingMs > 0 && target.role !== 'ENEMY' && spellId !== '窒息术' && spellId !== 'asphyxiate') {
@@ -1021,6 +1210,22 @@ export class CombatEngine {
       if (!src || src.role === 'ENEMY' || src.id === this.bossUnit?.id) {
         return;
       }
+    }
+
+    // 无敌：圣盾 / 寒冰屏障 / 保护之手 / 威慑 等 → 伤害为 0
+    if (unitHasImmunity(target, school)) {
+      this.effectsManager.addFloatingText({
+        id: `imm_${Date.now()}_${targetId}_${Math.random()}`,
+        targetId,
+        sourceId,
+        text: '免疫',
+        category: 'STATUS',
+        isCrit: false,
+        isToPlayer: isToPlayer || undefined,
+        isFromPlayerOrPet: target.role === 'ENEMY' && isFromPlayerOrPet ? true : undefined,
+        createdAtMs: Date.now(),
+      });
+      return;
     }
 
     // 萨满升腾(元素/增强/通用) 伤害增效 (+35%)
@@ -1052,6 +1257,17 @@ export class CombatEngine {
       modifiedAmount = Math.round(modifiedAmount * 1.20);
     }
 
+    // 通用输出增幅（冰霜之柱 / 奥术强化 / 鲁莽等）
+    if (source) {
+      modifiedAmount = Math.round(modifiedAmount * getOutgoingDamageMultiplier(source));
+    }
+
+    // 减伤 aura：树皮 / 冰封 / 盾墙 / 痛苦压制 / 消散…
+    const drMult = getIncomingDamageMultiplier(target, school);
+    if (drMult < 1) {
+      modifiedAmount = Math.round(modifiedAmount * drMult);
+    }
+
     // Apply absorb shield
     let effective = modifiedAmount;
     let absorbedAmount = 0;
@@ -1066,6 +1282,7 @@ export class CombatEngine {
         this.effectsManager.addFloatingText({
           id: `abs_${Date.now()}_${targetId}_${Math.random()}`,
           targetId,
+          sourceId,
           text: '吸收',
           category: 'ABSORB',
           isCrit: false,
@@ -1076,6 +1293,7 @@ export class CombatEngine {
         this.effectsManager.addFloatingText({
           id: `abs_${Date.now()}_${targetId}_${Math.random()}`,
           targetId,
+          sourceId,
           text: '吸收',
           category: 'ABSORB',
           isCrit: false,
@@ -1097,22 +1315,27 @@ export class CombatEngine {
       }
       source.combatStats.damageDealt += effective;
       if (!source.combatStats.skillDamage) source.combatStats.skillDamage = {};
-      const skillName = normalizeCombatSkillName(
-        spellId ? (SPELL_ID_TO_NAME[spellId] || spellId) : '普通攻击'
-      );
+      const skillName = resolveCombatSkillDisplayName(spellId, '普通攻击');
       source.combatStats.skillDamage[skillName] = (source.combatStats.skillDamage[skillName] || 0) + effective;
     }
     if (!target.combatStats) {
       target.combatStats = { damageDealt: 0, healingDone: 0, overhealDone: 0, damageTaken: 0, interruptCount: 0 };
     }
     target.combatStats.damageTaken += effective;
+    if (!target.combatStats.skillDamageTaken) target.combatStats.skillDamageTaken = {};
+    {
+      const takenName = resolveCombatSkillDisplayName(spellId, '普通攻击');
+      target.combatStats.skillDamageTaken[takenName] =
+        (target.combatStats.skillDamageTaken[takenName] || 0) + effective;
+    }
 
     if (effective > 0) {
       if (isToPlayer) {
-        // 敌人对你造成的伤害（红字数字）
+        // 打到人类玩家身上的伤害（客户端按 targetId 过滤本地）
         this.effectsManager.addFloatingText({
           id: `dmg_${Date.now()}_${targetId}_${Math.random()}`,
           targetId,
+          sourceId,
           text: Math.round(effective).toLocaleString(),
           category: 'DAMAGE_TAKEN',
           isCrit,
@@ -1120,40 +1343,30 @@ export class CombatEngine {
           createdAtMs: Date.now(),
         });
       } else if (target.role === 'ENEMY') {
-        // 敌人头顶数字：仅显示 你 & 你的宠物 对敌人造成的伤害
-        if (isFromPlayerOrPet) {
+        // 友方（人类/AI/宠物）对敌人的伤害；客户端按氛围跳字偏好过滤
+        const sourceFriendly = Boolean(source && source.role !== 'ENEMY');
+        if (isFromPlayerOrPet || sourceFriendly) {
           let cat = 'DAMAGE_SKILL';
           if (isDot) {
-            cat = 'DAMAGE_DOT'; // DOT持续伤害
+            cat = 'DAMAGE_DOT';
           } else if (spellId === '普通攻击' || spellId === 'auto_attack' || (school === 'PHYSICAL' && !spellId)) {
-            cat = 'DAMAGE_AUTO'; // 白字普攻
+            cat = 'DAMAGE_AUTO';
           } else {
-            cat = 'DAMAGE_SKILL'; // 黄字技能
+            cat = 'DAMAGE_SKILL';
           }
           this.effectsManager.addFloatingText({
             id: `dmg_${Date.now()}_${targetId}_${Math.random()}`,
             targetId,
+            sourceId,
             text: Math.round(effective).toLocaleString(),
             category: cat,
             isCrit,
-            isFromPlayerOrPet: true,
+            isFromPlayerOrPet: isFromPlayerOrPet || undefined,
             createdAtMs: Date.now(),
           });
         }
-      } else {
-        // 队友受伤普通处理
-        const fctCat = isCrit ? 'CRIT' : (school === 'PHYSICAL' ? 'PHYS_NORMAL' : `SPELL_${school}` as any);
-        this.effectsManager.addFloatingText({
-          id: `dmg_${Date.now()}_${targetId}_${Math.random()}`,
-          targetId,
-          text: Math.round(effective).toLocaleString(),
-          category: fctCat,
-          isCrit,
-          isToPlayer: false,
-          isFromPlayerOrPet: false,
-          createdAtMs: Date.now(),
-        });
       }
+      // AI 队友受伤：默认不发；友方伤害跳字仅覆盖对怪输出
     }
 
     this.emitEvent({
@@ -1282,6 +1495,48 @@ export class CombatEngine {
     }
   }
 
+  /** Healing-received multiplier from debuffs (Veil / Mortal Wound / explicit healingReceivedMod). */
+  getHealingReceivedMultiplier(target: { buffs?: Buff[] }): number {
+    let mult = 1;
+    for (const b of target.buffs ?? []) {
+      if (b.spellId === 'mortal_wound') {
+        // Godfrey: ~10% less healing per stack (floor 5% received)
+        mult *= Math.max(0.05, 1 - 0.1 * Math.max(1, b.stacks || 1));
+        continue;
+      }
+      if (typeof b.healingReceivedMod === 'number' && Number.isFinite(b.healingReceivedMod)) {
+        mult *= Math.max(0, b.healingReceivedMod);
+        continue;
+      }
+      // Fallbacks when buffs were applied without healingReceivedMod
+      if (
+        b.spellId === 'cursed_veins' ||
+        b.spellId === 'veil_of_shadow' ||
+        b.spellId === 'cursed_veil' ||
+        b.spellId === 'veil_of_shadows'
+      ) {
+        mult *= 0.25; // -75% healing
+      }
+    }
+    return Math.max(0, Math.min(2, mult));
+  }
+
+  /** Restoration Ascendance heal-copy is resto-only (damage +35% remains for all specs). */
+  private isRestoAscendanceActive(source: Unit): boolean {
+    const buffs = source.buffs || [];
+    if (buffs.some(b => b.spellId === 'ascendance_resto')) return true;
+    const hasGeneric = buffs.some(
+      b => b.spellId === 'ascendance' || b.spellId === 'shaman_ascendance'
+    );
+    if (!hasGeneric || source.classId !== 'SHAMAN') return false;
+    const spec = String((source as { spec?: string; specId?: string }).spec
+      || (source as { specId?: string }).specId
+      || '').toUpperCase();
+    if (spec === 'RESTORATION' || spec === 'RESTO' || spec === 'RESTO_HEAL') return true;
+    if (!spec && source.role === 'HEALER') return true;
+    return false;
+  }
+
   // ── Heal application ──────────────────────────────────────────
   applyHeal(
     sourceId: string,
@@ -1291,6 +1546,8 @@ export class CombatEngine {
     overheal: number,
     spellId?: string,
     isDerived = false,
+    /** HoT / ground-tick heals — still real healing, but not "direct" for UL / AG. */
+    isPeriodic = false,
   ): void {
     const target = this.units.get(targetId);
     if (!target || !target.isAlive) return;
@@ -1298,11 +1555,24 @@ export class CombatEngine {
     const source = this.units.get(sourceId);
     let safeAmount = Math.max(0, amount);
 
+    // Healing-received debuffs (always apply, including derived heals like beacon)
+    if (safeAmount > 0) {
+      const recvMult = this.getHealingReceivedMultiplier(target);
+      if (recvMult !== 1) {
+        safeAmount = Math.round(safeAmount * recvMult);
+      }
+    }
+
     // ── 真实治疗增效触发器（仅作用于非衍生直接治疗，避免循环触发）──
     if (!isDerived && safeAmount > 0 && source) {
       const spLower = (spellId || '').toLowerCase();
-      // 1. 生命释放 (Unleash Life): 下一次直接治疗提高 +30% 并消耗 Buff
-      if (spLower !== 'unleash_life' && spLower !== 'shaman_unleash_life' && spellId !== '生命释放') {
+      // 1. 生命释放 (Unleash Life): 仅下一次直接治疗 +30%（HoT / 潮图腾跳字不消耗；治疗之雨由 EffectsManager 单独结算）
+      if (
+        !isPeriodic &&
+        spLower !== 'unleash_life' &&
+        spLower !== 'shaman_unleash_life' &&
+        spellId !== '生命释放'
+      ) {
         const ulIdx = source.buffs?.findIndex(
           b => b.spellId === 'unleash_life' || b.spellId === 'shaman_unleash_life'
         );
@@ -1311,7 +1581,7 @@ export class CombatEngine {
           source.buffs.splice(ulIdx, 1);
         }
       }
-      // 2. 大地之盾 (Earth Shield): 目标受到该萨满治疗效果 +20%
+      // 2. 大地之盾 (Earth Shield): 目标受到该萨满治疗效果 +20%（含 HoT）
       if (
         target.buffs?.some(
           b => (b.spellId === 'earth_shield' || b.spellId === 'shaman_earth_shield') && (!b.sourceUnitId || b.sourceUnitId === sourceId)
@@ -1346,32 +1616,26 @@ export class CombatEngine {
       source.combatStats.healingDone = Math.max(0, (source.combatStats.healingDone || 0) + effectiveHeal);
       source.combatStats.overhealDone = Math.max(0, (source.combatStats.overhealDone || 0) + finalOverheal);
       if (!source.combatStats.skillHealing) source.combatStats.skillHealing = {};
-      const skillName = normalizeCombatSkillName(
-        spellId ? (SPELL_ID_TO_NAME[spellId] || spellId) : '治疗术'
-      );
+      const skillName = resolveCombatSkillDisplayName(spellId, '治疗术');
       source.combatStats.skillHealing[skillName] = Math.max(
         0,
         (source.combatStats.skillHealing[skillName] || 0) + effectiveHeal
       );
     }
 
-    this.effectsManager.addFloatingText({
-      id: `heal_${Date.now()}_${targetId}_${Math.random()}`,
-      targetId,
-      text: `${Math.round(safeAmount).toLocaleString()}`,
-      category: 'HEAL',
-      isCrit,
-      isToPlayer: Boolean(target.isPlayer),
-      createdAtMs: Date.now(),
-    });
-
-    if (finalOverheal > 0) {
+    const healToHuman = Boolean(target.isPlayer || target.isHumanControlled);
+    // 友方目标治疗跳字（含 AI）；客户端按氛围跳字偏好过滤
+    if (target.role !== 'ENEMY' && effectiveHeal > 0) {
+      const healSource = this.units.get(sourceId);
       this.effectsManager.addFloatingText({
-        id: `overheal_${Date.now()}_${targetId}_${Math.random()}`,
+        id: `heal_${Date.now()}_${targetId}_${Math.random()}`,
         targetId,
-        text: `(${Math.round(finalOverheal).toLocaleString()})`,
-        category: 'OVERHEAL',
-        isCrit: false,
+        sourceId,
+        text: `${Math.round(effectiveHeal).toLocaleString()}`,
+        category: 'HEAL',
+        isCrit,
+        isToPlayer: healToHuman || undefined,
+        isFromPlayerOrPet: this.isFromHumanOrPet(healSource) || undefined,
         createdAtMs: Date.now(),
       });
     }
@@ -1389,32 +1653,32 @@ export class CombatEngine {
 
     // ── 衍生复制治疗触发器（仅当 !isDerived 时触发，严格防递归死循环）──
     if (!isDerived && safeAmount > 0 && source) {
-      // A. 水之升腾 (Ascendance - Restoration): 100% 治疗量均摊复制给附近最多 5 名受伤友方
-      if (
-        source.buffs?.some(
-          b =>
-            b.spellId === 'ascendance_resto' ||
-            b.spellId === 'ascendance' ||
-            b.spellId === 'shaman_ascendance'
-        )
-      ) {
+      // A. 升腾 (Ascendance - Restoration only): 100% 治疗量均摊复制给附近(40码)最多 5 名受伤友方
+      if (this.isRestoAscendanceActive(source)) {
+        const sx = source.position?.x ?? 0;
+        const sy = source.position?.y ?? 0;
+        const inRange = (u: Unit) => {
+          const dx = (u.position?.x ?? 0) - sx;
+          const dy = (u.position?.y ?? 0) - sy;
+          return Math.hypot(dx, dy) <= RANGE_40YD_PX;
+        };
         const injured = this.friendlyUnits
-          .filter(u => u.isAlive && u.hp > 0 && u.hp < u.maxHp)
+          .filter(u => u.isAlive && u.hp > 0 && u.hp < u.maxHp && inRange(u))
           .sort((a, b) => (a.hp / a.maxHp) - (b.hp / b.maxHp))
           .slice(0, 5);
-        const dupTargets = injured.length > 0
-          ? injured
-          : this.friendlyUnits.filter(u => u.isAlive && u.hp > 0).slice(0, 5);
-        if (dupTargets.length > 0) {
-          const perAlly = Math.max(1, Math.round(safeAmount / dupTargets.length));
-          for (const ally of dupTargets) {
+        if (injured.length > 0) {
+          const perAlly = Math.max(1, Math.round(safeAmount / injured.length));
+          for (const ally of injured) {
             this.applyHeal(sourceId, ally.id, perAlly, false, 0, 'ascendance_dup', true);
           }
         }
       }
 
-      // B. 先祖指引 (Ancestral Guidance): 60% 直接治疗量智能复制给最多 3 名最低血量友方
-      if (source.buffs?.some(b => b.spellId === 'ancestral_guidance' || b.spellId === 'shaman_ancestral_guidance')) {
+      // B. 先祖指引 (Ancestral Guidance): 仅直接治疗的 60%（HoT / 图腾跳字不触发）
+      if (
+        !isPeriodic &&
+        source.buffs?.some(b => b.spellId === 'ancestral_guidance' || b.spellId === 'shaman_ancestral_guidance')
+      ) {
         const injured = this.friendlyUnits
           .filter(u => u.isAlive && u.hp > 0 && u.hp < u.maxHp)
           .sort((a, b) => (a.hp / a.maxHp) - (b.hp / b.maxHp))
@@ -1550,9 +1814,12 @@ export class CombatEngine {
         this.units.delete(uid);
       }
     }
+    // Dungeon configs store 英雄本预算血量；普通本除回 HEROIC_DIFFICULTY_MULT，自定义走 coeff。
     let finalHp = hp;
     if (this.difficulty === 'CUSTOM') {
       finalHp = Math.max(1000, Math.round(hp * (this.customDifficulty.bossHpCoeff ?? 1.0)));
+    } else if (this.difficulty === 'NORMAL') {
+      finalHp = Math.max(1000, Math.round(hp / HEROIC_DIFFICULTY_MULT));
     }
     const boss: Unit = {
       id,
@@ -1597,6 +1864,74 @@ export class CombatEngine {
     return this.bossHealingGraceRemainingMs > 0;
   }
 
+  /** Hard CC that blocks actions (Asphyxiate / Ice Tomb / explicit STUN). Not Veil/Mortal Wound. */
+  isUnitCrowdControlled(unit: { buffs?: Buff[] } | null | undefined): boolean {
+    if (!unit?.buffs?.length) return false;
+    return unit.buffs.some(
+      b =>
+        b.spellId === 'asphyxiate' ||
+        b.spellId === 'ice_tomb' ||
+        (b.tags as string[] | undefined)?.includes('STUN') ||
+        (b.tags as string[] | undefined)?.includes('SILENCE')
+    );
+  }
+
+  /**
+   * Drain HP toward a floor without ever killing (used by Asphyxiate).
+   * Bypasses difficulty / boss damage scaling.
+   */
+  drainHpTowardFloor(
+    target: Unit,
+    amount: number,
+    floorHp = 1,
+    spellName = '窒息术',
+  ): number {
+    if (!target.isAlive && !target.alive) return 0;
+    if (target.hp <= floorHp) {
+      target.hp = floorHp;
+      return 0;
+    }
+    const drained = Math.min(Math.max(0, Math.round(amount)), target.hp - floorHp);
+    if (drained <= 0) return 0;
+    target.hp = Math.max(floorHp, target.hp - drained);
+    this.effectsManager.addFloatingText({
+      id: `drain_${Date.now()}_${target.id}_${Math.random()}`,
+      targetId: target.id,
+      text: Math.round(drained).toLocaleString(),
+      category: 'DAMAGE_TAKEN',
+      isCrit: false,
+      isToPlayer: Boolean(target.isPlayer),
+      createdAtMs: Date.now(),
+    });
+    if (!target.combatStats) {
+      target.combatStats = {
+        damageDealt: 0,
+        healingDone: 0,
+        overhealDone: 0,
+        damageTaken: 0,
+        interruptCount: 0,
+        skillDamage: {},
+        skillHealing: {},
+        skillDamageTaken: {},
+      };
+    }
+    target.combatStats.damageTaken += drained;
+    if (!target.combatStats.skillDamageTaken) target.combatStats.skillDamageTaken = {};
+    const takenName = resolveCombatSkillDisplayName(spellName, '窒息术');
+    target.combatStats.skillDamageTaken[takenName] =
+      (target.combatStats.skillDamageTaken[takenName] || 0) + drained;
+    this.emitEvent({
+      kind: 'DAMAGE',
+      sourceId: this.bossUnit?.id || 'boss',
+      targetId: target.id,
+      spellId: spellName,
+      value: drained,
+      isCrit: false,
+      timestamp: this.elapsedMs,
+    });
+    return drained;
+  }
+
   dealDamage(
     source: Unit,
     target: Unit,
@@ -1606,19 +1941,32 @@ export class CombatEngine {
     spellName = '普通攻击',
     isDot = false,
   ): void {
+    const isAsphyxiate = spellName === '窒息术' || spellName === 'asphyxiate';
+
     // 影牙1号窒息术后安全治疗窗口保护：若首领处于窒息后治疗窗口期，严格阻断来自首领/环境对友方的非窒息伤害
-    if (this.bossHealingGraceRemainingMs > 0 && target.role !== 'ENEMY' && spellName !== '窒息术') {
+    if (this.bossHealingGraceRemainingMs > 0 && target.role !== 'ENEMY' && !isAsphyxiate) {
       if (source.role === 'ENEMY' || source.id === this.bossUnit?.id) {
         return;
       }
     }
 
+    // 窒息昏迷期间：禁止首领对其它技能/普攻误杀（窒息本身走 drainHpTowardFloor）
+    if (
+      !isAsphyxiate &&
+      target.role !== 'ENEMY' &&
+      (source.role === 'ENEMY' || source.id === this.bossUnit?.id) &&
+      target.buffs?.some(b => b.spellId === 'asphyxiate')
+    ) {
+      return;
+    }
+
     let finalAmount = amount;
     // Scale legacy boss/enemy hits to Level 80 HP pools (Tank 65k / DPS 36k)
-    if (source.role === 'ENEMY' && target.role !== 'ENEMY' && spellName !== '窒息术') {
+    // 窒息术禁止一切倍率，避免「压到 1 血」被英雄/自定义系数打成击杀
+    if (!isAsphyxiate && source.role === 'ENEMY' && target.role !== 'ENEMY') {
       finalAmount *= LEVEL_80_BOSS_DAMAGE_SCALE;
     }
-    if (this.difficulty === 'CUSTOM') {
+    if (!isAsphyxiate && this.difficulty === 'CUSTOM') {
       if (source.isPlayer) {
         finalAmount *= (this.customDifficulty.playerDamageCoeff ?? 1.0);
       } else if (source.role !== 'ENEMY') {
@@ -1626,8 +1974,16 @@ export class CombatEngine {
       } else if (source.role === 'ENEMY') {
         finalAmount *= (this.customDifficulty.enemyDamageCoeff ?? 1.0);
       }
+    } else if (!isAsphyxiate && source.role === 'ENEMY' && target.role !== 'ENEMY') {
+      // 英雄本敌方伤害 ×1.2（相对普通本）；血量另用 HEROIC_DIFFICULTY_MULT ×1.5
+      finalAmount *= getDifficultyNumericMult(this.difficulty);
     }
     finalAmount = Math.max(0, Math.round(finalAmount));
+
+    // 窒息术保底：无论如何不低于 1 血
+    if (isAsphyxiate && target.role !== 'ENEMY') {
+      finalAmount = Math.min(finalAmount, Math.max(0, target.hp - 1));
+    }
 
     this.applyDamage(source.id, target.id, finalAmount, isCrit, spellName, school, isDot);
   }
@@ -1644,8 +2000,8 @@ export class CombatEngine {
     spellName = '普通攻击',
     isDot = false,
   ): { outcome: 'HIT' | 'DODGE' | 'PARRY' | 'BLOCK' | 'MISS' | 'RESIST'; damage: number } {
-    const isPlayerAttacker = Boolean(attacker.isPlayer || attacker.isPet || (attacker.ownerId && this.units.get(attacker.ownerId)?.isPlayer));
-    const isPlayerDefender = Boolean(defender.isPlayer);
+    const isPlayerAttacker = this.isFromHumanOrPet(attacker);
+    const isPlayerDefender = this.isHumanUnit(defender);
 
     // DoT持续伤害不参与普通挥砍闪招判定
     if (!isDot && school === 'PHYSICAL') {
@@ -1656,6 +2012,7 @@ export class CombatEngine {
           this.effectsManager.addFloatingText({
             id: `miss_${Date.now()}_${defender.id}_${Math.random()}`,
             targetId: defender.id,
+            sourceId: attacker.id,
             text: '未命中',
             category: 'MISS',
             isCrit: false,
@@ -1666,6 +2023,7 @@ export class CombatEngine {
           this.effectsManager.addFloatingText({
             id: `miss_${Date.now()}_${defender.id}_${Math.random()}`,
             targetId: defender.id,
+            sourceId: attacker.id,
             text: '未命中',
             category: 'MISS',
             isCrit: false,
@@ -1683,6 +2041,7 @@ export class CombatEngine {
           this.effectsManager.addFloatingText({
             id: `dodge_${Date.now()}_${defender.id}_${Math.random()}`,
             targetId: defender.id,
+            sourceId: attacker.id,
             text: '闪避',
             category: 'DODGE',
             isCrit: false,
@@ -1693,6 +2052,7 @@ export class CombatEngine {
           this.effectsManager.addFloatingText({
             id: `dodge_${Date.now()}_${defender.id}_${Math.random()}`,
             targetId: defender.id,
+            sourceId: attacker.id,
             text: '闪避',
             category: 'DODGE',
             isCrit: false,
@@ -1710,6 +2070,7 @@ export class CombatEngine {
           this.effectsManager.addFloatingText({
             id: `parry_${Date.now()}_${defender.id}_${Math.random()}`,
             targetId: defender.id,
+            sourceId: attacker.id,
             text: '招架',
             category: 'PARRY',
             isCrit: false,
@@ -1720,6 +2081,7 @@ export class CombatEngine {
           this.effectsManager.addFloatingText({
             id: `parry_${Date.now()}_${defender.id}_${Math.random()}`,
             targetId: defender.id,
+            sourceId: attacker.id,
             text: '招架',
             category: 'PARRY',
             isCrit: false,
@@ -1737,6 +2099,7 @@ export class CombatEngine {
           this.effectsManager.addFloatingText({
             id: `block_${Date.now()}_${defender.id}_${Math.random()}`,
             targetId: defender.id,
+            sourceId: attacker.id,
             text: '格挡',
             category: 'BLOCK',
             isCrit: false,
@@ -1747,6 +2110,7 @@ export class CombatEngine {
           this.effectsManager.addFloatingText({
             id: `block_${Date.now()}_${defender.id}_${Math.random()}`,
             targetId: defender.id,
+            sourceId: attacker.id,
             text: '格挡',
             category: 'BLOCK',
             isCrit: false,
@@ -1765,6 +2129,7 @@ export class CombatEngine {
           this.effectsManager.addFloatingText({
             id: `resist_${Date.now()}_${defender.id}_${Math.random()}`,
             targetId: defender.id,
+            sourceId: attacker.id,
             text: '抵抗',
             category: 'RESIST',
             isCrit: false,
@@ -1775,6 +2140,7 @@ export class CombatEngine {
           this.effectsManager.addFloatingText({
             id: `resist_${Date.now()}_${defender.id}_${Math.random()}`,
             targetId: defender.id,
+            sourceId: attacker.id,
             text: '抵抗',
             category: 'RESIST',
             isCrit: false,
@@ -1792,7 +2158,14 @@ export class CombatEngine {
     return { outcome: 'HIT', damage: baseDamage };
   }
 
-  healUnit(source: Unit, target: Unit, amount: number, isCrit = false, spellName = '治疗术'): void {
+  healUnit(
+    source: Unit,
+    target: Unit,
+    amount: number,
+    isCrit = false,
+    spellName = '治疗术',
+    isPeriodic = false,
+  ): void {
     let finalAmount = amount;
     if (this.difficulty === 'CUSTOM') {
       if (source.isPlayer) {
@@ -1804,7 +2177,7 @@ export class CombatEngine {
     finalAmount = Math.max(0, Math.round(finalAmount));
 
     const overheal = Math.max(0, (target.hp + finalAmount) - target.maxHp);
-    this.applyHeal(source.id, target.id, finalAmount, isCrit, overheal, spellName);
+    this.applyHeal(source.id, target.id, finalAmount, isCrit, overheal, spellName, false, isPeriodic);
 
     // 有生命绽放buff的角色可以被治疗之触、愈合、滋养对该单体刷新
     if (['治疗之触', '愈合', '滋养', 'healing_touch', 'regrowth', 'nourish', 'druid_healing_touch', 'druid_regrowth', 'druid_nourish'].includes(spellName)) {
@@ -1817,7 +2190,10 @@ export class CombatEngine {
   }
 
   applyBuff(target: Unit, buff: Buff): void {
-    this.auraManager.applyAura(target.id, buff);
+    // Resolve on the live unit object so auto raid buffs always land.
+    this.auraManager.addBuff(target, buff);
+    // MotW / Kings / Fort → HP; MotW / Kings / Arcane Brilliance → mana
+    applyStaminaRaidBuffHpBonus(target, buff.spellId || buff.id || '');
   }
 
   reset(): void {
@@ -1830,6 +2206,7 @@ export class CombatEngine {
     this.threatManager.resetAll();
     this.cooldownManager.reset();
     this.effectsManager.clearAll();
+    this.actionLog.clear();
   }
 
   /** Host-side compact snapshot for room combat sync (guests apply, do not tick). */
@@ -1841,6 +2218,10 @@ export class CombatEngine {
     role: string;
     isPlayer: boolean;
     isHumanControlled?: boolean;
+    isAi?: boolean;
+    isPet?: boolean;
+    ownerId?: string;
+    unitKind?: Unit['unitKind'];
     isBoss?: boolean;
     isAlive: boolean;
     hp: number;
@@ -1857,29 +2238,42 @@ export class CombatEngine {
     combatStats?: Unit['combatStats'];
   }> {
     const bossId = this.bossUnit?.id;
-    return this.getAllUnits().map((u) => ({
-      id: u.id,
-      name: u.name,
-      classId: u.classId,
-      spec: u.spec,
-      role: u.role,
-      isPlayer: u.isPlayer,
-      isHumanControlled: !!u.isHumanControlled || u.isPlayer,
-      isBoss: !!bossId && u.id === bossId,
-      isAlive: u.isAlive,
-      hp: u.hp,
-      maxHp: u.maxHp,
-      mp: u.mp,
-      maxMp: u.maxMp,
-      energy: u.energy,
-      rage: u.rage,
-      runicPower: u.runicPower,
-      focus: u.focus,
-      absorb: u.absorb,
-      position: { ...u.position },
-      buffs: u.buffs.map((b) => ({ ...b })),
-      combatStats: u.combatStats ? { ...u.combatStats } : undefined,
-    }));
+    return this.getAllUnits().map((u) => {
+      const unitKind = resolveUnitKind(u);
+      // Prefer explicit unitKind/classId so dungeon ADDs are not mislabeled BOSS
+      // when bossUnit() still returns the first ENEMY in a multi-enemy room.
+      const isBoss =
+        unitKind === 'BOSS' ||
+        u.classId === 'BOSS' ||
+        (!!bossId && u.id === bossId && unitKind !== 'ADD' && unitKind !== 'NPC' && unitKind !== 'PET');
+      return {
+        id: u.id,
+        name: u.name,
+        classId: u.classId,
+        spec: u.spec,
+        role: u.role,
+        isPlayer: u.isPlayer,
+        isHumanControlled: !!u.isHumanControlled || u.isPlayer,
+        isAi: unitKind === 'AI',
+        isPet: !!u.isPet || unitKind === 'PET',
+        ownerId: u.ownerId,
+        unitKind,
+        isBoss,
+        isAlive: u.isAlive,
+        hp: u.hp,
+        maxHp: u.maxHp,
+        mp: u.mp,
+        maxMp: u.maxMp,
+        energy: u.energy,
+        rage: u.rage,
+        runicPower: u.runicPower,
+        focus: u.focus,
+        absorb: u.absorb,
+        position: { ...u.position },
+        buffs: u.buffs.map((b) => ({ ...b })),
+        combatStats: u.combatStats ? { ...u.combatStats } : undefined,
+      };
+    });
   }
 
   /** Guest-side: overlay host snapshot onto local units (create stubs if missing). */
@@ -1892,6 +2286,10 @@ export class CombatEngine {
       role: string;
       isPlayer: boolean;
       isHumanControlled?: boolean;
+      isAi?: boolean;
+      isPet?: boolean;
+      ownerId?: string;
+      unitKind?: Unit['unitKind'];
       isAlive: boolean;
       hp: number;
       maxHp: number;
@@ -1911,6 +2309,7 @@ export class CombatEngine {
     for (const s of snapshots) {
       seen.add(s.id);
       let unit = this.units.get(s.id);
+      const unitKind = resolveUnitKind(s);
       if (!unit) {
         unit = {
           id: s.id,
@@ -1920,6 +2319,9 @@ export class CombatEngine {
           role: s.role as Unit['role'],
           isPlayer: s.isPlayer,
           isHumanControlled: !!s.isHumanControlled || s.isPlayer,
+          isPet: !!s.isPet || unitKind === 'PET',
+          ownerId: s.ownerId,
+          unitKind,
           isAlive: s.isAlive,
           hp: s.hp,
           maxHp: s.maxHp,
@@ -1951,8 +2353,11 @@ export class CombatEngine {
         };
         this.addUnit(unit);
       }
+      // Hot-join / roster remap: keep identity in sync with host (name/class/role/spec)
       unit.name = s.name;
+      unit.classId = s.classId as Unit['classId'];
       unit.spec = s.spec;
+      unit.role = s.role as Unit['role'];
       unit.isAlive = s.isAlive;
       (unit as any).alive = s.isAlive;
       unit.hp = s.hp;
@@ -1967,6 +2372,15 @@ export class CombatEngine {
       unit.position = { ...s.position };
       unit.buffs = s.buffs.map((b) => ({ ...b }));
       if (s.isHumanControlled != null) unit.isHumanControlled = !!s.isHumanControlled || s.isPlayer;
+      if (s.isPet != null || s.unitKind === 'PET') unit.isPet = !!s.isPet || s.unitKind === 'PET';
+      if (s.ownerId !== undefined) unit.ownerId = s.ownerId;
+      // Drop stale AI kind when seat is now human-controlled so resolveUnitKind → PLAYER
+      if (unit.isHumanControlled || unit.isPlayer) {
+        delete (unit as { unitKind?: string }).unitKind;
+        unit.unitKind = resolveUnitKind(unit);
+      } else {
+        unit.unitKind = unitKind;
+      }
       if (s.combatStats) unit.combatStats = { ...s.combatStats };
     }
     for (const id of Array.from(this.units.keys())) {

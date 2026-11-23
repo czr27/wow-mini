@@ -1,6 +1,6 @@
 import type { Unit, Buff, AuraTag } from '../types.js';
 import type { CombatEngine } from './CombatEngine.js';
-
+import { isValidLifebloomTarget } from './UnitSpawn.js';
 /** Buff templates registered by spell authors */
 const auraTemplates: Map<string, Omit<Buff, 'id' | 'sourceUnitId' | 'targetUnitId' | 'remainingMs' | 'tickElapsedMs' | 'stacks'>> = new Map();
 
@@ -41,6 +41,10 @@ export class AuraManager {
 
   // ── Core aura operations ──────────────────────────────────────
   addBuff(target: Unit, partial: Omit<Buff, 'id' | 'remainingMs' | 'tickElapsedMs' | 'stacks'> & Partial<Pick<Buff, 'stacks'>>): void {
+    // 生命绽放：仅友方；图腾不可作为目标
+    if (partial.spellId === 'lifebloom' && !isValidLifebloomTarget(target, this.engine)) {
+      return;
+    }
     // 生命绽放唯一目标限制：同一释放者同时只能给一个人维持生命绽放；若给其他人施放，立即没收该释放者给其他人施加的生命绽放buff（包括所有层数）
     if (partial.spellId === 'lifebloom') {
       for (const unit of this.engine.getAllUnits()) {
@@ -165,6 +169,7 @@ export class AuraManager {
    * @returns 是否成功刷新了生命绽放
    */
   refreshLifebloom(target: Unit, sourceId?: string): boolean {
+    if (!isValidLifebloomTarget(target, this.engine)) return false;
     const lb = target.buffs.find(b => b.spellId === 'lifebloom' && (!sourceId || b.sourceUnitId === sourceId));
     if (!lb) return false;
     const dur = lb.durationMs || 10000;
@@ -270,7 +275,7 @@ export class AuraManager {
         target,
         tickValue,
       );
-      this.engine.applyHeal(buff.sourceUnitId, target.id, healing, isCrit, overheal, buff.spellId);
+      this.engine.applyHeal(buff.sourceUnitId, target.id, healing, isCrit, overheal, buff.spellId, false, true);
     } else if (buff.tags.includes('DOT')) {
       // DoT: damage per tick
       const school = buff.school ?? 'SHADOW';

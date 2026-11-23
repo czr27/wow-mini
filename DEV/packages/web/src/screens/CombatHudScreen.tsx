@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import type {
   CharacterRecord,
   GroundEffect,
@@ -10,6 +10,7 @@ import type {
 } from '@cata-raid-sim/engine';
 import { CombatCanvas } from '../canvas/CombatCanvas.js';
 import { ActionBar, ActionSlot, PlayerCastState, PlayerCastBar } from '../components/ActionBar.js';
+import { BuffFrame } from '../components/BuffFrame.js';
 import { FocusUnitFrame } from '../components/FocusUnitFrame.js';
 import { PlayerUnitFrame } from '../components/PlayerUnitFrame.js';
 import { RaidFrames, IncomingHealCast } from '../components/RaidFrames.js';
@@ -26,6 +27,9 @@ export type CombatHudRunPhase =
 
 export type BossCastingInfo = {
   spellName: string;
+  spellId?: string;
+  description?: string;
+  school?: string;
   elapsedMs: number;
   castTimeMs: number;
   interruptible: boolean;
@@ -43,6 +47,7 @@ export type CombatHudScreenProps = {
   selectedTargetId: string | null;
   focusTargetId: string | null;
   dungeonTier: '5man' | '20man';
+  dungeonId?: string;
   targetBossName: string;
   currentBossIndex: number;
   travelRemainingMs: number;
@@ -59,7 +64,7 @@ export type CombatHudScreenProps = {
   } | null;
   groundTargetState: GroundTargetState | null;
   playerCast: PlayerCastState | null;
-  companionCasts: Record<string, { spellName: string; progress: number }>;
+  companionCasts: Record<string, { spellName: string; progress: number; spellId?: string }>;
   bossCasting: BossCastingInfo | null;
   deadUnits: Unit[];
   totalDurationSec: number;
@@ -100,9 +105,15 @@ export type CombatHudScreenProps = {
     patch: Partial<NonNullable<CharacterRecord['uiLayout']>>
   ) => void;
   onAccountRefresh: () => void;
+  /** Pre-assigned squads for raid frames + Alt+1~5 */
+  raidSquads?: Unit[][];
+  selectedSquadIndex?: number;
+  onSelectSquad?: (squadIndex: number) => void;
   isPlayerHealer: boolean;
   /** Networked combat: lerp remote units/boss to host positions */
   syncRemotePositions?: boolean;
+  /** 联机客人：迷宫小怪跟房主快照 */
+  isNetworkGuest?: boolean;
   /** Guest reports local player position to host */
   onNetworkMoveReport?: (x: number, y: number) => void;
 };
@@ -111,22 +122,37 @@ function resolveUnitCastState(
   unit: Unit,
   bossUnit: Unit | undefined,
   bossCasting: BossCastingInfo | null,
-  companionCasts: Record<string, { spellName: string; progress: number }>
-): { spellName: string; progress: number; interruptible: boolean } | null {
+  companionCasts: Record<string, { spellName: string; progress: number; spellId?: string }>
+): {
+  spellName: string;
+  spellId?: string;
+  spellIcon?: string;
+  progress: number;
+  interruptible: boolean;
+  description?: string;
+  school?: string;
+} | null {
   if (unit.id === bossUnit?.id && bossCasting) {
     return {
       spellName: bossCasting.spellName,
+      spellId: bossCasting.spellId,
+      spellIcon: bossCasting.spellId,
       progress:
         bossCasting.castTimeMs > 0
           ? Math.min(1, bossCasting.elapsedMs / bossCasting.castTimeMs)
           : 1,
       interruptible: bossCasting.interruptible,
+      description: bossCasting.description,
+      school: bossCasting.school,
     };
   }
   if (companionCasts[unit.id]) {
+    const c = companionCasts[unit.id];
     return {
-      spellName: companionCasts[unit.id].spellName,
-      progress: companionCasts[unit.id].progress,
+      spellName: c.spellName,
+      spellId: c.spellId,
+      spellIcon: c.spellId,
+      progress: c.progress,
       interruptible: true,
     };
   }
@@ -135,6 +161,10 @@ function resolveUnitCastState(
 
 /** Combat viewport shell: canvas + floating HUD (no App business logic). */
 export function CombatHudScreen(props: CombatHudScreenProps) {
+  const [autoNavActive, setAutoNavActive] = useState(true);
+  useEffect(() => {
+    if (props.runPhase === 'TRAVEL_RECOVERY') setAutoNavActive(true);
+  }, [props.runPhase, props.currentBossIndex]);
   const {
     friendlyUnits,
     bossUnit,
@@ -147,6 +177,7 @@ export function CombatHudScreen(props: CombatHudScreenProps) {
     selectedTargetId,
     focusTargetId,
     dungeonTier,
+    dungeonId,
     targetBossName,
     currentBossIndex,
     travelRemainingMs,
@@ -197,8 +228,12 @@ export function CombatHudScreen(props: CombatHudScreenProps) {
     onClearSlot,
     onSaveUiLayout,
     onAccountRefresh,
+    raidSquads,
+    selectedSquadIndex = 0,
+    onSelectSquad,
     isPlayerHealer,
     syncRemotePositions,
+    isNetworkGuest,
     onNetworkMoveReport,
   } = props;
 
@@ -228,7 +263,9 @@ export function CombatHudScreen(props: CombatHudScreenProps) {
           runPhase={isApproaching ? 'PULL_APPROACH' : runPhase}
           screenShake={screenShake}
           selectedUnitId={selectedTargetId}
+          focusTargetId={focusTargetId}
           dungeonTier={dungeonTier}
+          dungeonId={dungeonId}
           targetBossName={targetBossName}
           currentBossIndex={currentBossIndex}
           travelRemainingMs={travelRemainingMs}
@@ -249,16 +286,23 @@ export function CombatHudScreen(props: CombatHudScreenProps) {
           onConfirmGroundTarget={onConfirmGroundTarget}
           onCancelGroundTarget={onCancelGroundTarget}
           syncRemotePositions={syncRemotePositions}
+          isNetworkGuest={isNetworkGuest}
           onNetworkMoveReport={onNetworkMoveReport}
+          autoNavActive={autoNavActive}
+          onAutoNavChange={setAutoNavActive}
+          combatDisplayPrefs={currentChar?.uiLayout?.combatDisplay ?? null}
         />
       </div>
 
       <div className="absolute inset-0 pointer-events-none z-10">
+        {playerUnit ? (
+          <BuffFrame player={playerUnit} allUnits={allUnits} />
+        ) : null}
+
         <div className="absolute top-3 left-4 flex flex-col space-y-2 pointer-events-auto">
           {playerUnit ? (
             <PlayerUnitFrame
               player={playerUnit}
-              allUnits={allUnits}
               isInCombat={runPhase === 'BOSS_COMBAT'}
               dkRunes={
                 currentChar?.classId === 'DK'
@@ -317,6 +361,9 @@ export function CombatHudScreen(props: CombatHudScreenProps) {
               skipTravelVote={skipTravelVote}
               mySkipVote={mySkipVote}
               onSkipTravelVote={onSkipTravelVote}
+              autoNavActive={autoNavActive}
+              onToggleAutoNav={() => setAutoNavActive((v) => !v)}
+              dungeonTier={dungeonTier}
             />
           </div>
         ) : null}
@@ -336,7 +383,10 @@ export function CombatHudScreen(props: CombatHudScreenProps) {
             bossTargetId={bossTargetId}
             revivingUnitId={revivingUnitId}
             reviveProgress={reviveProgress}
-            is20Man={friendlyUnits.length > 5}
+            is20Man={dungeonTier === '20man'}
+            squads={raidSquads}
+            selectedSquadIndex={selectedSquadIndex}
+            onSelectSquad={onSelectSquad}
             unitCasts={companionCasts}
             playerClassId={currentChar?.classId}
             playerSpecId={currentChar?.lastSpec}
@@ -346,8 +396,17 @@ export function CombatHudScreen(props: CombatHudScreenProps) {
             accountId={account?.id || account?.username || 'default'}
             raidMarks={savedRaidMarks}
             onSetRaidMark={onSetRaidMark}
-            initialPos={currentChar?.uiLayout?.raidFrames}
-            onSavePos={(pos) => onSaveUiLayout({ raidFrames: pos })}
+            initialPos={
+              dungeonTier === '20man'
+                ? currentChar?.uiLayout?.raidFrames20man ?? currentChar?.uiLayout?.raidFrames
+                : currentChar?.uiLayout?.raidFrames5man ?? currentChar?.uiLayout?.raidFrames
+            }
+            onSavePos={(pos) =>
+              onSaveUiLayout(
+                dungeonTier === '20man' ? { raidFrames20man: pos } : { raidFrames5man: pos }
+              )
+            }
+            combatDisplayPrefs={currentChar?.uiLayout?.combatDisplay ?? null}
           />
         </div>
 

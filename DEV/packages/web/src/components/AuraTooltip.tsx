@@ -1,6 +1,11 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import type { Buff, Unit } from '@cata-raid-sim/engine';
-import { SPELL_ICONS, SPELL_TOOLTIPS } from '../assets/pixelIcons.js';
+import {
+  getHastedCastTimeMs,
+  getSpellByAnyId,
+  LEVEL_80_MAX_HASTE,
+} from '@cata-raid-sim/engine';
+import { SPELL_ICONS, SPELL_TOOLTIPS, type SpellTooltipInfo } from '../assets/pixelIcons.js';
 import { DEBUFF_REGISTRY } from './RaidFrames.js';
 
 export const AURA_DESCRIPTIONS: Record<string, string> = {
@@ -8,14 +13,14 @@ export const AURA_DESCRIPTIONS: Record<string, string> = {
   rejuvenation: '每3秒为友方目标恢复生命值，持续12秒。德鲁伊核心瞬发治疗持续效果。',
   regrowth: '为友方目标恢复生命值，并在随后的6秒内持续恢复生命值。暴击几率极高。',
   lifebloom: '在15秒内每2秒为目标持续恢复生命值。最多可叠加3层，多层共用同一倒计时条且层数增加每跳治疗量；当倒计时自然结束或被驱散时产生巨额绽放治疗。同一释放者只能对单一目标维持生效，给其他人施放将没收其他人的生命绽放。可被治疗之触、愈合、滋养单体刷新持续时间。',
-  wild_growth: '为目标周围最多5名受伤最重的团队成员在7秒内恢复生命值。治疗效果在开始时最高，随时间递减。',
+  wild_growth: '以选中单位为圆心，15码内血量百分比最低的最多5名友方在7秒内恢复生命值。治疗效果在开始时最高，随时间递减。',
   riptide: '激流涌动，立即为友方目标恢复生命值，并在18秒内持续恢复生命值。使下一个治疗法术急速提升。',
   bone_shield: '环绕旋转的坚固骨盾，使你受到的所有伤害降低20%，每次受到直接伤害消耗1枚骨片。',
   vampiric_blood: '暂时使最大生命值提高15%，并使你受到的所有治疗效果提高25%，持续10秒。',
   slice_and_dice: '终结技，消耗连击点数使近战攻击速度提高40%。',
   time_warp: '扭曲时间流，使所有小队和团队成员的急速提高30%，持续40秒。',
   horn_of_winter: '吹响严冬号角，使所有团队成员的力量和敏捷提高，持续2分钟。',
-  mark_of_the_wild: '野性赐福，使目标的护甲值、所有属性提高5%，并提高全魔法抗性。',
+  mark_of_the_wild: '野性赐福：对 30 码内友方施放；若目标在队伍/团队中，全团所有属性+5% 并提高魔法抗性（1 小时）。',
   arcane_brilliance: '奥术光辉，使目标的法术强度提高10%，最大法力值大幅提升。',
   spirit_link: '灵魂链接图腾，图腾范围内所有盟友受到的伤害降低10%，且每1秒平分一次生命百分比。',
   tranquility: '德鲁伊引导宁静，每2秒为附近受伤最重的团队成员恢复巨额生命值。',
@@ -217,5 +222,144 @@ export const AuraIconList: React.FC<AuraIconListProps> = ({
         </div>
       )}
     </>
+  );
+};
+
+/** Resolve cast-bar tooltip from spellId / name / boss description. */
+export function resolveCastSpellTooltip(opts: {
+  spellId?: string | null;
+  spellName?: string | null;
+  description?: string | null;
+  interruptible?: boolean;
+  isChannel?: boolean;
+  school?: string | null;
+}): SpellTooltipInfo | null {
+  const id = (opts.spellId || '').trim();
+  const name = (opts.spellName || '').trim();
+
+  if (id && SPELL_TOOLTIPS[id]) return SPELL_TOOLTIPS[id];
+
+  const short = id.includes('_') ? id.replace(/^[^_]+_/, '') : id;
+  if (short && SPELL_TOOLTIPS[short]) return SPELL_TOOLTIPS[short];
+
+  if (name) {
+    const byName = Object.values(SPELL_TOOLTIPS).find((t) => t.name === name);
+    if (byName) return byName;
+  }
+
+  const norm = id ? getSpellByAnyId(id) : name ? getSpellByAnyId(name) : null;
+  if (norm) {
+    return {
+      name: norm.name,
+      cost:
+        norm.resourceCostAmount > 0
+          ? `${norm.resourceCostAmount} ${norm.resourceKind}`
+          : '无消耗',
+      castTime:
+        norm.castTimeMs <= 0
+          ? norm.gcdCategory === 'OFF_GCD'
+            ? '瞬发（不占GCD）'
+            : '瞬发'
+          : `${(getHastedCastTimeMs(norm.castTimeMs, LEVEL_80_MAX_HASTE) / 1000).toFixed(2)} 秒施法`,
+      cooldown: norm.cooldownMs > 0 ? `${(norm.cooldownMs / 1000).toFixed(0)} 秒` : '无冷却',
+      range: norm.school === 'PHYSICAL' && norm.classId !== 'HUNTER' ? '近战范围' : '40 码',
+      school: String(norm.school || opts.school || ''),
+      description: norm.description || AURA_DESCRIPTIONS[norm.shortId] || AURA_DESCRIPTIONS[short] || '',
+    };
+  }
+
+  if (opts.description || name) {
+    return {
+      name: name || id || '未知技能',
+      cost: '—',
+      castTime: opts.isChannel ? '引导' : '施法中',
+      cooldown: '—',
+      range: '—',
+      school: String(opts.school || ''),
+      description:
+        opts.description ||
+        AURA_DESCRIPTIONS[id] ||
+        AURA_DESCRIPTIONS[short] ||
+        '正在施放中的技能。',
+    };
+  }
+  return null;
+}
+
+export type UnitFrameCastState = {
+  spellName: string;
+  spellId?: string;
+  spellIcon?: string;
+  progress: number;
+  interruptible?: boolean;
+  isChannel?: boolean;
+  description?: string;
+  school?: string;
+};
+
+/** Hover panel for target / focus cast bars. */
+export const CastBarSpellHover: React.FC<{
+  castState: UnitFrameCastState;
+  children: React.ReactNode;
+  className?: string;
+}> = ({ castState, children, className }) => {
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+  const tip = useMemo(
+    () =>
+      resolveCastSpellTooltip({
+        spellId: castState.spellId || castState.spellIcon,
+        spellName: castState.spellName,
+        description: castState.description,
+        interruptible: castState.interruptible,
+        isChannel: castState.isChannel,
+        school: castState.school,
+      }),
+    [castState]
+  );
+
+  return (
+    <div
+      className={className}
+      onMouseEnter={(e) => {
+        const rect = e.currentTarget.getBoundingClientRect();
+        setPos({ x: rect.left, y: rect.bottom + 6 });
+      }}
+      onMouseLeave={() => setPos(null)}
+    >
+      {children}
+      {pos && tip && (
+        <div
+          className="fixed z-[60] pointer-events-none w-72 bg-[#0d0d1e]/98 border-2 border-[#5c4a28] rounded-md p-3 shadow-2xl backdrop-blur font-sans text-xs text-gray-200"
+          style={{
+            left: `${Math.min(window.innerWidth - 300, Math.max(10, pos.x))}px`,
+            top: `${Math.min(window.innerHeight - 180, Math.max(10, pos.y))}px`,
+          }}
+        >
+          <div className="space-y-1.5">
+            <div className="flex justify-between items-start border-b border-[#3e341f] pb-1 gap-2">
+              <span className="font-extrabold text-amber-300 text-sm tracking-wide">
+                {tip.name}
+              </span>
+              <span className="text-gray-300 font-mono text-[11px] flex-shrink-0">{tip.cost}</span>
+            </div>
+            <div className="flex justify-between text-[11px] text-gray-300">
+              <span>{castState.isChannel ? `引导 · ${tip.castTime}` : tip.castTime}</span>
+              <span>{tip.range}</span>
+            </div>
+            <div className="flex justify-between text-[11px] text-gray-300">
+              <span>冷却时间：{tip.cooldown}</span>
+              <span className="text-amber-200">
+                {tip.school ? `${tip.school}法术` : castState.interruptible === false ? '不可打断' : '可打断'}
+              </span>
+            </div>
+            {tip.description ? (
+              <div className="pt-1.5 border-t border-[#3e341f] text-[#ffd100] text-[11px] leading-relaxed">
+                {tip.description}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      )}
+    </div>
   );
 };

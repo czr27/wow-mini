@@ -1,6 +1,17 @@
 import React, { useState, useEffect, useRef } from 'react';
-import type { Unit, ClassId } from '@cata-raid-sim/engine';
+import type { Unit, ClassId, CombatDisplayPrefs } from '@cata-raid-sim/engine';
+import {
+  isRaidWideBuffSpellId,
+  isCasterRadiusRaidBuffSpellId,
+  resolveCombatDisplayPrefs,
+} from '@cata-raid-sim/engine';
 import { SPELL_ICONS } from '../assets/pixelIcons.js';
+import { clampHudPosToViewport } from '../utils/hudLayout.js';
+
+/** 全团/小队长效维护 buff 不进团队框小图标（野性印记、奥术智慧、坚韧、王者、号角等） */
+function isRaidFrameHiddenRaidBuff(spellId: string): boolean {
+  return isRaidWideBuffSpellId(spellId) || isCasterRadiusRaidBuffSpellId(spellId);
+}
 
 export type DispelType = 'MAGIC' | 'CURSE' | 'POISON' | 'DISEASE';
 
@@ -216,6 +227,10 @@ const FALLBACK_STORAGE_KEY = 'wow_raid_frame_pos';
 const UI_STORAGE_KEY = 'cata_raid_frame_ui';
 const DEFAULT_POS = { x: 24, y: 220 };
 
+type RaidTierKey = '5man' | '20man';
+type RaidFrameLayout = { x: number; y: number; width?: number; height?: number };
+type RaidFrameTierStore = Partial<Record<RaidTierKey, RaidFrameLayout>>;
+
 export function computeRaidGridLayout(tier: '5man' | '20man') {
   const memberWidth = 104;
   const memberHeight = 48;
@@ -241,31 +256,78 @@ function getAccountUiKey(accountId?: string): string {
   return accountId ? `cata_raid_frame_ui_${accountId}` : UI_STORAGE_KEY;
 }
 
-function loadSavedUiPrefs(accountId?: string, is20Man?: boolean): { pos: { x: number; y: number }; size: { width: number; height: number } | null } {
+function clampLayout(
+  layout: Partial<RaidFrameLayout> | null | undefined,
+  is20Man: boolean
+): { pos: { x: number; y: number }; size: { width: number; height: number } | null } {
+  let size: { width: number; height: number } | null = null;
+  if (typeof layout?.width === 'number' && typeof layout?.height === 'number') {
+    size = {
+      width: Math.max(is20Man ? 260 : 100, Math.min(1000, layout.width)),
+      height: Math.max(140, Math.min(900, layout.height)),
+    };
+  }
+  const panelW = size?.width ?? (is20Man ? 340 : 120);
+  const panelH = size?.height ?? 260;
+  const vw = typeof window !== 'undefined' ? window.innerWidth : 1920;
+  const vh = typeof window !== 'undefined' ? window.innerHeight : 1080;
+  const raw =
+    typeof layout?.x === 'number' && typeof layout?.y === 'number'
+      ? { x: layout.x, y: layout.y }
+      : DEFAULT_POS;
+  const pos = clampHudPosToViewport(raw, vw, vh, panelW, panelH);
+  return { pos, size };
+}
+
+/** Read per-tier store; migrate legacy flat {x,y,width,height} into both tiers. */
+function readTierStore(accountId?: string): RaidFrameTierStore {
   try {
     const key = getAccountUiKey(accountId);
-    const raw = localStorage.getItem(key) || localStorage.getItem(UI_STORAGE_KEY) || localStorage.getItem(STORAGE_KEY) || localStorage.getItem(FALLBACK_STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      const defaultW = is20Man ? 340 : 120;
-      const defaultH = 260;
-      const maxX = Math.max(0, (typeof window !== 'undefined' ? window.innerWidth : 1920) - 100);
-      const maxY = Math.max(0, (typeof window !== 'undefined' ? window.innerHeight : 1080) - 100);
-      const pos = {
-        x: typeof parsed.x === 'number' ? Math.max(0, Math.min(maxX, parsed.x)) : DEFAULT_POS.x,
-        y: typeof parsed.y === 'number' ? Math.max(0, Math.min(maxY, parsed.y)) : DEFAULT_POS.y,
+    const raw =
+      localStorage.getItem(key) ||
+      localStorage.getItem(UI_STORAGE_KEY) ||
+      localStorage.getItem(STORAGE_KEY) ||
+      localStorage.getItem(FALLBACK_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (parsed && (parsed['5man'] || parsed['20man'])) {
+      return {
+        '5man': parsed['5man'],
+        '20man': parsed['20man'],
       };
-      let size: { width: number; height: number } | null = null;
-      if (typeof parsed.width === 'number' && typeof parsed.height === 'number') {
-        size = {
-          width: Math.max(is20Man ? 260 : 100, Math.min(1000, parsed.width)),
-          height: Math.max(140, Math.min(900, parsed.height)),
-        };
-      }
-      return { pos, size };
+    }
+    // Legacy flat layout → seed both tiers so existing placement is not lost.
+    if (parsed && typeof parsed.x === 'number' && typeof parsed.y === 'number') {
+      const flat: RaidFrameLayout = {
+        x: parsed.x,
+        y: parsed.y,
+        ...(typeof parsed.width === 'number' ? { width: parsed.width } : {}),
+        ...(typeof parsed.height === 'number' ? { height: parsed.height } : {}),
+      };
+      return { '5man': { ...flat }, '20man': { ...flat } };
     }
   } catch {}
-  return { pos: DEFAULT_POS, size: null };
+  return {};
+}
+
+function writeTierStore(accountId: string | undefined, tier: RaidTierKey, layout: RaidFrameLayout) {
+  try {
+    const key = getAccountUiKey(accountId);
+    const store = readTierStore(accountId);
+    store[tier] = layout;
+    localStorage.setItem(key, JSON.stringify(store));
+    // Keep legacy key as a coarse fallback (current tier only).
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ x: layout.x, y: layout.y }));
+  } catch {}
+}
+
+function loadSavedUiPrefs(
+  accountId?: string,
+  is20Man?: boolean
+): { pos: { x: number; y: number }; size: { width: number; height: number } | null } {
+  const tier: RaidTierKey = is20Man ? '20man' : '5man';
+  const store = readTierStore(accountId);
+  return clampLayout(store[tier], !!is20Man);
 }
 
 interface Props {
@@ -279,6 +341,11 @@ interface Props {
   revivingUnitId?: string | null;
   reviveProgress?: number;
   is20Man?: boolean;
+  /** Pre-assigned squads (20-man random / 5-man single). When set, used instead of role-chunk. */
+  squads?: Unit[][];
+  /** Currently selected squad for Alt+1~5 (0-based). Default 0 = 小队1. */
+  selectedSquadIndex?: number;
+  onSelectSquad?: (squadIndex: number) => void;
   unitCasts?: Record<string, { spellName: string; progress: number }>;
   playerClassId?: ClassId;
   playerSpecId?: string;
@@ -290,6 +357,8 @@ interface Props {
   onSetRaidMark?: (unitName: string, mark: string | null) => void;
   initialPos?: { x: number; y: number; width?: number; height?: number } | null;
   onSavePos?: (pos: { x: number; y: number; width?: number; height?: number }) => void;
+  /** 团队框名称 / buff / debuff / 常驻团 buff 显示偏好 */
+  combatDisplayPrefs?: CombatDisplayPrefs | null;
 }
 
 export const RaidFrames: React.FC<Props> = ({
@@ -303,6 +372,9 @@ export const RaidFrames: React.FC<Props> = ({
   revivingUnitId = null,
   reviveProgress = 0,
   is20Man = false,
+  squads: squadsProp,
+  selectedSquadIndex = 0,
+  onSelectSquad,
   unitCasts = {},
   playerClassId,
   playerSpecId,
@@ -310,6 +382,7 @@ export const RaidFrames: React.FC<Props> = ({
   incomingHeals = {},
   incomingCasts = {},
   accountId,
+  combatDisplayPrefs = null,
   raidMarks,
   onSetRaidMark,
   initialPos = null,
@@ -332,22 +405,47 @@ export const RaidFrames: React.FC<Props> = ({
   // Toggle: Only show dispellable debuffs for the player's current spec
   const [filterDispellableOnly, setFilterDispellableOnly] = useState(false);
 
-  // Floating draggable & resizable state (persisted in CharacterRecord & account)
-  const initialPrefs = initialPos
-    ? {
-        pos: { x: initialPos.x, y: initialPos.y },
-        size: initialPos.width && initialPos.height ? { width: initialPos.width, height: initialPos.height } : null,
-      }
-    : loadSavedUiPrefs(accountId, is20Man);
+  // Floating draggable & resizable state — 5man / 20man layouts stored separately
+  const resolvePrefs = () => {
+    if (initialPos && typeof initialPos.x === 'number' && typeof initialPos.y === 'number') {
+      return clampLayout(initialPos, is20Man);
+    }
+    return loadSavedUiPrefs(accountId, is20Man);
+  };
+  const initialPrefs = resolvePrefs();
   const [pos, setPos] = useState<{ x: number; y: number }>(initialPrefs.pos);
   const [panelSize, setPanelSize] = useState<{ width: number; height: number } | null>(initialPrefs.size);
   const [isDragging, setIsDragging] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
+  const tierKey: RaidTierKey = is20Man ? '20man' : '5man';
 
   const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number; latestX?: number; latestY?: number } | null>(null);
   const resizeRef = useRef<{ startX: number; startY: number; origW: number; origH: number; latestW?: number; latestH?: number } | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
+
+  // Switch dungeon size → load that tier's saved position/size
+  useEffect(() => {
+    if (isDragging || isResizing) return;
+    const prefs = resolvePrefs();
+    setPos(prefs.pos);
+    setPanelSize(prefs.size);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only when tier / account / char layout changes
+  }, [is20Man, accountId, initialPos?.x, initialPos?.y, initialPos?.width, initialPos?.height]);
+
+  // 已出界（含标题区）自动拉回
+  useEffect(() => {
+    const pullIn = () => {
+      const panelWidth = panelSize?.width || (is20Man ? 340 : 120);
+      const panelHeight = panelSize?.height || 260;
+      setPos((prev) =>
+        clampHudPosToViewport(prev, window.innerWidth, window.innerHeight, panelWidth, panelHeight)
+      );
+    };
+    pullIn();
+    window.addEventListener('resize', pullIn);
+    return () => window.removeEventListener('resize', pullIn);
+  }, [panelSize, is20Man]);
 
   // Drag listeners with boundary clamping & account persistence
   useEffect(() => {
@@ -359,13 +457,16 @@ export const RaidFrames: React.FC<Props> = ({
       const dy = e.clientY - dragRef.current.startY;
       const panelWidth = panelSize?.width || (is20Man ? 340 : 120);
       const panelHeight = panelSize?.height || 260;
-      const maxX = Math.max(0, window.innerWidth - panelWidth);
-      const maxY = Math.max(0, window.innerHeight - panelHeight);
-      const newX = Math.max(0, Math.min(maxX, dragRef.current.origX + dx));
-      const newY = Math.max(0, Math.min(maxY, dragRef.current.origY + dy));
-      dragRef.current.latestX = newX;
-      dragRef.current.latestY = newY;
-      setPos({ x: newX, y: newY });
+      const next = clampHudPosToViewport(
+        { x: dragRef.current.origX + dx, y: dragRef.current.origY + dy },
+        window.innerWidth,
+        window.innerHeight,
+        panelWidth,
+        panelHeight
+      );
+      dragRef.current.latestX = next.x;
+      dragRef.current.latestY = next.y;
+      setPos(next);
     };
 
     const handleMouseUp = () => {
@@ -373,15 +474,9 @@ export const RaidFrames: React.FC<Props> = ({
       const latestY = dragRef.current?.latestY ?? pos.y;
       setIsDragging(false);
       dragRef.current = null;
-      try {
-        const key = getAccountUiKey(accountId);
-        const data = { x: latestX, y: latestY, ...(panelSize || {}) };
-        localStorage.setItem(key, JSON.stringify(data));
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({ x: latestX, y: latestY }));
-      } catch {}
-      if (onSavePos) {
-        onSavePos({ x: latestX, y: latestY, ...(panelSize || {}) });
-      }
+      const layout: RaidFrameLayout = { x: latestX, y: latestY, ...(panelSize || {}) };
+      writeTierStore(accountId, tierKey, layout);
+      if (onSavePos) onSavePos(layout);
     };
 
     window.addEventListener('mousemove', handleMouseMove);
@@ -390,7 +485,7 @@ export const RaidFrames: React.FC<Props> = ({
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [isDragging, pos, panelSize, is20Man, accountId]);
+  }, [isDragging, pos, panelSize, is20Man, accountId, tierKey, onSavePos]);
 
   // Resizing listeners with boundary clamping & account persistence
   useEffect(() => {
@@ -417,15 +512,9 @@ export const RaidFrames: React.FC<Props> = ({
       setIsResizing(false);
       resizeRef.current = null;
       const finalSize = latestW && latestH ? { width: latestW, height: latestH } : panelSize;
-      try {
-        const key = getAccountUiKey(accountId);
-        const data = { x: pos.x, y: pos.y, ...(finalSize || {}) };
-        localStorage.setItem(key, JSON.stringify(data));
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({ x: pos.x, y: pos.y }));
-      } catch {}
-      if (onSavePos) {
-        onSavePos({ x: pos.x, y: pos.y, ...(finalSize || {}) });
-      }
+      const layout: RaidFrameLayout = { x: pos.x, y: pos.y, ...(finalSize || {}) };
+      writeTierStore(accountId, tierKey, layout);
+      if (onSavePos) onSavePos(layout);
     };
 
     window.addEventListener('mousemove', handleMouseMove);
@@ -434,7 +523,7 @@ export const RaidFrames: React.FC<Props> = ({
       window.removeEventListener('mousemove', handleMouseMove);
       window.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [isResizing, pos, panelSize, is20Man, accountId]);
+  }, [isResizing, pos, panelSize, is20Man, accountId, tierKey, onSavePos]);
 
   const handleMouseDown = (e: React.MouseEvent) => {
     if (isLocked) return;
@@ -465,28 +554,29 @@ export const RaidFrames: React.FC<Props> = ({
 
   // Player's dispel capability matrix
   const playerDispelCapabilities = getPlayerDispelCapabilities(playerClassId, playerSpecId);
+  const displayPrefs = resolveCombatDisplayPrefs(combatDisplayPrefs);
 
   // Current player unit ID for filtering player's own beneficial buffs on raid frames
   const playerUnit = units.find(u => u.isPlayer);
   const playerId = playerUnit?.id;
 
-  // Sort units strictly by TANK -> HEALER -> DPS for orderly squad distribution
-  const rolePriority: Record<string, number> = { TANK: 0, HEALER: 1, DPS: 2 };
-  const sortedUnits = [...units].sort((a, b) => {
-    const rA = rolePriority[a.role] ?? 99;
-    const rB = rolePriority[b.role] ?? 99;
-    return rA - rB;
-  });
-
-  // Divide into 5-player squads (Authentic WoW Blizzard Raid Groups: 小队 1, 小队 2, 小队 3, 小队 4)
-  const squads: Unit[][] = [];
-  for (let i = 0; i < sortedUnits.length; i += 5) {
-    squads.push(sortedUnits.slice(i, i + 5));
+  // Prefer parent-assigned squads (20-man random / 5-man single); fallback: role-sort chunk
+  let squads: Unit[][];
+  if (squadsProp && squadsProp.length > 0) {
+    squads = squadsProp;
+  } else {
+    const rolePriority: Record<string, number> = { TANK: 0, HEALER: 1, DPS: 2 };
+    const sortedUnits = [...units]
+      .filter((u) => !u.isPet && u.role !== 'ENEMY')
+      .sort((a, b) => (rolePriority[a.role] ?? 99) - (rolePriority[b.role] ?? 99));
+    squads = [];
+    for (let i = 0; i < sortedUnits.length; i += 5) {
+      squads.push(sortedUnits.slice(i, i + 5));
+    }
+    if (squads.length === 0) squads.push([]);
   }
-  if (squads.length === 0) {
-    squads.push([]);
-  }
 
+  const frameUnitCount = squads.reduce((n, s) => n + s.length, 0);
   const isMultiSquad = is20Man || squads.length > 1;
 
   return (
@@ -498,7 +588,7 @@ export const RaidFrames: React.FC<Props> = ({
         width: `${panelSize ? panelSize.width : (isMultiSquad ? 340 : 120)}px`,
         height: `${panelSize ? panelSize.height : 260}px`,
       }}
-      className={`fixed z-30 p-2 bg-[#08080f]/95 border-2 border-[#1c1c2e] rounded-lg flex flex-col select-none shadow-2xl backdrop-blur overflow-hidden ${
+      className={`fixed z-30 p-2 bg-[#08080f]/45 border-2 border-[#1c1c2e]/80 rounded-lg flex flex-col select-none shadow-2xl backdrop-blur-md overflow-hidden ${
         isDragging ? 'cursor-grabbing shadow-[0_0_24px_rgba(245,158,11,0.4)]' : ''
       }`}
     >
@@ -511,7 +601,7 @@ export const RaidFrames: React.FC<Props> = ({
       >
         <div className="flex items-center space-x-2">
           <span className="text-[#f3d178] font-bold tracking-wider font-serif drop-shadow-[0_1px_1px_rgba(0,0,0,0.9)]">
-            {isMultiSquad ? `团队框架 (${sortedUnits.length}人)` : '小队 1'}
+            {isMultiSquad ? `团队框架 (${frameUnitCount}人)` : '小队 1'}
           </span>
           <span className="text-gray-400 text-[10px] font-mono">
             {isMultiSquad ? '2T · 4H · 14DPS' : '1T · 1H · 3DPS'}
@@ -539,17 +629,34 @@ export const RaidFrames: React.FC<Props> = ({
               isMultiSquad ? 'min-w-0' : 'w-full'
             }`}
           >
-            {/* Squad Header Label (e.g. 小队 1, 小队 2, 小队 3) */}
+            {/* Squad Header: 20-man clickable; selected squad bold (default 小队1) */}
             <div className="flex items-center justify-center pb-0.5 border-b border-[#2d2d48]/40 flex-shrink-0">
-              <span className="text-[#f3d178] font-bold text-[10px] tracking-wider font-serif drop-shadow-[0_1px_2px_rgba(0,0,0,1)]">
-                小队 {squadIdx + 1}
-              </span>
+              {isMultiSquad ? (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onSelectSquad?.(squadIdx);
+                  }}
+                  className={`text-[10px] tracking-wider font-serif drop-shadow-[0_1px_2px_rgba(0,0,0,1)] px-1 rounded transition ${
+                    selectedSquadIndex === squadIdx
+                      ? 'text-[#f3d178] font-bold bg-amber-500/15'
+                      : 'text-gray-400 font-normal hover:text-[#f3d178]/80'
+                  }`}
+                  title={`选择小队 ${squadIdx + 1}（Alt+1~5 对应该小队第1~5人）`}
+                >
+                  小队 {squadIdx + 1}
+                </button>
+              ) : (
+                <span className="text-[#f3d178] font-bold text-[10px] tracking-wider font-serif drop-shadow-[0_1px_2px_rgba(0,0,0,1)]">
+                  小队 {squadIdx + 1}
+                </span>
+              )}
             </div>
 
             {/* Squad Members Container: Exactly fills the squad column height */}
             <div className="flex-1 min-h-0 flex flex-col space-y-1 overflow-hidden w-full">
-              {squad.map((unit, memberIdx) => {
-              const globalUnitIdx = squadIdx * 5 + memberIdx;
+              {squad.map((unit) => {
               const isSelected = unit.id === selectedUnitId;
               const isAlive = (unit.isAlive ?? unit.alive) && unit.hp > 0;
               const hpPct = unit.maxHp > 0 ? Math.max(0, Math.min(100, (unit.hp / unit.maxHp) * 100)) : 0;
@@ -557,6 +664,7 @@ export const RaidFrames: React.FC<Props> = ({
               const classColor = CLASS_COLORS_CATA[unit.classId] || '#888888';
               const isTank = unit.role === 'TANK';
               const isBossTarget = unit.id === bossTargetId && isAlive;
+              // Only non-tanks with boss threat get framed — MT holding aggro stays unframed
               const isOT = isBossTarget && !isTank;
               const isBeingRevived = !isAlive && revivingUnitId === unit.id;
 
@@ -634,9 +742,22 @@ export const RaidFrames: React.FC<Props> = ({
                 return prioB - prioA;
               });
 
-              // 团队框架显示的 buff / debuff 数量不受限制
-              const visibleDebuffs = unitDebuffs;
-              const beneficialBuffs = allAuras.filter(b => b.kind === 'BUFF' && (!playerId || b.sourceUnitId === playerId));
+              // 团队框架显示的 buff / debuff 数量不受限制；常驻团 buff 默认不占小图标
+              const visibleDebuffs = displayPrefs.showRaidFrameDebuffs ? unitDebuffs : [];
+              const regularBuffs = displayPrefs.showRaidFrameBuffs
+                ? allAuras.filter(
+                    (b) =>
+                      b.kind === 'BUFF' &&
+                      (!playerId || b.sourceUnitId === playerId) &&
+                      !isRaidFrameHiddenRaidBuff(b.spellId || ''),
+                  )
+                : [];
+              const standingBuffs = displayPrefs.showRaidFrameStandingBuffs
+                ? allAuras.filter(
+                    (b) => b.kind === 'BUFF' && isRaidFrameHiddenRaidBuff(b.spellId || ''),
+                  )
+                : [];
+              const beneficialBuffs = [...regularBuffs, ...standingBuffs];
 
               // Dispel indicator pulsing border (黄色高亮外框)
               const dispelBorderColor = activeDispelType
@@ -645,36 +766,6 @@ export const RaidFrames: React.FC<Props> = ({
 
               // 人物标记默认是空白的，只有主动标记后才显示
               const raidMark = effectiveMarks[unit.name] || '';
-
-              // 构建详尽而清晰的悬停提示
-              const tooltipLines: string[] = [
-                `[${unit.name}] 分工: ${unit.role === 'TANK' ? '坦克 (TANK)' : unit.role === 'HEALER' ? '治疗 (HEALER)' : '伤害输出 (DPS)'}`,
-                `生命值: ${unit.hp.toLocaleString()} / ${unit.maxHp.toLocaleString()} (${Math.round(hpPct)}%${missingHp > 0 ? ` · 缺 ${missingHp.toLocaleString()}` : ''})`,
-              ];
-              if (absorbAmount > 0) {
-                tooltipLines.push(`吸收护盾: +${absorbAmount.toLocaleString()}`);
-              }
-              if (finalIncomingCasts.length > 0) {
-                tooltipLines.push(`读条预治疗 (${finalIncomingCasts.length}人重叠):`);
-                finalIncomingCasts.forEach(c => {
-                  tooltipLines.push(`  • ${c.casterName} [${c.spellName}]: +${c.amount.toLocaleString()}`);
-                });
-              }
-              if (nextSecHot.details.length > 0) {
-                tooltipLines.push(`HoT下1秒明确预期 (+${Math.round(hotExpectedVal).toLocaleString()}):`);
-                nextSecHot.details.forEach(h => {
-                  tooltipLines.push(`  • ${h.name}: +${h.amount.toLocaleString()}`);
-                });
-              }
-              if (totalExpectedIncoming > 0) {
-                tooltipLines.push(`总预期进血: +${Math.round(totalExpectedIncoming).toLocaleString()}`);
-              }
-              if (activeDispelType) {
-                tooltipLines.push(`[右键/点击] 快捷驱散 ${activeDispelType}`);
-              } else {
-                tooltipLines.push(`[点击] 选中目标 | [Shift+点击] 设为焦点`);
-              }
-              const unitTooltip = tooltipLines.join('\n');
 
               return (
                 <div
@@ -704,18 +795,15 @@ export const RaidFrames: React.FC<Props> = ({
                   className={`relative rounded flex-1 min-h-0 w-full border cursor-pointer ${
                     isResizing ? 'transition-none' : 'transition-all'
                   } overflow-hidden flex flex-col justify-between ${
-                    isBossTarget
-                      ? isOT
-                        ? 'border-red-600 ring-2 ring-red-500 shadow-[0_0_16px_rgba(239,68,68,0.95)] animate-pulse'
-                        : 'border-orange-500 ring-2 ring-orange-500/80 shadow-md'
+                    isOT
+                      ? 'border-red-600 ring-2 ring-red-500 shadow-[0_0_16px_rgba(239,68,68,0.95)] animate-pulse'
                       : isSelected
                       ? 'border-yellow-400 ring-2 ring-yellow-400/95 shadow-[0_0_12px_rgba(250,204,21,0.7)]'
                       : activeDispelType
                       ? dispelBorderColor
                       : 'border-[#1e1e2d] hover:border-gray-400'
                   } ${!isAlive ? 'opacity-50' : isOutOfRange ? 'opacity-40 grayscale-[30%]' : ''}`}
-                  style={{ backgroundColor: '#131318' }}
-                  title={unitTooltip}
+                  style={{ backgroundColor: 'rgba(19, 19, 24, 0.45)' }}
                 >
                   {/* ── Layer 1: Base Health Bar (Class-Colored) ──────────────────────── */}
                   {isAlive && (
@@ -780,12 +868,11 @@ export const RaidFrames: React.FC<Props> = ({
                     />
                   )}
 
-                  {/* ── Top-Left: Role Icon (只显示分工，不显示职业) + OT Alert ────────────────── */}
+                  {/* ── Top-Left: Role Icon（OT 仅用红框提示，无 OT 文字） ────────────────── */}
                   <div className="absolute top-0.5 left-1 z-30 flex items-center space-x-0.5 pointer-events-none">
-                    {/* 分工图标（15px，无边框高清晰度） */}
+                    {/* 分工图标（15px，无边框高清晰度；不挂悬停文案） */}
                     <div
                       className="w-[15px] h-[15px] flex items-center justify-center flex-shrink-0 drop-shadow select-none"
-                      title={`分工: ${unit.role === 'TANK' ? '坦克 (TANK)' : unit.role === 'HEALER' ? '治疗 (HEALER)' : '伤害输出 (DPS)'}`}
                     >
                       {unit.role === 'TANK' ? (
                         <svg viewBox="0 0 16 16" className="w-full h-full drop-shadow" fill="none" xmlns="http://www.w3.org/2000/svg">
@@ -811,16 +898,6 @@ export const RaidFrames: React.FC<Props> = ({
                         </svg>
                       )}
                     </div>
-                    {isOT && (
-                      <span className="bg-red-600 text-white text-[7px] font-black px-0.5 rounded animate-bounce shadow">
-                        OT!
-                      </span>
-                    )}
-                    {isBossTarget && isTank && (
-                      <span className="bg-orange-600/90 text-white text-[6.5px] font-bold px-0.5 rounded shadow">
-                        主坦
-                      </span>
-                    )}
                     {activeDispelType && isAlive && (
                       <span
                         className="text-[7.5px] bg-yellow-400 text-black px-1 rounded font-black border border-yellow-300 animate-pulse shadow flex items-center space-x-0.5 cursor-pointer hover:bg-yellow-300 pointer-events-auto"
@@ -879,20 +956,24 @@ export const RaidFrames: React.FC<Props> = ({
                           {raidMark}
                         </span>
                       ) : null}
-                      <span
-                        className="truncate text-[10.5px] font-extrabold tracking-wide text-white drop-shadow-[0_1px_2px_rgba(0,0,0,1)]"
-                        style={{
-                          textShadow:
-                            '0 0 3px #000, 0 1px 2px #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000',
-                        }}
-                      >
-                        {unit.name}
-                      </span>
-                      {unit.isPlayer && (
-                        <span className="text-[6.5px] bg-amber-400 text-black px-0.5 rounded font-black shadow flex-shrink-0">
-                          我
-                        </span>
-                      )}
+                      {displayPrefs.showRaidFrameNames ? (
+                        <>
+                          <span
+                            className="truncate text-[10.5px] font-extrabold tracking-wide text-white drop-shadow-[0_1px_2px_rgba(0,0,0,1)]"
+                            style={{
+                              textShadow:
+                                '0 0 3px #000, 0 1px 2px #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000',
+                            }}
+                          >
+                            {unit.name}
+                          </span>
+                          {unit.isPlayer && (
+                            <span className="text-[6.5px] bg-amber-400 text-black px-0.5 rounded font-black shadow flex-shrink-0">
+                              我
+                            </span>
+                          )}
+                        </>
+                      ) : null}
                     </div>
                   </div>
 

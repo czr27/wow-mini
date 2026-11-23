@@ -189,6 +189,7 @@ export const MAGE: ClassSpec = {
       resourceCostAmount: 1000,
       targetType: 'AOE_ALLY',
       school: 'ARCANE',
+      isRaidBuff: true,
       effects: [
         {
           type: 'BUFF',
@@ -234,7 +235,7 @@ export const MAGE: ClassSpec = {
       school: 'FROST',
       effects: [
         {
-          type: 'SHIELD',
+          type: 'BUFF',
           auraId: 'ice_block',
           durationMs: 10_000,
           description: '10s完全免疫所有伤害与有害效果并清除减益，CD 5min（不进GCD）',

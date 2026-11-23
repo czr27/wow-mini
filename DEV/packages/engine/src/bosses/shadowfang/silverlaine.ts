@@ -1,12 +1,15 @@
 import type { BossEncounterModule, BossSkill } from '../core/BossTypes.js';
 import type { Unit } from '../../types.js';
+import { spawnCombatUnit } from '../../engine/UnitSpawn.js';
+
+const WORGEN_NAMES = ['盲眼奥杜之灵', '屠夫刃爪之灵', '雷希戈尔之灵', '狼王南杜斯之灵'];
 
 /**
  * 影牙城堡 2号：席瓦莱恩男爵 (Baron Silverlaine)
  * 特性机制：
  * - 降受疗诅咒 (Cursed Veins)：对主坦及随机队员施加降低受疗75%的诅咒与持续DOT，急需驱散
  * - 阴影面纱脉冲 (Veil of Shadows)：全团暗影脉冲
- * - 召唤狼人之灵 (Summon Worgen)：突袭撕咬后排治疗与输出
+ * - 召唤狼人之灵 (Summon Worgen)：生成可击杀增援单位
  */
 export const SilverlaineEncounter: BossEncounterModule = {
   id: 'silverlaine',
@@ -39,7 +42,7 @@ export const SilverlaineEncounter: BossEncounterModule = {
               spellId: 'cursed_veins',
               name: '降受疗诅咒',
               kind: 'DEBUFF',
-              tags: ['CC', 'DOT'],
+              tags: ['DOT', 'DEBUFF'],
               sourceUnitId: boss.id,
               targetUnitId: target.id,
               durationMs: 15000,
@@ -49,6 +52,7 @@ export const SilverlaineEncounter: BossEncounterModule = {
               school: 'SHADOW',
               tickIntervalMs: 2000,
               tickValue: 4000,
+              healingReceivedMod: 0.25, // -75% healing (Veil of Shadow)
             });
           }
         },
@@ -81,19 +85,34 @@ export const SilverlaineEncounter: BossEncounterModule = {
         school: 'SHADOW',
         range: 320,
         targetKind: 'RANGED_TARGET',
-        description: '召唤先祖狼人之灵突袭后排治疗/DPS',
+        description: '召唤先祖狼人之灵（可击杀增援），坦克需立刻拉怪',
         execute: (boss, engine) => {
+          const name = WORGEN_NAMES[Math.floor(Math.random() * WORGEN_NAMES.length)];
+          const bPos = boss.position || { x: 400, y: 200 };
+          const worgen = spawnCombatUnit(engine, {
+            id: `sfk_worgen_${engine.nowMs}_${Math.floor(Math.random() * 9999)}`,
+            name,
+            unitKind: 'ADD',
+            role: 'ENEMY',
+            classId: 'NPC',
+            hp: 95_000,
+            maxHp: 95_000,
+            position: { x: bPos.x + 50, y: bPos.y - 30 },
+            summonSpellId: 'summon_worgen',
+            despawnAtElapsedMs: (engine.elapsed || 0) + 90_000,
+          });
+          // Immediate swipe on a non-tank to force pickup
           const nonTank = engine.friendlyUnits.filter(u => u.alive && u.role !== 'TANK');
           const target = nonTank[Math.floor(Math.random() * nonTank.length)] || engine.friendlyUnits[0];
           if (target) {
-            engine.dealDamage(boss, target, 26000, 'PHYSICAL', false, '狼人之灵');
-            engine.effectsManager?.addFloatingText({
-              targetId: target.id,
-              text: '狼人之灵 突袭撕咬！',
-              category: 'CRIT',
-              isCrit: true,
-            });
+            engine.dealDamage(worgen, target, 12000, 'PHYSICAL', false, '狼人之灵撕咬');
           }
+          engine.effectsManager?.addFloatingText({
+            targetId: boss.id,
+            text: `🐺 召唤：${name}！`,
+            category: 'STATUS',
+            isCrit: true,
+          });
         },
       },
     ];

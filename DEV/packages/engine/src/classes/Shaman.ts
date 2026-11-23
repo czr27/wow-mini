@@ -144,6 +144,7 @@ export const SHAMAN: ClassSpec = {
       targetType: 'GROUND',
       school: 'NATURE',
       spec: 'RESTO_HEAL',
+      range: 320, // 40 码点地
       effects: [
         {
           type: 'GROUND_EFFECT',
@@ -153,7 +154,7 @@ export const SHAMAN: ClassSpec = {
           durationMs: 10_000,
           tickIntervalMs: 2_000,
           baseValue: 3500,
-          description: '在地面放置水蓝光阵（HEAL_ZONE，10s，每2s治疗范围内所有友方）',
+          description: '40码内点地放置水蓝光阵（HEAL_ZONE，10s，每2s治疗范围内所有友方）',
         },
       ],
     },
@@ -229,7 +230,7 @@ export const SHAMAN: ClassSpec = {
           durationMs: 10_000,
           tickIntervalMs: 2_000,
           baseValue: 5200,
-          description: '治疗之潮图腾：持续10s，每2s为附近最多5名伤势最重的友方恢复约5200生命值（80级满级标定）',
+          description: '治疗之潮图腾：持续10s，每2s为40码内最多5名伤势最重的友方恢复约5200生命值（80级满级标定）',
         },
       ],
     },
@@ -362,6 +363,7 @@ export const SHAMAN: ClassSpec = {
       resourceCostAmount: 1000,
       targetType: 'AOE_ALLY',
       school: 'NATURE',
+      isRaidBuff: true,
       effects: [
         {
           type: 'BUFF',

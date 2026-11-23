@@ -1,5 +1,6 @@
 import type { Unit, ResourceKind, RuneSlot } from '../types.js';
 import type { CombatEngine } from './CombatEngine.js';
+import { getUnitHaste } from './BuffEffects.js';
 
 /**
  * [E-06] ResourceManager — 资源系统
@@ -78,7 +79,7 @@ export class ResourceManager {
   // ── Energy regen (+10/s baseline, haste-modified) ─────────────
   private tickEnergy(unit: Unit, res: { current: number; max: number }, deltaMs: number): void {
     if (res.current >= res.max) return;
-    const haste = unit.stats.haste ?? 0;
+    const haste = getUnitHaste(unit, 0);
     const regenPerMs = (10 * (1 + haste)) / 1_000; // 10/s base
     const amount = regenPerMs * deltaMs;
     res.current = Math.min(res.max, res.current + amount);
@@ -97,7 +98,7 @@ export class ResourceManager {
   // ── Focus regen (+4/s baseline, haste-modified) ──────────────
   private tickFocus(unit: Unit, res: { current: number; max: number }, deltaMs: number): void {
     if (res.current >= res.max) return;
-    const haste = unit.stats.haste ?? 0;
+    const haste = getUnitHaste(unit, 0);
     const regenPerMs = (4 * (1 + haste)) / 1_000; // 4/s base modified by haste
     const amount = regenPerMs * deltaMs;
     res.current = Math.min(res.max, res.current + amount);
@@ -118,7 +119,7 @@ export class ResourceManager {
     const inCombat = Boolean(this.engine.bossUnit?.isAlive);
     if (inCombat) {
       if (res.current >= res.max) return;
-      const haste = unit.stats.haste ?? 0;
+      const haste = getUnitHaste(unit, 0);
       const genPerMs = (6 * (1 + haste * 0.5)) / 1_000;
       const amount = genPerMs * deltaMs;
       res.current = Math.min(res.max, res.current + amount);
@@ -165,7 +166,7 @@ export class ResourceManager {
   // ── DK Rune cooldowns (6 runes, 10s base modified by haste) ───
   private tickRunes(unit: Unit, deltaMs: number): void {
     if (!unit.runes) return;
-    const haste = Math.max(0, unit.stats?.haste ?? 0);
+    const haste = Math.max(0, getUnitHaste(unit, 0));
     const effectiveDelta = deltaMs * (1 + haste);
     for (const rune of unit.runes) {
       if (rune.cooldownMs > 0) {

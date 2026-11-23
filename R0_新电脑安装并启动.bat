@@ -1,30 +1,29 @@
 @echo off
-chcp 65001 >nul
 setlocal EnableExtensions
 cd /d "%~dp0"
 
-title Cata Raid Sim - æ–°ç”µè„‘å®‰è£…å¹¶å¯åŠ¨
+title Cata Raid Sim - ĞÂµçÄÔ°²×°²¢Æô¶¯
 echo ========================================
-echo   å¤§ç¾å˜å‰¯æœ¬æ¨¡æ‹Ÿå™¨ - æ–°ç”µè„‘ä¸€é”®å®‰è£…å¯åŠ¨
+echo   ´óÔÖ±ä¸±±¾Ä£ÄâÆ÷ - ĞÂµçÄÔÒ»¼ü°²×°Æô¶¯
 echo ========================================
 echo.
-echo æœ¬è„šæœ¬ä¼šï¼š
-echo   1. æ£€æŸ¥æ˜¯å¦å·²å®‰è£… Node.jsï¼ˆéœ€è¦ 18+ï¼‰
-echo   2. åœ¨ DEV\ ä¸‹æ‰§è¡Œ npm install
-echo   3. ç¼–è¯‘ engine
-echo   4. å¯åŠ¨è”æœºæœåŠ¡ç«¯ + å‰ç«¯ï¼ˆæµè§ˆå™¨æ‰“å¼€ï¼‰
+echo ±¾½Å±¾»á£º
+echo   1. ¼ì²éÊÇ·ñÒÑ°²×° Node.js£¨ĞèÒª 18+£©
+echo   2. ÔÚ DEV\ ÏÂÖ´ĞĞ npm install
+echo   3. ±àÒë engine
+echo   4. Æô¶¯Áª»ú·şÎñ¶Ë + Ç°¶Ë£¨ä¯ÀÀÆ÷´ò¿ª£©
 echo.
 echo ----------------------------------------
 
-:: ---- æ£€æŸ¥ Node.js ----
+:: ---- ¼ì²é Node.js ----
 where node >nul 2>nul
 if errorlevel 1 (
-  echo [ç¼ºå°‘] æœªæ£€æµ‹åˆ° Node.js
+  echo [È±ÉÙ] Î´¼ì²âµ½ Node.js
   echo.
-  echo è¯·å…ˆå®‰è£… Node.js LTSï¼ˆæ¨è 20.x æˆ– 22.xï¼‰ï¼š
+  echo ÇëÏÈ°²×° Node.js LTS£¨ÍÆ¼ö 20.x »ò 22.x£©£º
   echo   https://nodejs.org/
   echo.
-  echo å®‰è£…æ—¶å‹¾é€‰ â€œAdd to PATHâ€ï¼Œè£…å®Œåé‡æ–°æ‰“å¼€æœ¬ batã€‚
+  echo °²×°Ê±¹´Ñ¡ "Add to PATH"£¬×°ÍêºóÖØĞÂ´ò¿ª±¾ bat¡£
   echo.
   start "" "https://nodejs.org/"
   pause
@@ -35,7 +34,7 @@ for /f "tokens=*" %%v in ('node -v') do set "NODE_VER=%%v"
 echo [OK] Node.js %NODE_VER%
 where npm >nul 2>nul
 if errorlevel 1 (
-  echo [é”™è¯¯] æ‰¾åˆ° node ä½†æ‰¾ä¸åˆ° npmï¼Œè¯·é‡è£… Node.js LTSã€‚
+  echo [´íÎó] ÕÒµ½ node µ«ÕÒ²»µ½ npm£¬ÇëÖØ×° Node.js LTS¡£
   pause
   exit /b 1
 )
@@ -44,54 +43,54 @@ echo [OK] npm %NPM_VER%
 echo.
 
 if not exist "DEV\package.json" (
-  echo [é”™è¯¯] æ‰¾ä¸åˆ° DEV\package.json
-  echo è¯·ç¡®è®¤æœ¬ bat æ”¾åœ¨ä»“åº“æ ¹ç›®å½•ï¼ˆä¸ DEVã€DOCS åŒçº§ï¼‰ã€‚
+  echo [´íÎó] ÕÒ²»µ½ DEV\package.json
+  echo ÇëÈ·ÈÏ±¾ bat ·ÅÔÚ²Ö¿â¸ùÄ¿Â¼£¨Óë DEV¡¢DOCS Í¬¼¶£©¡£
   pause
   exit /b 1
 )
 
-:: ---- å®‰è£…ä¾èµ– ----
-echo [1/3] å®‰è£…ä¾èµ–ï¼ˆé¦–æ¬¡è¾ƒæ…¢ï¼Œè¯·è€å¿ƒç­‰å¾…ï¼‰...
+:: ---- °²×°ÒÀÀµ ----
+echo [1/3] °²×°ÒÀÀµ£¨Ê×´Î½ÏÂı£¬ÇëÄÍĞÄµÈ´ı£©...
 cd /d "%~dp0DEV"
 call npm install
 if errorlevel 1 (
   echo.
-  echo [é”™è¯¯] npm install å¤±è´¥ã€‚å¯æ£€æŸ¥ç½‘ç»œï¼Œæˆ–æ¢é•œåƒåå†è¯•ï¼š
+  echo [´íÎó] npm install Ê§°Ü¡£¿É¼ì²éÍøÂç£¬»ò»»¾µÏñºóÔÙÊÔ£º
   echo   npm config set registry https://registry.npmmirror.com
   pause
   exit /b 1
 )
 echo.
 
-:: ---- ç¼–è¯‘ engine ----
-echo [2/3] ç¼–è¯‘ packages/engine ...
+:: ---- ±àÒë engine ----
+echo [2/3] ±àÒë packages/engine ...
 call npm run build --workspace=packages/engine
 if errorlevel 1 (
   echo.
-  echo [é”™è¯¯] engine ç¼–è¯‘å¤±è´¥ï¼Œè¯·æŸ¥çœ‹ä¸Šæ–¹æŠ¥é”™ã€‚
+  echo [´íÎó] engine ±àÒëÊ§°Ü£¬Çë²é¿´ÉÏ·½±¨´í¡£
   pause
   exit /b 1
 )
 echo.
 
-:: ---- å¯åŠ¨ ----
-echo [3/3] å¯åŠ¨æœåŠ¡...
-echo   - æ–°çª—å£ï¼šè”æœº Serverï¼ˆWebSocket / è´¦å· APIï¼‰
-echo   - æœ¬çª—å£ï¼šå‰ç«¯ Viteï¼ˆæµè§ˆå™¨ï¼‰
+:: ---- Æô¶¯ ----
+echo [3/3] Æô¶¯·şÎñ...
+echo   - ĞÂ´°¿Ú£ºÁª»ú Server£¨WebSocket / ÕËºÅ API£©
+echo   - ±¾´°¿Ú£ºÇ°¶Ë Vite£¨ä¯ÀÀÆ÷£©
 echo.
-echo å¯åŠ¨åæµè§ˆå™¨ä¸€èˆ¬æ‰“å¼€ï¼šhttp://127.0.0.1:5173/
-echo å…³æ‰çª—å£å³å¯åœæ­¢å¯¹åº”æœåŠ¡ã€‚
+echo Æô¶¯ºóä¯ÀÀÆ÷Ò»°ã´ò¿ª£ºhttp://127.0.0.1:5173/
+echo ¹Øµô´°¿Ú¼´¿ÉÍ£Ö¹¶ÔÓ¦·şÎñ¡£
 echo ----------------------------------------
 echo.
 
-:: /D æŒ‡å®šå·¥ä½œç›®å½•ï¼Œé¿å…åµŒå¥—å¼•å·å¯¼è‡´ã€Œæ–‡ä»¶åã€ç›®å½•åæˆ–å·æ ‡è¯­æ³•ä¸æ­£ç¡®ã€
+:: /D Ö¸¶¨¹¤×÷Ä¿Â¼£¬±ÜÃâÇ¶Ì×ÒıºÅµ¼ÖÂÓï·¨´íÎó
 start "Cata Raid Sim - Server" /D "%~dp0DEV" cmd /k "npm run dev --workspace=packages/server"
 timeout /t 2 /nobreak >nul
 
-echo è¯·æ‰‹åŠ¨æ‰“å¼€æµè§ˆå™¨è®¿é—®: http://127.0.0.1:5173/
+echo ÇëÊÖ¶¯´ò¿ªä¯ÀÀÆ÷·ÃÎÊ: http://127.0.0.1:5173/
 call npm run dev --workspace=packages/web
 
 echo.
-echo å‰ç«¯å·²é€€å‡ºã€‚
+echo Ç°¶ËÒÑÍË³ö¡£
 pause
 endlocal

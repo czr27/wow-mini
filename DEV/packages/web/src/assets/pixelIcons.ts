@@ -11,9 +11,9 @@ import {
 } from '@cata-raid-sim/engine';
 
 /**
- * 经典职业像素头像 SVG 数据 (32x32 规范)
+ * 经典职业像素头像 SVG 数据 (32x32 规范) — 手绘默认；运行时优先被 ART/resources/class_*.jpg 覆盖
  */
-export const CLASS_PIXEL_AVATARS: Record<ClassId, string> = {
+export const DEFAULT_CLASS_PIXEL_AVATARS: Record<ClassId, string> = {
   DK: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="100%" height="100%">
     <rect width="32" height="32" rx="4" fill="#120407"/>
     <!-- Outer Runic Steel Plate Frame -->
@@ -165,6 +165,11 @@ export const CLASS_PIXEL_AVATARS: Record<ClassId, string> = {
     <circle cx="16" cy="17" r="4" fill="#84cc16"/>
     <circle cx="16" cy="17" r="2" fill="#facc15"/>
   </svg>`,
+};
+
+/** 运行时可变：优先 ART/resources/class_*.jpg，否则手绘 DEFAULT */
+export const CLASS_PIXEL_AVATARS: Record<ClassId, string> = {
+  ...DEFAULT_CLASS_PIXEL_AVATARS,
 };
 
 /**
@@ -1269,7 +1274,7 @@ export const SPELL_TOOLTIPS: Record<string, SpellTooltipInfo> = {
     cooldown: '8 秒',
     range: '40 码',
     school: '自然',
-    description: '在 7 秒内治愈目标 30 码内最多 5 名受伤最严重的友方队友。治疗效果初始极高，随时间缓慢衰减。',
+    description: '以选中的友方为圆心，在其 15 码范围内挑选血量百分比最低的最多 5 名友方，于 7 秒内持续治疗。治疗效果初始极高，随时间缓慢衰减。',
   },
   natures_swiftness: {
     name: '自然迅捷',
@@ -1361,6 +1366,106 @@ export const SPELL_TOOLTIPS: Record<string, SpellTooltipInfo> = {
     school: '自然',
     description: '使友方治疗目标在 10 秒内恢复相当于施法者自身法力值上限 20% 的法力值。核心团队回蓝技能。',
   },
+  hurricane: {
+    name: '飓风',
+    cost: '5,000 法力值',
+    castTime: '引导',
+    cooldown: '无',
+    range: '30 码 (10 码半径)',
+    school: '自然',
+    description: '在目标区域降下飓风，每秒对范围内敌人造成自然伤害。平衡德鲁伊主要 AoE 技能。',
+  },
+  starfall: {
+    name: '星辰坠落',
+    cost: '3,500 法力值',
+    castTime: '瞬发',
+    cooldown: '1.5 分钟',
+    range: '自身 (40 码半径)',
+    school: '奥术',
+    description: '召唤群星坠落打击附近敌人，持续造成奥术伤害。平衡德鲁伊核心爆发 AoE。',
+  },
+  barkskin: {
+    name: '树皮术',
+    cost: '无消耗',
+    castTime: '瞬发',
+    cooldown: '1 分钟',
+    range: '自身',
+    school: '自然',
+    description: '树皮包裹身体，受到的所有伤害降低 20%，持续 12 秒。可在变形与控制中施放。',
+  },
+  // ── Druid Feral（技能 id 与 ART/resources 下载文件名一致）──
+  shred: {
+    name: '撕碎',
+    cost: '40 能量 + 1 连击点',
+    castTime: '瞬发',
+    cooldown: '无',
+    range: '近战',
+    school: '物理',
+    description: '从背后撕碎目标，造成高额武器伤害并生成 1 点连击点数。野性猫形态主力单体技能。',
+  },
+  rake: {
+    name: '斜掠',
+    cost: '35 能量 + 1 连击点',
+    castTime: '瞬发',
+    cooldown: '无',
+    range: '近战',
+    school: '物理',
+    description: '斜掠目标，立即造成伤害并施加流血效果。野性猫形态核心 DoT。',
+  },
+  rip: {
+    name: '割裂',
+    cost: '30 能量 · 终结技',
+    castTime: '瞬发',
+    cooldown: '无',
+    range: '近战',
+    school: '物理',
+    description: '终结技：撕裂目标造成持续流血伤害，持续时间与连击点数相关。',
+  },
+  swipe: {
+    name: '横扫',
+    cost: '45 能量',
+    castTime: '瞬发',
+    cooldown: '无',
+    range: '近战 AoE',
+    school: '物理',
+    description: '横扫攻击附近敌人，造成物理伤害。猫/熊形态群体输出技能。',
+  },
+  ferocious_bite: {
+    name: '凶猛撕咬',
+    cost: '25+ 能量 · 终结技',
+    castTime: '瞬发',
+    cooldown: '无',
+    range: '近战',
+    school: '物理',
+    description: '终结技：消耗连击点数对目标造成高额物理伤害，可额外消耗能量提高伤害。',
+  },
+  skull_bash: {
+    name: '迎头痛击',
+    cost: '无消耗',
+    castTime: '瞬发',
+    cooldown: '10 秒',
+    range: '近战 / 冲锋',
+    school: '物理',
+    description: '冲向目标并打断其施法，短时间内封锁该系法术。野性打断技能。',
+  },
+  berserk: {
+    name: '狂暴',
+    cost: '无消耗',
+    castTime: '瞬发',
+    cooldown: '3 分钟',
+    range: '自身',
+    school: '物理',
+    description: '进入狂暴状态：能量消耗降低，并获得额外爆发效果，持续数秒。野性大冷却。',
+  },
+  mangle: {
+    name: '裂伤',
+    cost: '能量 / 怒气',
+    castTime: '瞬发',
+    cooldown: '无',
+    range: '近战',
+    school: '物理',
+    description: '裂伤目标造成物理伤害，并使其受到的流血伤害提高。猫/熊形态起手技能。',
+  },
 
   // ── Shaman ────────────────────────────────────
   riptide: {
@@ -1404,9 +1509,9 @@ export const SPELL_TOOLTIPS: Record<string, SpellTooltipInfo> = {
     cost: '2,800 法力值',
     castTime: '瞬发',
     cooldown: '3 分钟',
-    range: '10 码半径',
+    range: '40 码 (可点地放置 · 10码图腾半径)',
     school: '自然',
-    description: '召唤生命值相当于施法者 10% 的图腾，使 10 码内所有队友受到的伤害降低 10%。每秒重新分配所有受影响人员的生命百分比，使全员血线平齐！',
+    description: '与治疗之雨相同：在 40 码内鼠标点地插下图腾。图腾使 10 码内队友受到伤害降低 10%，并每秒均摊生命百分比，使血线平齐！',
   },
   wind_shear: {
     name: '风剪',
@@ -1877,20 +1982,35 @@ for (const cls of Object.values(ALL_CLASSES_NORMALIZED)) {
 import {
   getInitialArtFiles,
   applyArtResourcesToIcons,
+  applyArtResourcesToClassAvatars,
   initArtResourceIcons as initArtLoader,
   CUSTOM_ART_URLS,
+  CUSTOM_CLASS_ART_URLS,
   subscribeToIconChanges,
   findMatchingArtFile,
 } from './iconLoader.js';
 
-export { CUSTOM_ART_URLS, subscribeToIconChanges, findMatchingArtFile };
+export {
+  CUSTOM_ART_URLS,
+  CUSTOM_CLASS_ART_URLS,
+  subscribeToIconChanges,
+  findMatchingArtFile,
+};
 
 /**
- * 游戏加载时执行的技能与 Buff 图标初始化函数
- * 优先从 \ART\resources\ 寻找，比如宁静技能存在 Tranquility.jpg 就用它，否则使用自绘画
+ * 游戏加载时：技能/Buff/职业图标优先 ART/resources，缺失回退手绘；可回调下载进度
  */
-export async function initArtResourceIcons() {
-  return initArtLoader(SPELL_ICONS, DEFAULT_SPELL_ICONS, SPELL_TOOLTIPS);
+export async function initArtResourceIcons(
+  onProgress?: import('./iconLoader.js').ArtLoadProgressCallback
+) {
+  return initArtLoader(
+    SPELL_ICONS,
+    DEFAULT_SPELL_ICONS,
+    SPELL_TOOLTIPS,
+    CLASS_PIXEL_AVATARS,
+    DEFAULT_CLASS_PIXEL_AVATARS,
+    onProgress
+  );
 }
 
 /**
@@ -1901,11 +2021,24 @@ export function getSpellIcon(spellId: string, fallback?: string): string {
   return SPELL_ICONS[spellId] || fallback || DEFAULT_SPELL_ICONS[spellId] || '';
 }
 
+/** 职业头像 HTML：优先资源图，否则手绘 */
+export function getClassAvatar(classId: ClassId | string): string {
+  return (
+    CLASS_PIXEL_AVATARS[classId as ClassId] ||
+    DEFAULT_CLASS_PIXEL_AVATARS[classId as ClassId] ||
+    ''
+  );
+}
+
 /**
  * 获取技能在 \ART\resources\ 中的图片 URL（若不存在则返回 null）
  */
 export function getSpellIconUrl(spellId: string): string | null {
   return CUSTOM_ART_URLS[spellId] || null;
+}
+
+export function getClassAvatarUrl(classId: string): string | null {
+  return CUSTOM_CLASS_ART_URLS[classId] || null;
 }
 
 /**
@@ -1915,6 +2048,16 @@ export function isArtResourceIcon(spellId: string): boolean {
   return Boolean(CUSTOM_ART_URLS[spellId]);
 }
 
-// 模块加载初始化时，立即根据当前工作区 \ART\resources\ 文件列表执行首次匹配与覆盖
-applyArtResourcesToIcons(getInitialArtFiles(), SPELL_ICONS, DEFAULT_SPELL_ICONS, SPELL_TOOLTIPS);
+export function isClassArtResourceIcon(classId: string): boolean {
+  return Boolean(CUSTOM_CLASS_ART_URLS[classId]);
+}
+
+// 模块加载：技能 + 职业头像优先匹配 ART/resources
+const _initialArtFiles = getInitialArtFiles();
+applyArtResourcesToIcons(_initialArtFiles, SPELL_ICONS, DEFAULT_SPELL_ICONS, SPELL_TOOLTIPS);
+applyArtResourcesToClassAvatars(
+  _initialArtFiles,
+  CLASS_PIXEL_AVATARS,
+  DEFAULT_CLASS_PIXEL_AVATARS
+);
 

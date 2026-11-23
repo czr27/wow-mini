@@ -3,6 +3,7 @@ import type {
   NetworkCooldownTimeline,
   NetworkGcdTimeline,
 } from '@cata-raid-sim/engine';
+import { resolveCooldownSpellIds } from '@cata-raid-sim/engine';
 
 /** Remaining ms from startedAt + total (clamped). */
 export function timelineRemainingMs(startedAtMs: number, totalMs: number, now = Date.now()): number {
@@ -43,6 +44,19 @@ export function buildCastFromTimeline(
   };
 }
 
+/** True if any timeline row matches unit + spell (or CD alias). */
+export function hasCooldownTimelineForSpell(
+  timelines: NetworkCooldownTimeline[] | undefined,
+  unitId: string,
+  spellId: string
+): boolean {
+  if (!timelines?.length) return false;
+  const aliases = new Set(resolveCooldownSpellIds(spellId));
+  return timelines.some(
+    (t) => t.unitId === unitId && (t.spellId === spellId || aliases.has(t.spellId))
+  );
+}
+
 export function cooldownRemainingFromTimelines(
   timelines: NetworkCooldownTimeline[] | undefined,
   unitId: string,
@@ -50,9 +64,14 @@ export function cooldownRemainingFromTimelines(
   now = Date.now()
 ): number {
   if (!timelines) return 0;
-  const hit = timelines.find((t) => t.unitId === unitId && t.spellId === spellId);
-  if (!hit) return 0;
-  return timelineRemainingMs(hit.startedAtMs, hit.totalMs, now);
+  const aliases = new Set(resolveCooldownSpellIds(spellId));
+  let best = 0;
+  for (const t of timelines) {
+    if (t.unitId !== unitId) continue;
+    if (t.spellId !== spellId && !aliases.has(t.spellId)) continue;
+    best = Math.max(best, timelineRemainingMs(t.startedAtMs, t.totalMs, now));
+  }
+  return best;
 }
 
 export function gcdRemainingFromTimelines(

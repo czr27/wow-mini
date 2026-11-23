@@ -8,12 +8,16 @@ import {
   GameState, Priority, PrioritisedAction, RoleAI,
   getBoss, hpFraction,
 } from './AIController.js';
-import { getSpellsForClassSpec } from '../classes/ClassRegistry.js';
+import { getSpellsForClassSpec, yardsToPx, RANGE_40YD_PX } from '../classes/ClassRegistry.js';
 import {
   buildUsableCandidatesForUnit,
   createAIPersonality,
   evaluateUniversalAIDecision,
 } from './SkillMetricEvaluator.js';
+import {
+  isFriendlyBuffGroundEffect,
+  isSeekableHealGroundEffect,
+} from '../engine/AoeRingVisual.js';
 
 // Spell IDs must match those registered in DeathKnight.ts (class-dev)
 const SPELLS = {
@@ -47,6 +51,19 @@ export function isTankHealthy(tank: Unit): boolean {
   return (tank.hp / tank.maxHp) >= TANK_HEALTHY_THRESHOLD;
 }
 
+/**
+ * 稳定主/副坦顺位：玩家坦优先主坦，其余按 id 稳定排序。
+ * evaluateTankThreatDecision 依赖数组下标 Rank0=主坦。
+ */
+export function orderTanksByThreatPriority(tanks: Unit[]): Unit[] {
+  return [...tanks]
+    .filter((t) => t.role === 'TANK' && ((t.isAlive ?? t.alive ?? true) && t.hp > 0))
+    .sort((a, b) => {
+      if (!!a.isPlayer !== !!b.isPlayer) return a.isPlayer ? -1 : 1;
+      return a.id.localeCompare(b.id);
+    });
+}
+
 export interface TankThreatDecision {
   shouldTaunt: boolean;
   pauseThreat: boolean;
@@ -55,9 +72,9 @@ export interface TankThreatDecision {
 
 /**
  * 评估坦克仇恨与嘲讽决策：
- * - 排名靠前的坦克 (主坦/Rank 0): 在自己血量健康时积极稳固仇恨；血量不健康时暂停拉仇恨直到过健康线。
- * - 排名靠后的坦克 (副坦/Rank > 0): 只有在自己血量健康，且排名靠前的坦克血量都不健康时才主动拉仇恨。
- * - 此时其他坦克要暂停拉仇恨直到自己过健康线。
+ * - 主坦 (Rank 0): 健康时主动稳仇/嘲讽；危险时暂停拉仇恨，让健康副坦接。
+ * - 副坦 (Rank > 0): 仅当自己健康且所有更高顺位坦均危险时嘲讽接仇；主坦恢复后压仇恨（不嘲讽），主坦可拉回。
+ * - pauseThreat=true：不嘲讽、压低威胁；近战仍可输出（低威胁倍率）。
  */
 export function evaluateTankThreatDecision(
   unit: Unit,
@@ -74,11 +91,11 @@ export function evaluateTankThreatDecision(
     return { shouldTaunt: false, pauseThreat: true, reason: 'TANK_DEAD' };
   }
 
-  const myRank = allTanks.findIndex(t => t.id === unit.id);
+  const ranked = orderTanksByThreatPriority(allTanks);
+  const myRank = ranked.findIndex((t) => t.id === unit.id);
   const selfHealthy = isTankHealthy(unit);
 
-  // 1. 如果自己血量不健康 (<60%)：
-  // 此时其他坦克要暂停拉仇恨直到自己过健康线
+  // 1. 自己危险：暂停拉仇恨（不嘲讽），由健康副坦接
   if (!selfHealthy) {
     return {
       shouldTaunt: false,
@@ -87,10 +104,8 @@ export function evaluateTankThreatDecision(
     };
   }
 
-  // 2. 自己血量健康 (>=60%)：
+  // 2. 主坦健康：主动接怪并维持仇恨
   if (myRank <= 0) {
-    // 排名最靠前的主坦 (Rank 0 或未指定顺序)：
-    // 没有更高顺位的坦克，且自己健康，主动接怪并维持仇恨
     const needsTaunt = !isTopThreat || (currentBossTargetId !== unit.id);
     return {
       shouldTaunt: needsTaunt,
@@ -99,10 +114,9 @@ export function evaluateTankThreatDecision(
     };
   }
 
-  // 3. 排名靠后的坦克 (myRank > 0)：
-  // 只有在自己血量健康，且排名靠前坦克血量都不健康时主动拉仇恨
-  const higherTanks = allTanks.slice(0, myRank);
-  const allHigherUnhealthy = higherTanks.length > 0 && higherTanks.every(t => !isTankHealthy(t));
+  // 3. 副坦健康：仅当所有更高顺位坦均危险时接仇
+  const higherTanks = ranked.slice(0, myRank);
+  const allHigherUnhealthy = higherTanks.length > 0 && higherTanks.every((t) => !isTankHealthy(t));
 
   if (allHigherUnhealthy) {
     const needsTaunt = !isTopThreat || (currentBossTargetId !== unit.id);
@@ -111,20 +125,44 @@ export function evaluateTankThreatDecision(
       pauseThreat: false,
       reason: 'LOWER_TANK_TAUNT_HIGHER_UNHEALTHY',
     };
-  } else {
-    // 排名靠前坦克仍有健康者，排名靠后坦克不得抢拉仇恨，暂停拉仇恨
-    return {
-      shouldTaunt: false,
-      pauseThreat: true,
-      reason: 'LOWER_TANK_PAUSE_HIGHER_HEALTHY',
-    };
   }
+
+  // 主坦已恢复健康：副坦压仇恨，便于主坦嘲讽拉回
+  return {
+    shouldTaunt: false,
+    pauseThreat: true,
+    reason: 'LOWER_TANK_PAUSE_HIGHER_HEALTHY',
+  };
 }
 
-// ── 地面阵法走位与负面阵型权衡评估 ────────────────────────────
+// ── 地面阵法走位：高优约束逐级求交 ────────────────────────────
 
 export const MELEE_ATTACK_RANGE = 80;
-export const DPS_HEALTHY_THRESHOLD = 0.60;
+/** 普通攻击（白字）统一射程：近战/远程均须 ≤5 码，否则打不出 */
+export const AUTO_ATTACK_RANGE_YD = 5;
+export const AUTO_ATTACK_RANGE_PX = yardsToPx(AUTO_ATTACK_RANGE_YD);
+/** 远程输出不丢技能射程的默认上限（40 码）；与普攻射程无关 */
+export const RANGED_ATTACK_RANGE = RANGE_40YD_PX;
+/** 走位血线：低于此值优先最大绿圈叠层（可牺牲输出） */
+export const DPS_HEALTHY_THRESHOLD = 0.5;
+
+/** 非主坦最终须尽量保持在主坦此码数内（与更高优求交仍非空时生效） */
+export const TANK_STACK_RANGE_YD = 25;
+export const TANK_STACK_RANGE_PX = yardsToPx(TANK_STACK_RANGE_YD);
+
+/** 远程尽量靠近最近奶妈的上限 */
+export const HEALER_LEASH_YD = 10;
+export const HEALER_LEASH_PX = yardsToPx(HEALER_LEASH_YD);
+
+/** Boss 正面锥角（总张角 30° = ±15°） */
+export const BOSS_FRONTAL_CONE_RAD = Math.PI / 6;
+
+/** 多动症单次位移上限 */
+export const FIDGET_MAX_YD = 5;
+export const FIDGET_MAX_PX = yardsToPx(FIDGET_MAX_YD);
+
+/** 出红圈安全边距（px） */
+export const HAZARD_CLEAR_MARGIN_PX = 25;
 
 /**
  * 判断指定单位是否为近战 DPS
@@ -141,7 +179,7 @@ export function isMeleeDps(unit: Unit): boolean {
 }
 
 /**
- * 判断单位血量是否达到健康线 (默认 >= 60%)
+ * 判断单位血量是否达到健康线 (默认 >= 50%)
  */
 export function isUnitHealthy(unit: Unit, threshold: number = DPS_HEALTHY_THRESHOLD): boolean {
   if (!unit || !unit.isAlive || (unit.alive === false) || unit.hp <= 0) return false;
@@ -165,23 +203,141 @@ export interface GroundFormationTradeOffInput {
   groundEffects: GroundEffect[];
   defaultTarget?: { x: number; y: number };
   bossPos?: { x: number; y: number };
+  /** 单位当前攻击目标位置（近战射程圆心）；缺省用 bossPos */
+  attackTargetPos?: { x: number; y: number };
   meleeRange?: number;
+  /** 主坦世界坐标；缺省则不做「离坦 25 码」约束 */
+  tankPos?: { x: number; y: number };
+  /** 离坦最大距离（px），默认 TANK_STACK_RANGE_PX（25 码） */
+  tankStackRangePx?: number;
+  /**
+   * Boss 朝向（弧度）：移动中用移动方向，否则朝打击目标。
+   * 可用 resolveUnitFacingRad 计算。
+   */
+  bossFacingRad?: number;
+  /** Boss 当前目标单位 id（用于判断非坦持仇） */
+  bossTargetUnitId?: string | null;
+  /** 威胁榜第一的单位 id；缺省则用 bossTargetUnitId */
+  topThreatUnitId?: string | null;
+  /** 为 true 时表示当前持仇者是非坦克（触发坦拉怪 / OT 靠主坦） */
+  aggroIsNonTank?: boolean;
+  /** 最近存活奶妈位置（远程 10 码约束） */
+  nearestHealerPos?: { x: number; y: number };
+  /** 当前单位是否主坦（Rank0）；缺省按 role===TANK 且无 tankPos 视为主坦 */
+  isPrimaryTank?: boolean;
 }
+
+export type GroundFormationDecision =
+  | 'STAY_IN_CURRENT_HEAL_ZONE'
+  | 'DODGE_HAZARD_SHIFT_IN_ZONE'
+  | 'DODGE_HAZARD_LEAVE_ZONE'
+  | 'STAY_DESPITE_HAZARD'
+  | 'SEEK_HEAL_ZONE'
+  | 'DEFAULT_POSITION'
+  | 'RETURN_TO_BOSS'
+  | 'AGGRO_TANK_PULL'
+  | 'AGGRO_OT_TO_MT';
 
 export interface GroundFormationTradeOffResult {
   targetPos: { x: number; y: number };
   currentHealZoneId: string | null;
-  tradeOffDecision:
-    | 'STAY_IN_CURRENT_HEAL_ZONE'
-    | 'DODGE_HAZARD_SHIFT_IN_ZONE'
-    | 'DODGE_HAZARD_LEAVE_ZONE'
-    | 'STAY_DESPITE_HAZARD'
-    | 'SEEK_HEAL_ZONE'
-    | 'DEFAULT_POSITION'
-    | 'RETURN_TO_BOSS';
+  tradeOffDecision: GroundFormationDecision;
   inHazard: boolean;
   hazardId?: string;
   reason: string;
+  /** 本帧走路区允许多动症踱步 */
+  allowFidget: boolean;
+  /** 多动症半径上限（≤5 码） */
+  fidgetMaxRadiusPx: number;
+}
+
+/** 可突破「离坦 25 码」硬约束的更高优先级走位意图 */
+const TANK_STACK_OVERRIDE_DECISIONS = new Set<GroundFormationDecision>([
+  'DODGE_HAZARD_SHIFT_IN_ZONE',
+  'DODGE_HAZARD_LEAVE_ZONE',
+  'SEEK_HEAL_ZONE',
+  'STAY_IN_CURRENT_HEAL_ZONE',
+  'STAY_DESPITE_HAZARD',
+  'AGGRO_TANK_PULL',
+  'AGGRO_OT_TO_MT',
+]);
+
+/**
+ * 单位朝向：移动中用移动方向，否则朝打击目标；都没有则用 fallback。
+ */
+export function resolveUnitFacingRad(opts: {
+  position: { x: number; y: number };
+  isMoving?: boolean;
+  moveDx?: number;
+  moveDy?: number;
+  targetPos?: { x: number; y: number } | null;
+  fallbackFacingRad?: number;
+}): number {
+  const moveLen = Math.hypot(opts.moveDx ?? 0, opts.moveDy ?? 0);
+  if (opts.isMoving && moveLen > 1e-3) {
+    return Math.atan2(opts.moveDy!, opts.moveDx!);
+  }
+  if (opts.targetPos) {
+    const dx = opts.targetPos.x - opts.position.x;
+    const dy = opts.targetPos.y - opts.position.y;
+    if (Math.hypot(dx, dy) > 1e-3) return Math.atan2(dy, dx);
+  }
+  return opts.fallbackFacingRad ?? 0;
+}
+
+/** 点是否落在 Boss 正面 ±(cone/2) 锥内 */
+export function isInBossFrontalCone(
+  pos: { x: number; y: number },
+  bossPos: { x: number; y: number },
+  bossFacingRad: number,
+  coneRad: number = BOSS_FRONTAL_CONE_RAD
+): boolean {
+  const dx = pos.x - bossPos.x;
+  const dy = pos.y - bossPos.y;
+  if (Math.hypot(dx, dy) < 1e-3) return true;
+  const angle = Math.atan2(dy, dx);
+  let diff = Math.abs(angle - bossFacingRad);
+  while (diff > Math.PI) diff = Math.abs(diff - 2 * Math.PI);
+  return diff <= coneRad / 2;
+}
+
+/**
+ * 将目标点拉回到主坦 maxRangePx 圆内（已在圆内则原样返回）
+ */
+export function clampPosWithinTankRange(
+  pos: { x: number; y: number },
+  tankPos: { x: number; y: number },
+  maxRangePx: number = TANK_STACK_RANGE_PX
+): { x: number; y: number } {
+  const dx = pos.x - tankPos.x;
+  const dy = pos.y - tankPos.y;
+  const dist = Math.hypot(dx, dy);
+  if (dist <= maxRangePx || dist < 1e-6) return { x: pos.x, y: pos.y };
+  const scale = maxRangePx / dist;
+  return { x: tankPos.x + dx * scale, y: tankPos.y + dy * scale };
+}
+
+/**
+ * 默认站位 / 回 Boss 等低优意图：非坦须落在主坦 25 码内；
+ * 躲避负面地形、寻/留治疗圈、仇恨纠偏等更高优先级意图不受限。
+ */
+export function applyTankStackConstraint(
+  result: GroundFormationTradeOffResult,
+  unit: Unit,
+  tankPos?: { x: number; y: number },
+  tankStackRangePx: number = TANK_STACK_RANGE_PX
+): GroundFormationTradeOffResult {
+  if (!tankPos || unit.role === 'TANK') return result;
+  if (TANK_STACK_OVERRIDE_DECISIONS.has(result.tradeOffDecision)) return result;
+
+  const clamped = clampPosWithinTankRange(result.targetPos, tankPos, tankStackRangePx);
+  if (clamped.x === result.targetPos.x && clamped.y === result.targetPos.y) return result;
+
+  return {
+    ...result,
+    targetPos: clamped,
+    reason: `${result.reason}；拉回主坦 ${TANK_STACK_RANGE_YD} 码内`,
+  };
 }
 
 /**
@@ -308,19 +464,264 @@ export function findMeleeHealZonePosition(
 }
 
 /**
- * 地面阵法走位与负面阵型权衡评估：
- * 1. 存在多个地面治疗阵法时，若已经在其中一个法阵内，严禁跑向其他治疗阵法；
- * 2. 若当前站位遭遇负面阵型（伤害圈/扇形预警），进行避险与站位权衡：
- *    - 若危险度高（锥形斩杀预警、伤害高于治疗、低血量），优先躲避；
- *    - 优先微调在当前治疗圈内的安全区域站位，实现治疗与规避兼得；
- *    - 若治疗阵完全被危险覆盖，则移步至安全区域（或另一个安全的治疗阵）；
- *    - 若负面效果轻微或即将结束且血量安全，权衡后可继续站位；
- * 3. 近战DPS专属战场战术决策：
- *    - 近战DPS如果血线健康，不要为了走到治疗地形而远离Boss；
- *    - 如果走到治疗地形不影响打Boss（处于近战攻击范围内），可以走；
- *    - 如果在治疗地形中血线恢复到健康血线，若此时打不到Boss，必须离开治疗阵回去打Boss。
+ * 统计某点被多少个可寻治疗光环覆盖（绿圈叠层）。
+ */
+export function countHealAurasAt(
+  pos: { x: number; y: number },
+  healZones: GroundEffect[]
+): number {
+  let n = 0;
+  for (const hz of healZones) {
+    if (hz.remainingMs > 0 && isPosInEffect(pos, hz)) n += 1;
+  }
+  return n;
+}
+
+/** 绿圈 + 黄圈（友好非治疗图腾）叠层 */
+export function countBeneficialAurasAt(
+  pos: { x: number; y: number },
+  zones: GroundEffect[]
+): number {
+  let n = 0;
+  for (const z of zones) {
+    if (z.remainingMs > 0 && isPosInEffect(pos, z)) n += 1;
+  }
+  return n;
+}
+
+export interface HealAuraStandCandidate {
+  pos: { x: number; y: number };
+  stackCount: number;
+  primaryZoneId: string | null;
+}
+
+/**
+ * 在避开红色危险地形的前提下，寻找治疗光环叠层最多的站位点。
+ * - requireAttackRange：健康血线时由近战/远程传入，保证不影响输出；
+ * - 危险血线不传射程约束，可牺牲输出换最大叠层。
+ */
+export function findBestHealAuraStandPosition(opts: {
+  healZones: GroundEffect[];
+  hazards: GroundEffect[];
+  currentPos: { x: number; y: number };
+  defaultTarget?: { x: number; y: number };
+  requireAttackRange?: { bossPos: { x: number; y: number }; range: number };
+  /** 至少需要的叠层；0 表示只要安全蹭到光环即可 */
+  minStack?: number;
+}): HealAuraStandCandidate | null {
+  const {
+    healZones,
+    hazards,
+    currentPos,
+    defaultTarget,
+    requireAttackRange,
+    minStack = 1,
+  } = opts;
+  if (healZones.length === 0) return null;
+
+  const candidates: { x: number; y: number }[] = [];
+  const push = (p?: { x: number; y: number } | null) => {
+    if (!p) return;
+    if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) return;
+    candidates.push({ x: p.x, y: p.y });
+  };
+
+  push(currentPos);
+  push(defaultTarget);
+
+  const dirs = [
+    [1, 0],
+    [-1, 0],
+    [0, 1],
+    [0, -1],
+    [0.707, 0.707],
+    [-0.707, 0.707],
+    [0.707, -0.707],
+    [-0.707, -0.707],
+  ];
+
+  for (const hz of healZones) {
+    push({ x: hz.x, y: hz.y });
+    for (const [dx, dy] of dirs) {
+      push({ x: hz.x + dx * hz.radius * 0.55, y: hz.y + dy * hz.radius * 0.55 });
+      push({ x: hz.x + dx * hz.radius * 0.85, y: hz.y + dy * hz.radius * 0.85 });
+    }
+    if (requireAttackRange) {
+      push(
+        findMeleeHealZonePosition(
+          hz,
+          requireAttackRange.bossPos,
+          requireAttackRange.range,
+          hazards,
+          defaultTarget
+        )
+      );
+    }
+  }
+
+  // 两两光环中点：叠层热点
+  for (let i = 0; i < healZones.length; i++) {
+    for (let j = i + 1; j < healZones.length; j++) {
+      const a = healZones[i];
+      const b = healZones[j];
+      const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      push(mid);
+      // 加权靠较大半径一侧
+      const w = a.radius + b.radius || 1;
+      push({
+        x: (a.x * b.radius + b.x * a.radius) / w,
+        y: (a.y * b.radius + b.y * a.radius) / w,
+      });
+    }
+  }
+
+  let best: HealAuraStandCandidate | null = null;
+  let bestScore = -Infinity;
+
+  for (const pos of candidates) {
+    if (hazards.some((h) => isPosInHazard(pos, h))) continue;
+    if (
+      requireAttackRange &&
+      !canHitBoss(pos, requireAttackRange.bossPos, requireAttackRange.range)
+    ) {
+      continue;
+    }
+    const stackCount = countHealAurasAt(pos, healZones);
+    if (stackCount < minStack) continue;
+
+    let primaryZoneId: string | null = null;
+    let nearest = Infinity;
+    for (const hz of healZones) {
+      if (!isPosInEffect(pos, hz)) continue;
+      const d = Math.hypot(pos.x - hz.x, pos.y - hz.y);
+      if (d < nearest) {
+        nearest = d;
+        primaryZoneId = hz.id;
+      }
+    }
+
+    const distCur = Math.hypot(pos.x - currentPos.x, pos.y - currentPos.y);
+    // 叠层绝对优先；同叠层取更近，减少无意义来回跑
+    const score = stackCount * 1_000_000 - distCur;
+    if (score > bestScore) {
+      bestScore = score;
+      best = { pos: { x: pos.x, y: pos.y }, stackCount, primaryZoneId };
+    }
+  }
+
+  return best;
+}
+
+/**
+ * 地面走位：高优先级约束逐级与候选点求交，取最后一个非空可行域中的最优点。
+ * 1 躲红圈 → 2 非坦持仇时坦/OT 纠偏 → 3 危血最大绿圈 → 4 健康输出位+叠层 → 5 主坦 25 码
  */
 export function evaluateGroundFormationPosition(
+  input: GroundFormationTradeOffInput
+): GroundFormationTradeOffResult {
+  // 坦克 25 码已在求交层处理；保留 apply 作为决策标签回退保险
+  const raw = evaluateGroundFormationPositionCore(input);
+  return applyTankStackConstraint(raw, input.unit, input.tankPos, input.tankStackRangePx);
+}
+
+function dodgeAwayFromHazard(
+  currentPos: { x: number; y: number },
+  hazard: GroundEffect
+): { x: number; y: number } {
+  const dx = currentPos.x - hazard.x;
+  const dy = currentPos.y - hazard.y;
+  const dist = Math.hypot(dx, dy) || 1;
+  const dodgeDist = (hazard.radius || 48) + HAZARD_CLEAR_MARGIN_PX;
+  return {
+    x: hazard.x + (dx / dist) * dodgeDist,
+    y: hazard.y + (dy / dist) * dodgeDist,
+  };
+}
+
+type WalkCand = { x: number; y: number };
+
+function pushCand(out: WalkCand[], p?: WalkCand | null) {
+  if (!p) return;
+  if (!Number.isFinite(p.x) || !Number.isFinite(p.y)) return;
+  out.push({ x: p.x, y: p.y });
+}
+
+function sampleRing(
+  out: WalkCand[],
+  center: WalkCand,
+  radius: number,
+  n: number = 8
+) {
+  if (radius <= 0) {
+    pushCand(out, center);
+    return;
+  }
+  for (let i = 0; i < n; i++) {
+    const a = (i / n) * Math.PI * 2;
+    pushCand(out, {
+      x: center.x + Math.cos(a) * radius,
+      y: center.y + Math.sin(a) * radius,
+    });
+  }
+}
+
+function intersectKeep(
+  prev: WalkCand[],
+  pred: (p: WalkCand) => boolean
+): WalkCand[] {
+  const next = prev.filter(pred);
+  return next.length > 0 ? next : prev;
+}
+
+function primaryZoneIdAt(pos: WalkCand, zones: GroundEffect[]): string | null {
+  let bestId: string | null = null;
+  let nearest = Infinity;
+  for (const z of zones) {
+    if (!isPosInEffect(pos, z)) continue;
+    const d = Math.hypot(pos.x - z.x, pos.y - z.y);
+    if (d < nearest) {
+      nearest = d;
+      bestId = z.id;
+    }
+  }
+  return bestId;
+}
+
+function pickBestCand(
+  cands: WalkCand[],
+  currentPos: WalkCand,
+  scoreFn: (p: WalkCand) => number
+): WalkCand {
+  let best = cands[0];
+  let bestScore = -Infinity;
+  for (const p of cands) {
+    const dist = Math.hypot(p.x - currentPos.x, p.y - currentPos.y);
+    const score = scoreFn(p) * 1_000_000 - dist;
+    if (score > bestScore) {
+      bestScore = score;
+      best = p;
+    }
+  }
+  return best;
+}
+
+function makeResult(
+  partial: Omit<GroundFormationTradeOffResult, 'allowFidget' | 'fidgetMaxRadiusPx'> & {
+    allowFidget?: boolean;
+  }
+): GroundFormationTradeOffResult {
+  const settled =
+    partial.tradeOffDecision === 'DEFAULT_POSITION' ||
+    partial.tradeOffDecision === 'RETURN_TO_BOSS' ||
+    partial.tradeOffDecision === 'STAY_IN_CURRENT_HEAL_ZONE';
+  return {
+    ...partial,
+    allowFidget: partial.allowFidget ?? settled,
+    fidgetMaxRadiusPx: FIDGET_MAX_PX,
+  };
+}
+
+function evaluateGroundFormationPositionCore(
   input: GroundFormationTradeOffInput
 ): GroundFormationTradeOffResult {
   const {
@@ -329,332 +730,380 @@ export function evaluateGroundFormationPosition(
     groundEffects,
     defaultTarget,
     bossPos,
+    attackTargetPos,
     meleeRange = MELEE_ATTACK_RANGE,
+    tankPos,
+    tankStackRangePx = TANK_STACK_RANGE_PX,
+    bossFacingRad,
+    nearestHealerPos,
+    isPrimaryTank,
+    aggroIsNonTank = false,
   } = input;
-  const activeHealZones = groundEffects.filter(e => e.kind === 'HEAL_ZONE' && e.remainingMs > 0);
+
+  const greenZones = groundEffects.filter((e) => isSeekableHealGroundEffect(e));
+  const yellowZones = groundEffects.filter((e) => isFriendlyBuffGroundEffect(e));
+  const stackZonesHealthy = [...greenZones, ...yellowZones];
   const activeHazards = groundEffects.filter(
-    e => (e.kind === 'DAMAGE_ZONE' || e.kind === 'CONE_WARNING') && e.remainingMs > 0
+    (e) => (e.kind === 'DAMAGE_ZONE' || e.kind === 'CONE_WARNING') && e.remainingMs > 0
   );
 
   const isMelee = isMeleeDps(unit);
-  const hpFraction = unit.maxHp > 0 ? unit.hp / unit.maxHp : 1;
-  const isHealthy = hpFraction >= DPS_HEALTHY_THRESHOLD;
+  const isRangedDps = unit.role === 'DPS' && !isMelee;
+  const hpFrac = unit.maxHp > 0 ? unit.hp / unit.maxHp : 1;
+  const isHealthy = hpFrac >= DPS_HEALTHY_THRESHOLD;
+  const hitPos = attackTargetPos ?? bossPos;
+  const attackRange = isMelee ? meleeRange : RANGED_ATTACK_RANGE;
+  const threateningHazard = activeHazards.find((hz) => isPosInHazard(currentPos, hz));
+  const inHazard = !!threateningHazard;
 
-  // 1. 检查当前是否已经在某个治疗阵法内
-  const currentHealZone = activeHealZones.find(hz => isPosInEffect(currentPos, hz));
+  const primaryTankFlag =
+    isPrimaryTank ?? (unit.role === 'TANK' && !tankPos);
+  const isOtTank = unit.role === 'TANK' && !primaryTankFlag;
 
-  // 2. 检查当前是否身处负面阵型
-  const threateningHazard = activeHazards.find(hz => isPosInHazard(currentPos, hz));
+  // ── 候选点生成 ──
+  const candidates: WalkCand[] = [];
+  pushCand(candidates, currentPos);
+  pushCand(candidates, defaultTarget);
+  pushCand(candidates, hitPos);
+  pushCand(candidates, tankPos);
+  pushCand(candidates, nearestHealerPos);
 
-  // ── 情况一：已经在某个治疗阵法内 ──
-  if (currentHealZone) {
-    // 存在负面阵型威胁，进行权衡 (Trade-Off) 评估：
-    if (threateningHazard) {
-      const isConeLethal = threateningHazard.kind === 'CONE_WARNING';
-      const hazardTick = threateningHazard.tickValue ?? 5000;
-      const healTick = currentHealZone.tickValue ?? 4500;
-      const isHpLow = hpFraction < 0.40;
-      const hazardExpiring = threateningHazard.remainingMs <= 300;
+  for (const hz of [...greenZones, ...yellowZones]) {
+    pushCand(candidates, { x: hz.x, y: hz.y });
+    sampleRing(candidates, { x: hz.x, y: hz.y }, hz.radius * 0.55);
+    sampleRing(candidates, { x: hz.x, y: hz.y }, hz.radius * 0.85);
+  }
+  for (let i = 0; i < greenZones.length; i++) {
+    for (let j = i + 1; j < greenZones.length; j++) {
+      const a = greenZones[i];
+      const b = greenZones[j];
+      pushCand(candidates, { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 });
+    }
+  }
 
-      // 权衡判定：
-      const mustDodge = isConeLethal || isHpLow || (!hazardExpiring && hazardTick > healTick * 1.1);
+  if (hitPos) {
+    sampleRing(candidates, hitPos, attackRange * 0.7);
+    sampleRing(candidates, hitPos, attackRange * 0.95);
+    // 侧翼采样：相对 Boss 朝向 ±90° / ±135°
+    if (bossPos && bossFacingRad != null) {
+      for (const offset of [Math.PI / 2, -Math.PI / 2, (3 * Math.PI) / 4, -(3 * Math.PI) / 4]) {
+        const a = bossFacingRad + offset;
+        pushCand(candidates, {
+          x: bossPos.x + Math.cos(a) * meleeRange * 0.85,
+          y: bossPos.y + Math.sin(a) * meleeRange * 0.85,
+        });
+      }
+    }
+  }
 
-      if (!mustDodge && !isConeLethal && hazardExpiring) {
-        // 如果是健康近战DPS且无法打到Boss，即使负面阵型快结束也应回Boss位
-        if (isMelee && isHealthy && bossPos && !canHitBoss(currentPos, bossPos, meleeRange)) {
-          return {
-            targetPos: defaultTarget ? { ...defaultTarget } : { ...bossPos },
-            currentHealZoneId: null,
-            tradeOffDecision: 'RETURN_TO_BOSS',
-            inHazard: true,
-            hazardId: threateningHazard.id,
-            reason: '近战DPS已恢复健康血线且当前位置无法攻击首领，脱离受害治疗阵返回攻击Boss',
-          };
-        }
-        // 权衡结果：负面阵型即将消失且血量可承受，选择继续站位
-        return {
-          targetPos: { x: currentPos.x, y: currentPos.y },
-          currentHealZoneId: currentHealZone.id,
-          tradeOffDecision: 'STAY_DESPITE_HAZARD',
+  if (nearestHealerPos) {
+    sampleRing(candidates, nearestHealerPos, HEALER_LEASH_PX * 0.7);
+    sampleRing(candidates, nearestHealerPos, HEALER_LEASH_PX * 0.95);
+  }
+
+  if (tankPos) {
+    sampleRing(candidates, tankPos, tankStackRangePx * 0.7);
+    sampleRing(candidates, tankPos, tankStackRangePx * 0.95);
+  }
+
+  for (const hz of activeHazards) {
+    pushCand(candidates, dodgeAwayFromHazard(currentPos, hz));
+    sampleRing(candidates, { x: hz.x, y: hz.y }, (hz.radius || 48) + HAZARD_CLEAR_MARGIN_PX);
+  }
+
+  const isSafe = (p: WalkCand) => !activeHazards.some((h) => isPosInHazard(p, h));
+
+  // 层1：不在红圈（硬约束；若全集被滤空则强制加入径向逃离点）
+  let region = candidates.filter(isSafe);
+  if (region.length === 0) {
+    for (const hz of activeHazards) {
+      pushCand(region, dodgeAwayFromHazard(currentPos, hz));
+    }
+    region = region.filter(isSafe);
+    if (region.length === 0) {
+      region = [{ x: currentPos.x, y: currentPos.y }];
+    }
+  }
+
+  let decision: GroundFormationDecision = 'DEFAULT_POSITION';
+  let reason = '默认站位可行域';
+  let dominantLayer = 1;
+
+  if (inHazard) {
+    decision = 'DODGE_HAZARD_LEAVE_ZONE';
+    reason = '躲避红色地形';
+    dominantLayer = 1;
+    // 优先：当前绿圈内安全微调
+    const currentHeal = greenZones.find((hz) => isPosInEffect(currentPos, hz));
+    if (currentHeal && threateningHazard) {
+      const shift = findSafeSpotInHealZone(currentHeal, threateningHazard);
+      if (shift && isSafe(shift)) {
+        return makeResult({
+          targetPos: shift,
+          currentHealZoneId: currentHeal.id,
+          tradeOffDecision: 'DODGE_HAZARD_SHIFT_IN_ZONE',
           inHazard: true,
           hazardId: threateningHazard.id,
-          reason: '负面阵型即将结束且治疗可抵消，权衡后选择继续站位',
-        };
+          reason: '躲避红色地形：微调至当前治疗光环内的安全点',
+          allowFidget: false,
+        });
       }
+    }
+  }
 
-      // 权衡结果为需要躲避：
-      // 策略 A: 尝试在当前治疗圈内寻找安全子区域（部分重叠）
-      const safeSpotInZone = findSafeSpotInHealZone(currentHealZone, threateningHazard);
-      if (safeSpotInZone) {
-        // 如果是近战DPS，优先确认微调点是否能打到Boss
-        if (!isMelee || !bossPos || !isHealthy || canHitBoss(safeSpotInZone, bossPos, meleeRange)) {
-          return {
-            targetPos: safeSpotInZone,
-            currentHealZoneId: currentHealZone.id,
-            tradeOffDecision: 'DODGE_HAZARD_SHIFT_IN_ZONE',
-            inHazard: true,
-            hazardId: threateningHazard.id,
-            reason: '权衡判定躲避负面阵型：微调至当前治疗阵内的安全子区域',
-          };
+  // 层2：非坦持仇 → 主坦进攻击/嘲讽距；OT 向主坦
+  if (aggroIsNonTank) {
+    if (primaryTankFlag && hitPos) {
+      const pull = region.filter((p) => canHitBoss(p, hitPos, meleeRange));
+      if (pull.length > 0) {
+        region = pull;
+        decision = 'AGGRO_TANK_PULL';
+        reason = '非坦持仇：主坦进入攻击/嘲讽可及范围拉怪';
+        dominantLayer = 2;
+      }
+    } else if (isOtTank && tankPos) {
+      const toMt = region.filter(
+        (p) => Math.hypot(p.x - tankPos.x, p.y - tankPos.y) <= tankStackRangePx * 0.5
+      );
+      if (toMt.length > 0) {
+        region = toMt;
+        decision = 'AGGRO_OT_TO_MT';
+        reason = '非坦持仇：副坦向主坦靠拢';
+        dominantLayer = 2;
+      } else {
+        // 无近点则取 region 中离主坦最近
+        region = [pickBestCand(region, currentPos, (p) => -Math.hypot(p.x - tankPos.x, p.y - tankPos.y))];
+        decision = 'AGGRO_OT_TO_MT';
+        reason = '非坦持仇：副坦向主坦靠拢';
+        dominantLayer = 2;
+      }
+    }
+  }
+
+  // 层3：危血 → 最大绿圈叠层（可牺牲输出）
+  if (!isHealthy && greenZones.length > 0) {
+    let maxGreen = 0;
+    for (const p of region) {
+      maxGreen = Math.max(maxGreen, countHealAurasAt(p, greenZones));
+    }
+    if (maxGreen > 0) {
+      const stacked = region.filter((p) => countHealAurasAt(p, greenZones) >= maxGreen);
+      if (stacked.length > 0) {
+        region = stacked;
+        if (dominantLayer < 3) {
+          const cur = countHealAurasAt(currentPos, greenZones);
+          if (cur >= maxGreen && Math.hypot(currentPos.x - region[0].x, currentPos.y - region[0].y) <= 18 && isSafe(currentPos)) {
+            decision = 'STAY_IN_CURRENT_HEAL_ZONE';
+            reason = `血线危险：已处于治疗叠层×${cur}，站定抬血`;
+          } else {
+            decision = 'SEEK_HEAL_ZONE';
+            reason = `血线危险：前往治疗光环叠层最多处（×${maxGreen}）`;
+          }
+          dominantLayer = 3;
         }
       }
+    }
+  }
 
-      // 策略 B: 当前治疗阵完全被危险覆盖，必须脱离当前治疗阵
-      // 近战DPS健康状态下：优先寻找能打Boss的安全治疗阵，若无则直接回Boss近战位
-      if (isMelee && isHealthy && bossPos) {
-        let altMeleePos: { x: number; y: number } | null = null;
-        let altZone: GroundEffect | null = null;
-        for (const hz of activeHealZones) {
-          if (hz.id === currentHealZone.id) continue;
-          const pt = findMeleeHealZonePosition(hz, bossPos, meleeRange, activeHazards, defaultTarget);
-          if (pt) {
-            altMeleePos = pt;
-            altZone = hz;
-            break;
+  // 层4：健康 → 近战/远程输出约束 + 绿黄叠层（身在红圈时不覆盖躲圈决策）
+  if (isHealthy && !inHazard && dominantLayer < 2) {
+    if (isMelee && hitPos) {
+      const inMelee = region.filter((p) => canHitBoss(p, hitPos, meleeRange));
+      if (inMelee.length > 0) {
+        region = inMelee;
+        if (bossPos != null && bossFacingRad != null) {
+          const flank = region.filter(
+            (p) => !isInBossFrontalCone(p, bossPos, bossFacingRad, BOSS_FRONTAL_CONE_RAD)
+          );
+          if (flank.length > 0) region = flank;
+        }
+        if (stackZonesHealthy.length > 0) {
+          let maxS = 0;
+          for (const p of region) maxS = Math.max(maxS, countBeneficialAurasAt(p, stackZonesHealthy));
+          if (maxS > 0) {
+            const stacked = region.filter(
+              (p) => countBeneficialAurasAt(p, stackZonesHealthy) >= maxS
+            );
+            if (stacked.length > 0) {
+              region = stacked;
+              decision = maxS > 0 ? 'SEEK_HEAL_ZONE' : decision;
+              reason = `血线健康：近战射程内绿黄叠层×${maxS}（避开正面）`;
+            }
           }
         }
-        if (altMeleePos && altZone) {
-          return {
-            targetPos: altMeleePos,
-            currentHealZoneId: altZone.id,
-            tradeOffDecision: 'DODGE_HAZARD_LEAVE_ZONE',
-            inHazard: true,
-            hazardId: threateningHazard.id,
-            reason: '权衡判定规避负面阵型：转移至安全的近战位替代治疗阵',
-          };
+        if (decision === 'DEFAULT_POSITION' || decision === 'DODGE_HAZARD_LEAVE_ZONE') {
+          if (!canHitBoss(currentPos, hitPos, meleeRange)) {
+            decision = 'RETURN_TO_BOSS';
+            reason = '血线健康：返回近战攻击位';
+          } else {
+            decision = 'DEFAULT_POSITION';
+            reason = '血线健康：近战输出位可行域';
+          }
         }
-        return {
-          targetPos: defaultTarget ? { ...defaultTarget } : { ...bossPos },
-          currentHealZoneId: null,
-          tradeOffDecision: 'RETURN_TO_BOSS',
-          inHazard: true,
-          hazardId: threateningHazard.id,
-          reason: '权衡判定躲避负面阵型且无其他近战治疗阵，撤离法阵返回攻击Boss',
-        };
+        dominantLayer = Math.max(dominantLayer, 4);
       }
-
-      // 常规脱离策略：优先查看是否存在另一个完全安全的治疗阵法
-      const otherSafeHealZone = activeHealZones.find(
-        hz => hz.id !== currentHealZone.id && !activeHazards.some(haz => isPosInHazard({ x: hz.x, y: hz.y }, haz))
-      );
-      if (otherSafeHealZone) {
-        return {
-          targetPos: { x: otherSafeHealZone.x, y: otherSafeHealZone.y },
-          currentHealZoneId: otherSafeHealZone.id,
-          tradeOffDecision: 'DODGE_HAZARD_LEAVE_ZONE',
-          inHazard: true,
-          hazardId: threateningHazard.id,
-          reason: '权衡判定躲避负面阵型：当前治疗阵完全受害，转移至安全的替代治疗阵',
-        };
-      }
-
-      // 无其他安全治疗阵，避开危险法阵向安全空地躲避
-      const dx = currentPos.x - threateningHazard.x;
-      const dy = currentPos.y - threateningHazard.y;
-      const dist = Math.hypot(dx, dy) || 1;
-      const dodgeDist = (threateningHazard.radius || 48) + 25;
-      const dodgeX = threateningHazard.x + (dx / dist) * dodgeDist;
-      const dodgeY = threateningHazard.y + (dy / dist) * dodgeDist;
-
-      return {
-        targetPos: { x: dodgeX, y: dodgeY },
-        currentHealZoneId: null,
-        tradeOffDecision: 'DODGE_HAZARD_LEAVE_ZONE',
-        inHazard: true,
-        hazardId: threateningHazard.id,
-        reason: '权衡判定躲避负面阵型：当前治疗阵完全受害，脱离至阵外安全区域',
-      };
-    }
-
-    // ── 无负面阵型威胁 ──
-    // 近战 DPS 专属逻辑：如果恢复到健康血线，若此时打不到Boss要回去打Boss
-    if (isMelee && bossPos) {
-      const inAttackRange = canHitBoss(currentPos, bossPos, meleeRange);
-      if (isHealthy) {
-        if (!inAttackRange) {
-          // "同样的如果恢复到健康血线如果这时候打不到boss要回去打boss"
-          return {
-            targetPos: defaultTarget ? { ...defaultTarget } : { ...bossPos },
-            currentHealZoneId: null,
-            tradeOffDecision: 'RETURN_TO_BOSS',
-            inHazard: false,
-            reason: '近战DPS已恢复健康血线且当前位置无法攻击首领，脱离治疗阵返回攻击Boss',
-          };
-        } else {
-          // "如果走到治疗地形不影响打boss可以走" -> 已经在治疗阵内且处于近战攻击范围内，继续保持攻击与受疗兼备
-          return {
-            targetPos: { x: currentPos.x, y: currentPos.y },
-            currentHealZoneId: currentHealZone.id,
-            tradeOffDecision: 'STAY_IN_CURRENT_HEAL_ZONE',
-            inHazard: false,
-            reason: '近战DPS身处治疗阵且处于首领近战攻击范围内，保持边打Boss边受疗站位',
-          };
-        }
-      } else {
-        // 血线未达健康线 (<60%)：在治疗阵内受疗保命
-        return {
-          targetPos: { x: currentPos.x, y: currentPos.y },
-          currentHealZoneId: currentHealZone.id,
-          tradeOffDecision: 'STAY_IN_CURRENT_HEAL_ZONE',
-          inHazard: false,
-          reason: '已经在治疗阵法中且血量未达到健康线，优先受疗抬血',
-        };
-      }
-    }
-
-    // 默认行为：已经在治疗阵法中且无负面阵型，保持站位不切换其他治疗阵
-    return {
-      targetPos: { x: currentPos.x, y: currentPos.y },
-      currentHealZoneId: currentHealZone.id,
-      tradeOffDecision: 'STAY_IN_CURRENT_HEAL_ZONE',
-      inHazard: false,
-      reason: '已经在治疗阵法中且无负面阵型，保持站位不切换其他治疗阵',
-    };
-  }
-
-  // ── 情况二：不在任何治疗阵法内 ──
-
-  // 近战 DPS 专属战术逻辑
-  if (isMelee && bossPos) {
-    if (isHealthy) {
-      // "近战dps如果血线是健康的不要为了走到治疗地形而远离boss，但是如果走到治疗地形不影响打boss可以走"
-      let meleeSafePos: { x: number; y: number } | null = null;
-      let meleeSafeZone: GroundEffect | null = null;
-
-      for (const hz of activeHealZones) {
-        const pt = findMeleeHealZonePosition(hz, bossPos, meleeRange, activeHazards, defaultTarget);
-        if (pt) {
-          meleeSafePos = pt;
-          meleeSafeZone = hz;
-          break;
-        }
-      }
-
-      if (meleeSafePos && meleeSafeZone) {
-        // 走到治疗地形不影响打Boss，可以走！
-        return {
-          targetPos: meleeSafePos,
-          currentHealZoneId: meleeSafeZone.id,
-          tradeOffDecision: 'SEEK_HEAL_ZONE',
-          inHazard: false,
-          reason: '近战DPS血量健康，前往不影响攻击首领的近战位治疗阵',
-        };
-      } else {
-        // 无近战治疗阵：不要为了走到治疗地形而远离Boss，保持在默认Boss近战输出位
-        return {
-          targetPos: defaultTarget ? { ...defaultTarget } : { ...currentPos },
-          currentHealZoneId: null,
-          tradeOffDecision: 'DEFAULT_POSITION',
-          inHazard: false,
-          reason: '近战DPS血量健康且治疗阵超出近战范围，不远离首领保持攻击',
-        };
-      }
-    } else {
-      // 近战DPS血线不健康 (<60%)：需要寻找治疗阵
-      // 优先在近战范围内寻找治疗阵，兼顾输出与保命
-      let candidateZone: GroundEffect | null = null;
-      let candidatePos: { x: number; y: number } | null = null;
-
-      for (const hz of activeHealZones) {
-        const pt = findMeleeHealZonePosition(hz, bossPos, meleeRange, activeHazards, defaultTarget);
-        if (pt) {
-          candidatePos = pt;
-          candidateZone = hz;
-          break;
-        }
-      }
-
-      // 若近战范围内无治疗阵，则为了保命前往最近的安全治疗阵受疗
-      if (!candidateZone && activeHealZones.length > 0) {
-        const safeHealZones = activeHealZones.filter(
-          hz => !activeHazards.some(haz => isPosInHazard({ x: hz.x, y: hz.y }, haz))
+    } else if (isRangedDps && hitPos) {
+      let next = region.filter((p) => canHitBoss(p, hitPos, RANGED_ATTACK_RANGE));
+      if (next.length > 0) region = next;
+      if (nearestHealerPos) {
+        next = region.filter(
+          (p) => Math.hypot(p.x - nearestHealerPos.x, p.y - nearestHealerPos.y) <= HEALER_LEASH_PX
         );
-        const candidatePool = safeHealZones.length > 0 ? safeHealZones : activeHealZones;
-        candidateZone = [...candidatePool].sort(
-          (a, b) => Math.hypot(currentPos.x - a.x, currentPos.y - a.y) - Math.hypot(currentPos.x - b.x, currentPos.y - b.y)
-        )[0];
-        candidatePos = { x: candidateZone.x, y: candidateZone.y };
+        if (next.length > 0) region = next;
       }
-
-      if (candidateZone && candidatePos) {
-        return {
-          targetPos: candidatePos,
-          currentHealZoneId: candidateZone.id,
-          tradeOffDecision: 'SEEK_HEAL_ZONE',
-          inHazard: !!threateningHazard,
-          hazardId: threateningHazard?.id,
-          reason: '近战DPS血量不足，步入安全治疗阵抬血',
-        };
+      if (stackZonesHealthy.length > 0) {
+        let maxS = 0;
+        for (const p of region) maxS = Math.max(maxS, countBeneficialAurasAt(p, stackZonesHealthy));
+        if (maxS > 0) {
+          const stacked = region.filter(
+            (p) => countBeneficialAurasAt(p, stackZonesHealthy) >= maxS
+          );
+          if (stacked.length > 0) {
+            region = stacked;
+            decision = 'SEEK_HEAL_ZONE';
+            reason = `血线健康：远程射程内绿黄叠层×${maxS}（近奶≤${HEALER_LEASH_YD}码）`;
+          }
+        }
       }
-
-      if (threateningHazard) {
-        const dx = currentPos.x - threateningHazard.x;
-        const dy = currentPos.y - threateningHazard.y;
-        const dist = Math.hypot(dx, dy) || 1;
-        const dodgeDist = (threateningHazard.radius || 48) + 25;
-        return {
-          targetPos: { x: threateningHazard.x + (dx / dist) * dodgeDist, y: threateningHazard.y + (dy / dist) * dodgeDist },
-          currentHealZoneId: null,
-          tradeOffDecision: 'DODGE_HAZARD_LEAVE_ZONE',
-          inHazard: true,
-          hazardId: threateningHazard.id,
-          reason: '脱离危险区域',
-        };
+      if (decision === 'DEFAULT_POSITION') {
+        reason = '血线健康：远程输出位可行域';
       }
-
-      return {
-        targetPos: defaultTarget ? { ...defaultTarget } : { ...currentPos },
-        currentHealZoneId: null,
-        tradeOffDecision: 'DEFAULT_POSITION',
-        inHazard: false,
-        reason: '正常阵型站位',
-      };
+      dominantLayer = Math.max(dominantLayer, 4);
+    } else if (unit.role === 'HEALER' && stackZonesHealthy.length > 0) {
+      let maxS = 0;
+      for (const p of region) maxS = Math.max(maxS, countBeneficialAurasAt(p, stackZonesHealthy));
+      if (maxS > 0) {
+        const stacked = region.filter(
+          (p) => countBeneficialAurasAt(p, stackZonesHealthy) >= maxS
+        );
+        if (stacked.length > 0) {
+          region = stacked;
+          decision = 'SEEK_HEAL_ZONE';
+          reason = `治疗：绿黄叠层×${maxS}`;
+          dominantLayer = Math.max(dominantLayer, 4);
+        }
+      }
     }
   }
 
-  // 非近战DPS或未提供bossPos时的常规逻辑
-  const needsHeal = unit.hp < unit.maxHp * 0.60;
-  if (needsHeal && activeHealZones.length > 0) {
-    const safeHealZones = activeHealZones.filter(
-      hz => !activeHazards.some(haz => isPosInHazard({ x: hz.x, y: hz.y }, haz))
+  // 层5：主坦 25 码（与更高优求交仍非空才收紧）
+  if (tankPos && unit.role !== 'TANK' && !TANK_STACK_OVERRIDE_DECISIONS.has(decision)) {
+    const within = region.filter(
+      (p) => Math.hypot(p.x - tankPos.x, p.y - tankPos.y) <= tankStackRangePx
     );
-    const candidateZones = safeHealZones.length > 0 ? safeHealZones : activeHealZones;
-    const closestZone = [...candidateZones].sort(
-      (a, b) => Math.hypot(currentPos.x - a.x, currentPos.y - a.y) - Math.hypot(currentPos.x - b.x, currentPos.y - b.y)
-    )[0];
-
-    return {
-      targetPos: { x: closestZone.x, y: closestZone.y },
-      currentHealZoneId: closestZone.id,
-      tradeOffDecision: 'SEEK_HEAL_ZONE',
-      inHazard: !!threateningHazard,
-      hazardId: threateningHazard?.id,
-      reason: '未在治疗阵中且血量不足，步入最近的安全治疗阵',
-    };
+    if (within.length > 0) {
+      region = within;
+      dominantLayer = Math.max(dominantLayer, 5);
+    }
+  } else if (
+    tankPos &&
+    unit.role !== 'TANK' &&
+    TANK_STACK_OVERRIDE_DECISIONS.has(decision) &&
+    dominantLayer >= 3
+  ) {
+    // 危血/躲圈已占优：不强制 25 码
+  } else if (tankPos && unit.role !== 'TANK' && dominantLayer <= 1 && !inHazard) {
+    const within = intersectKeep(
+      region,
+      (p) => Math.hypot(p.x - tankPos.x, p.y - tankPos.y) <= tankStackRangePx
+    );
+    region = within;
   }
 
-  if (threateningHazard) {
-    const dx = currentPos.x - threateningHazard.x;
-    const dy = currentPos.y - threateningHazard.y;
-    const dist = Math.hypot(dx, dy) || 1;
-    const dodgeDist = (threateningHazard.radius || 48) + 25;
-    return {
-      targetPos: { x: threateningHazard.x + (dx / dist) * dodgeDist, y: threateningHazard.y + (dy / dist) * dodgeDist },
-      currentHealZoneId: null,
-      tradeOffDecision: 'DODGE_HAZARD_LEAVE_ZONE',
-      inHazard: true,
-      hazardId: threateningHazard.id,
-      reason: '脱离危险区域',
-    };
+  // 若仍在红圈意图下，确保目标安全且宁可选逃离点
+  if (inHazard) {
+    region = region.filter(isSafe);
+    if (region.length === 0 && threateningHazard) {
+      region = [dodgeAwayFromHazard(currentPos, threateningHazard)];
+      decision = 'DODGE_HAZARD_LEAVE_ZONE';
+    }
   }
 
-  return {
-    targetPos: defaultTarget ? { ...defaultTarget } : { ...currentPos },
-    currentHealZoneId: null,
-    tradeOffDecision: 'DEFAULT_POSITION',
-    inHazard: false,
-    reason: '正常阵型站位',
-  };
+  // 禁止默认/回 Boss 点落在红圈：再滤一次
+  region = region.filter(isSafe);
+  if (region.length === 0) {
+    region = [dodgeAwayFromHazard(currentPos, threateningHazard ?? activeHazards[0] ?? {
+      id: 'virtual',
+      kind: 'DAMAGE_ZONE',
+      spellId: '',
+      ownerId: '',
+      x: currentPos.x,
+      y: currentPos.y,
+      radius: 48,
+      colorHex: '#000',
+      remainingMs: 1,
+    } as GroundEffect)];
+  }
+
+  const scoreStacks = (p: WalkCand) =>
+    !isHealthy
+      ? countHealAurasAt(p, greenZones)
+      : countBeneficialAurasAt(p, stackZonesHealthy);
+
+  let target = pickBestCand(region, currentPos, scoreStacks);
+
+  // 已在可行域内且叠层不差则站定，减少抽动
+  if (
+    isSafe(currentPos) &&
+    region.some((p) => Math.hypot(p.x - currentPos.x, p.y - currentPos.y) <= 18) &&
+    scoreStacks(currentPos) >= scoreStacks(target)
+  ) {
+    const inMeleeOk =
+      !isMelee ||
+      !isHealthy ||
+      !hitPos ||
+      canHitBoss(currentPos, hitPos, meleeRange);
+    const healerOk =
+      !isRangedDps ||
+      !isHealthy ||
+      !nearestHealerPos ||
+      Math.hypot(currentPos.x - nearestHealerPos.x, currentPos.y - nearestHealerPos.y) <=
+        HEALER_LEASH_PX;
+    const tankOk =
+      !tankPos ||
+      unit.role === 'TANK' ||
+      TANK_STACK_OVERRIDE_DECISIONS.has(decision) ||
+      Math.hypot(currentPos.x - tankPos.x, currentPos.y - tankPos.y) <= tankStackRangePx;
+    if (inMeleeOk && healerOk && tankOk) {
+      target = { x: currentPos.x, y: currentPos.y };
+      if (scoreStacks(target) > 0 && (decision === 'SEEK_HEAL_ZONE' || decision === 'DEFAULT_POSITION')) {
+        decision = 'STAY_IN_CURRENT_HEAL_ZONE';
+        reason = `站定于当前可行域（叠层×${scoreStacks(target)}）`;
+      }
+    }
+  }
+
+  // 健康近战若目标仍在正面且有侧翼更好点已在层4处理
+
+  if (inHazard && decision === 'DEFAULT_POSITION') {
+    decision = 'DODGE_HAZARD_LEAVE_ZONE';
+    reason = '躲避红色地形至安全空地';
+  }
+
+  // defaultTarget 若在 region 且同分，偏默认阵型
+  if (
+    defaultTarget &&
+    isSafe(defaultTarget) &&
+    decision === 'DEFAULT_POSITION' &&
+    region.some(
+      (p) => Math.hypot(p.x - defaultTarget.x, p.y - defaultTarget.y) < 2
+    )
+  ) {
+    target = { ...defaultTarget };
+  }
+
+  return makeResult({
+    targetPos: { x: target.x, y: target.y },
+    currentHealZoneId: primaryZoneIdAt(target, greenZones.length ? greenZones : stackZonesHealthy),
+    tradeOffDecision: decision,
+    inHazard,
+    hazardId: threateningHazard?.id,
+    reason,
+    allowFidget:
+      decision === 'DEFAULT_POSITION' ||
+      decision === 'RETURN_TO_BOSS' ||
+      decision === 'STAY_IN_CURRENT_HEAL_ZONE',
+  });
 }
 
 export class TankAI implements RoleAI {
@@ -670,7 +1119,7 @@ export class TankAI implements RoleAI {
     const myHp = hpFraction(unit);
     const isTauntTop = this.isTopThreat(unit, boss);
 
-    const allTanks = gs.units.filter(u => u.role === 'TANK');
+    const allTanks = orderTanksByThreatPriority(gs.units.filter(u => u.role === 'TANK'));
     const threatDecision = evaluateTankThreatDecision(
       unit,
       allTanks,
@@ -682,7 +1131,7 @@ export class TankAI implements RoleAI {
     const ownedSpells = getSpellsForClassSpec(unit.classId as ClassId, specId);
 
     // 1. 通用嘲讽：拥有任意嘲讽技能且需要接怪
-    if (threatDecision.shouldTaunt) {
+    if (unit.role === 'TANK' && threatDecision.shouldTaunt) {
       const tauntSpell = ownedSpells.find(s => s.isTaunt);
       if (tauntSpell) {
         actions.push(act(tauntSpell.id, boss.id, Priority.DEFENSIVE, true));
@@ -702,7 +1151,8 @@ export class TankAI implements RoleAI {
     }
 
     // 3. 通用规则输出/群拉循环（目标 >= 3 自动优先 AOE 群拉技能，否则按仇恨/性价比/输出选优）
-    if (!threatDecision.pauseThreat || boss.threatTable.length === 0) {
+    // pauseThreat 只表示「不抢嘲讽/压仇恨」，副坦仍须持续输出；威胁倍率由执行层下调。
+    {
       const personality = createAIPersonality(unit.name, unit.id);
       const candidates = buildUsableCandidatesForUnit(unit, specId, () => true, {
         roleFilter: 'DAMAGE',

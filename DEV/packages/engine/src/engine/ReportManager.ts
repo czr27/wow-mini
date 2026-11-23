@@ -43,6 +43,7 @@ export class ReportManager {
         deaths: u.alive ? 0 : 1,
         skillDamage: u.combatStats?.skillDamage || {},
         skillHealing: u.combatStats?.skillHealing || {},
+        skillDamageTaken: u.combatStats?.skillDamageTaken || {},
       };
     });
 

@@ -1,6 +1,15 @@
 import type { CombatEngine } from '@cata-raid-sim/engine';
-import { getSpellByAnyId } from '@cata-raid-sim/engine';
+import {
+  getSpellByAnyId,
+  selectAoeHealTargets,
+  selectAoeEnemyTargets,
+  selectChainJumpTargets,
+  resolveAoePulsePose,
+  RANGE_10YD_PX,
+  RANGE_30YD_PX,
+} from '@cata-raid-sim/engine';
 import { syncUnitResources } from './unitResources.js';
+import { emitLocalAoePulse } from './emitLocalAoePulse.js';
 
 export type ResolvePlayerCastCtx = {
   engine: CombatEngine;
@@ -304,16 +313,24 @@ export function resolvePlayerCast(
         || player;
       const isCrit = Math.random() < (player.stats.critChance || 0.25);
       const sp = getSpellByAnyId('chain_heal', 'SHAMAN');
-      // 80 级满级：主目标按 ClassRegistry 直疗 + 法强系数，后续弹跳衰减 30%
+      // 80 级满级：主目标直疗 + 法强；弹跳仅限上一跳约 10 码内最伤目标，每跳衰减 30%
       let healVal = Math.round((sp?.directHeal || 23500) + (player.stats.spellPower || 4000) * 0.55);
-      engine.healUnit(player, target, healVal, isCrit, '治疗链');
-      const otherAllies = engine.friendlyUnits
-        .filter(u => u.id !== target.id && (u.alive || u.isAlive) && u.hp > 0 && u.hp < u.maxHp)
-        .sort((a, b) => (a.hp / a.maxHp) - (b.hp / b.maxHp));
-      for (let i = 0; i < Math.min(3, otherAllies.length); i++) {
-        healVal = Math.round(healVal * 0.7);
-        engine.healUnit(player, otherAllies[i], healVal, Math.random() < (player.stats.critChance || 0.25), '治疗链');
-      }
+      const chainTargets = selectChainJumpTargets({
+        allies: engine.friendlyUnits,
+        seed: target,
+        jumpRadiusPx: sp?.aoeRadiusPx || RANGE_10YD_PX,
+        maxTargets: sp?.maxAoeTargets || 4,
+      });
+      chainTargets.forEach((ally, idx) => {
+        const amt = idx === 0 ? healVal : (healVal = Math.round(healVal * 0.7));
+        engine.healUnit(
+          player,
+          ally,
+          amt,
+          idx === 0 ? isCrit : Math.random() < (player.stats.critChance || 0.25),
+          '治疗链'
+        );
+      });
     } else if (spellId === 'revive' || spellId === 'ancestral_spirit' || spellId === 'redemption' || spellId === 'resurrection') {
       const deadTarget = engine.friendlyUnits.find(u => (!u.isAlive && !u.alive) || u.hp <= 0);
       if (deadTarget) {
@@ -331,27 +348,79 @@ export function resolvePlayerCast(
           || (selectedTargetId ? engine.friendlyUnits.find(u => u.id === selectedTargetId) : null)
           || player;
         if (normSpell.isAOE) {
-          const maxT = Math.max(3, normSpell.maxAoeTargets || 5);
-          const wounded = engine.friendlyUnits
-            .filter(u => (u.alive || u.isAlive) && u.hp > 0)
-            .sort((a, b) => (a.hp / a.maxHp) - (b.hp / b.maxHp))
-            .slice(0, maxT);
+          const wounded = selectAoeHealTargets({
+            spellId: normSpell.id,
+            allies: engine.friendlyUnits,
+            caster: player,
+            primaryTarget: target,
+            maxAoeTargets: Math.max(3, normSpell.maxAoeTargets || 5),
+            targetType: normSpell.targetType,
+          });
           const perHeal = Math.round(Math.max(3800, normSpell.directHeal || normSpell.hotTotalHeal * 0.45) + spPower * 0.4);
           for (const ally of wounded) {
             engine.healUnit(player, ally, perHeal, Math.random() < (player.stats.critChance || 0.25), normSpell.name);
           }
+          const pose = resolveAoePulsePose({
+            caster: player,
+            primaryTarget: target,
+            radiusPx: normSpell.aoeRadiusPx || RANGE_30YD_PX,
+            centerMode: normSpell.aoeCenterMode,
+          });
+          if (pose) {
+            emitLocalAoePulse(engine, {
+              actor: player,
+              spellId: normSpell.shortId || normSpell.id,
+              spellName: normSpell.name,
+              targetId: target.id,
+              x: pose.x,
+              y: pose.y,
+              radius: pose.radius,
+              isHeal: true,
+            });
+          }
         } else {
           const healVal = Math.round(Math.max(4500, normSpell.directHeal) + spPower * 0.55);
           engine.healUnit(player, target, healVal, isCrit, normSpell.name);
+          engine.logCombatAction({
+            actorId: player.id,
+            spellId: normSpell.shortId || normSpell.id,
+            spellName: normSpell.name,
+            kind: 'CAST_LAND',
+            targetId: target.id,
+            visualTone: 'HEAL',
+          });
         }
       } else if (normSpell.isAOE) {
-        const livingEnemies = engine.enemyUnits.filter(e => (e.isAlive ?? e.alive) && e.hp > 0);
-        const targets = livingEnemies.slice(0, Math.max(3, normSpell.maxAoeTargets || 6));
+        const targets = selectAoeEnemyTargets({
+          spellId: normSpell.id,
+          enemies: engine.enemyUnits,
+          caster: player,
+          maxAoeTargets: Math.max(3, normSpell.maxAoeTargets || 6),
+          school: normSpell.school,
+          targetType: normSpell.targetType,
+        });
         const power = normSpell.school === 'PHYSICAL' ? apPower : spPower;
         const perDmg = Math.round(Math.max(3600, normSpell.directDamage || normSpell.dotTotalDamage * 0.5) + power * 0.45);
         for (const enemy of targets) {
           engine.dealDamage(player, enemy, perDmg, normSpell.school, Math.random() < (player.stats.critChance || 0.28), normSpell.name);
           engine.threatManager.addThreat(enemy.id, player.id, perDmg);
+        }
+        const pose = resolveAoePulsePose({
+          caster: player,
+          primaryTarget: targets[0] || boss,
+          radiusPx: normSpell.aoeRadiusPx || RANGE_30YD_PX,
+          centerMode: normSpell.aoeCenterMode || 'CASTER',
+        });
+        if (pose) {
+          emitLocalAoePulse(engine, {
+            actor: player,
+            spellId: normSpell.shortId || normSpell.id,
+            spellName: normSpell.name,
+            targetId: (targets[0] || boss)?.id ?? null,
+            x: pose.x,
+            y: pose.y,
+            radius: pose.radius,
+          });
         }
       } else if (boss && boss.alive) {
         const power = normSpell.school === 'PHYSICAL' ? apPower : spPower;
@@ -379,6 +448,47 @@ export function resolvePlayerCast(
             tickValue: Math.round(normSpell.dotTotalDamage / 5),
           });
         }
+        engine.logCombatAction({
+          actorId: player.id,
+          spellId: normSpell.shortId || normSpell.id,
+          spellName: normSpell.name,
+          kind: 'CAST_LAND',
+          targetId: boss.id,
+        });
+      }
+    }
+
+    // Hardcoded ST cast paths (above) — emit CAST_LAND for hit FX when not already logged via normSpell branch
+    {
+      const sid = (spellId || '').toLowerCase();
+      const stDmg = new Set([
+        'fireball', 'pyroblast', 'frostbolt', 'arcane_blast', 'wrath', 'starfire', 'starsurge',
+        'lightning_bolt', 'lava_burst',
+      ]);
+      const stHeal = new Set([
+        'healing_wave', 'nourish', 'healing_surge', 'greater_healing_wave', 'healing_touch', 'regrowth',
+      ]);
+      if (stDmg.has(sid) && boss && (boss.alive || boss.isAlive)) {
+        engine.logCombatAction({
+          actorId: player.id,
+          spellId: sid,
+          spellName: spellId,
+          kind: 'CAST_LAND',
+          targetId: boss.id,
+        });
+      } else if (stHeal.has(sid)) {
+        const target =
+          (castTargetId ? engine.friendlyUnits.find((u) => u.id === castTargetId) : null) ||
+          (selectedTargetId ? engine.friendlyUnits.find((u) => u.id === selectedTargetId) : null) ||
+          player;
+        engine.logCombatAction({
+          actorId: player.id,
+          spellId: sid,
+          spellName: spellId,
+          kind: 'CAST_LAND',
+          targetId: target.id,
+          visualTone: 'HEAL',
+        });
       }
     }
 

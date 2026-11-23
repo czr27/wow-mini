@@ -167,20 +167,42 @@ export const CLASS_SPECS_MAP: Record<ClassId, { id: string; name: string; role: 
   ],
 };
 
+const FIVE_MAN_QUOTA = {
+  tier: '5man' as const,
+  capacity: 5,
+  roles: {
+    TANK: { min: 1, max: 1 },
+    HEALER: { min: 1, max: 1 },
+    DPS: { min: 3, max: 3 },
+  },
+  validCompositions: [{ TANK: 1, HEALER: 1, DPS: 3 }],
+};
+
 export const DUNGEON_ROLE_QUOTAS: Record<string, DungeonRoleQuota> = {
   shadowfang_keep: {
     dungeonId: 'shadowfang_keep',
     dungeonName: '影牙城堡',
-    tier: '5man',
-    capacity: 5,
-    roles: {
-      TANK: { min: 1, max: 1 },
-      HEALER: { min: 1, max: 1 },
-      DPS: { min: 3, max: 3 },
-    },
-    validCompositions: [
-      { TANK: 1, HEALER: 1, DPS: 3 },
-    ],
+    ...FIVE_MAN_QUOTA,
+  },
+  deadmines: {
+    dungeonId: 'deadmines',
+    dungeonName: '死亡矿井',
+    ...FIVE_MAN_QUOTA,
+  },
+  scarlet_monastery: {
+    dungeonId: 'scarlet_monastery',
+    dungeonName: '血色修道院',
+    ...FIVE_MAN_QUOTA,
+  },
+  stratholme: {
+    dungeonId: 'stratholme',
+    dungeonName: '斯坦索姆',
+    ...FIVE_MAN_QUOTA,
+  },
+  zulgurub: {
+    dungeonId: 'zulgurub',
+    dungeonName: '祖尔格拉布',
+    ...FIVE_MAN_QUOTA,
   },
   dragon_soul: {
     dungeonId: 'dragon_soul',
@@ -198,6 +220,27 @@ export const DUNGEON_ROLE_QUOTAS: Record<string, DungeonRoleQuota> = {
     ],
   },
 };
+
+/** 大厅/房间可选副本地图 */
+export const SELECTABLE_DUNGEONS: Array<{ id: string; label: string; tier: '5man' | '20man' }> = [
+  { id: 'shadowfang_keep', label: '影牙城堡', tier: '5man' },
+  { id: 'deadmines', label: '死亡矿井', tier: '5man' },
+  { id: 'scarlet_monastery', label: '血色修道院', tier: '5man' },
+  { id: 'stratholme', label: '斯坦索姆', tier: '5man' },
+  { id: 'zulgurub', label: '祖尔格拉布', tier: '5man' },
+  { id: 'dragon_soul', label: '巨龙之魂', tier: '20man' },
+];
+
+/**
+ * 难度收口：多数副本普通/英雄均可。
+ * 血量：配置按英雄标定，普通难度由 CombatEngine.spawnBoss ÷ HEROIC_DIFFICULTY_MULT(1.5)。
+ */
+export function coerceDungeonDifficulty(
+  _dungeonId: string,
+  difficulty: DungeonDifficulty,
+): DungeonDifficulty {
+  return difficulty;
+}
 
 export function getRoleBySpec(classId: ClassId, spec: string): RoleId {
   const specUpper = (spec || '').toUpperCase();

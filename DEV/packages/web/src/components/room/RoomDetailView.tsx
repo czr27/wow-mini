@@ -8,15 +8,24 @@ import {
   type StartGameValidation,
   CLASS_SPECS_MAP,
   DUNGEON_ROLE_QUOTAS,
+  SELECTABLE_DUNGEONS,
   DEFAULT_CUSTOM_DIFFICULTY,
+  validateStartGame,
+  validateMapSwitch,
 } from '@cata-raid-sim/engine';
+import { DismissibleModal } from '../DismissibleModal.js';
+import { DungeonPicker } from './DungeonPicker.js';
 
 /** Local RoomManager or networked facade — structural ops used by the room UI. */
 export interface RoomController {
   validateStartGame(roomId: string): StartGameValidation;
+  validateStartGameRoom?(room: LobbyRoom): StartGameValidation;
   validateMapSwitch(roomId: string, dungeonId: string): MapSwitchValidation;
   canSelectSpec(roomId: string, memberId: string, spec: string, classId: ClassId): SpecSelectionCheck;
-  autoFillAi(roomId: string): { success: boolean; addedCount: number } | void;
+  autoFillAi(
+    roomId: string,
+    opts?: { replaceExistingAi?: boolean }
+  ): { success: boolean; addedCount: number; removedCount?: number } | void;
   addAiMember(roomId: string): unknown;
   kickMember(roomId: string, memberId: string): boolean | void;
   setPlayerReady(roomId: string, playerId: string, isReady: boolean): boolean | void;
@@ -76,6 +85,7 @@ export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
   onChangeCustomDifficulty,
   onLeaveRoom,
   onStartGame,
+  onRefreshRoom,
 }) => {
   const [editingMemberId, setEditingMemberId] = useState<string | null>(null);
   const [showCustomConfigModal, setShowCustomConfigModal] = useState(false);
@@ -89,10 +99,18 @@ export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
 
   const activeCustom = room.customDifficulty || customDifficulty || DEFAULT_CUSTOM_DIFFICULTY;
 
-  // Validation
-  const startValidation = roomManager.validateStartGame(room.id);
-  const mapSwitchToSFK = roomManager.validateMapSwitch(room.id, 'shadowfang_keep');
-  const mapSwitchToDS = roomManager.validateMapSwitch(room.id, 'dragon_soul');
+  // 校验必须用当前 UI 这份 room，禁止再按 id 去捞可能过期的镜像
+  const startValidation =
+    roomManager.validateStartGameRoom?.(room) ?? validateStartGame(room);
+  const mapSwitchById = Object.fromEntries(
+    SELECTABLE_DUNGEONS.map((d) => [d.id, roomManager.validateMapSwitch(room.id, d.id)])
+  );
+  // Custom rooms may over-fill role quotas; block NORMAL/HEROIC until roster fits
+  const standardDiffGate = validateMapSwitch(room.members, room.dungeonId);
+  const canSwitchToStandardDiff = standardDiffGate.canSwitch;
+  const standardDiffBlockedReason = !canSwitchToStandardDiff
+    ? `当前职责人数超出普通/英雄上限，无法切换：\n${standardDiffGate.errors.map((e) => `• ${e}`).join('\n')}`
+    : undefined;
 
   // Counts (always derived live from room.members)
   const tanks = room.members.filter(m => m.role === 'TANK').length;
@@ -100,15 +118,48 @@ export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
   const dps = room.members.filter(m => m.role === 'DPS').length;
   const humanCount = room.members.filter(m => m.isPlayer && !m.isAi).length;
   const aiCount = room.members.filter(m => m.isAi).length;
+  // AI 一律视为已准备
+  const readyCount = room.members.filter((m) => m.isAi || m.isReady).length;
+  const rosterTotal = room.members.length;
   const isRaid = quota.tier === '20man';
+  const tankQuotaLabel =
+    quota.roles.TANK.min === quota.roles.TANK.max
+      ? String(quota.roles.TANK.max)
+      : `${quota.roles.TANK.min}-${quota.roles.TANK.max}`;
+  const healerQuotaLabel =
+    quota.roles.HEALER.min === quota.roles.HEALER.max
+      ? String(quota.roles.HEALER.max)
+      : `${quota.roles.HEALER.min}-${quota.roles.HEALER.max}`;
+  const dpsQuotaLabel =
+    quota.roles.DPS.min === quota.roles.DPS.max
+      ? String(quota.roles.DPS.max)
+      : `${quota.roles.DPS.min}-${quota.roles.DPS.max}`;
+  const roleChip = (
+    ok: boolean,
+    label: string,
+    value: string
+  ) => (
+    <span
+      className={`px-2 py-0.5 rounded border ${
+        ok
+          ? 'bg-slate-950/50 border-slate-700 text-slate-300'
+          : 'bg-rose-950/50 border-rose-500/50 text-rose-300'
+      }`}
+    >
+      {label}: {value}
+    </span>
+  );
 
   const handleQuickFillAi = () => {
-    roomManager.autoFillAi(room.id);
+    // 一键 AI：踢掉全部现有 AI，再按配额重新分配
+    roomManager.autoFillAi(room.id, { replaceExistingAi: true });
+    onRefreshRoom();
   };
 
   const handleAddSingleAi = () => {
     if (!isHost) return;
     roomManager.addAiMember(room.id);
+    onRefreshRoom();
   };
 
   const handleKick = (memberId: string) => {
@@ -128,6 +179,7 @@ export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
 
   const handleSwitchDifficulty = (diff: DungeonDifficulty) => {
     if (!isHost) return;
+    if ((diff === 'NORMAL' || diff === 'HEROIC') && !canSwitchToStandardDiff) return;
     roomManager.setRoomDifficulty(room.id, diff, diff === 'CUSTOM' ? activeCustom : undefined);
     if (diff === 'CUSTOM') setShowCustomConfigModal(true);
     else setShowCustomConfigModal(false);
@@ -171,195 +223,120 @@ export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
     <div className="flex flex-col h-full min-h-0 w-full bg-slate-950 text-slate-100 select-none overflow-hidden">
       {/* Room Header */}
       <div className="shrink-0 flex flex-wrap items-center justify-between gap-3 px-4 sm:px-6 py-3 bg-gradient-to-r from-slate-900 via-amber-950/40 to-slate-900 border-b border-amber-500/30 shadow-lg">
-        <div className="flex items-center space-x-4">
-          <button
-            onClick={onLeaveRoom}
-            className="px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs transition"
-          >
-            ← 退出房间
-          </button>
-          <div>
-            <div className="flex items-center space-x-2">
-              <h1 className="text-base font-bold text-amber-300">{room.name}</h1>
-              <span className="text-xs px-2 py-0.5 rounded bg-slate-800 text-slate-400 font-mono">
-                ID: {room.id}
-              </span>
-            </div>
-            <div className="text-xs text-slate-400 flex items-center space-x-3 mt-0.5">
-              <span>
-                副本:{' '}
-                <strong className="text-amber-200">
-                  {quota.dungeonName} ({quota.tier === '5man' ? '5人' : '20人'})
-                </strong>
-              </span>
-              <span>
-                难度: <strong className={diffColor}>{diffLabel}</strong>
-              </span>
-              <span>
-                房主:{' '}
-                <strong className="text-amber-300">
-                  {room.members.find(m => m.isHost)?.name || '未知'}
-                </strong>
-              </span>
-            </div>
+        <div className="min-w-0">
+          <div className="flex items-center space-x-2">
+            <h1 className="text-base font-bold text-amber-300 truncate">{room.name}</h1>
+            <span className="text-xs px-2 py-0.5 rounded bg-slate-800 text-slate-400 font-mono shrink-0">
+              ID: {room.id}
+            </span>
+          </div>
+          <div className="text-xs text-slate-400 flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-0.5">
+            <span>
+              副本:{' '}
+              <strong className="text-amber-200">
+                {quota.dungeonName} ({quota.tier === '5man' ? '5人' : '20人'})
+              </strong>
+            </span>
+            <span>
+              难度: <strong className={diffColor}>{diffLabel}</strong>
+            </span>
+            <span>
+              房主:{' '}
+              <strong className="text-amber-300">
+                {room.members.find(m => m.isHost)?.name || '未知'}
+              </strong>
+            </span>
           </div>
         </div>
 
-        {/* Host Controls: Map Switcher & Difficulty Switcher */}
-        {isHost && (
-          <div className="flex flex-wrap items-center gap-2">
-            {/* Map Switcher */}
-            <div className="flex items-center space-x-1.5 bg-slate-900/90 px-3 py-1.5 rounded-lg border border-slate-800">
-              <span className="text-xs text-slate-400 font-semibold">地图:</span>
-              <div className="relative group">
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Host Controls: Map Switcher & Difficulty Switcher */}
+          {isHost && (
+            <>
+              <DungeonPicker
+                mode="switch"
+                label="地图"
+                value={room.dungeonId}
+                onChange={handleSwitchMap}
+                disabledIds={SELECTABLE_DUNGEONS.filter(
+                  (d) => !(mapSwitchById[d.id]?.canSwitch ?? false)
+                ).map((d) => d.id)}
+                disabledReasons={Object.fromEntries(
+                  SELECTABLE_DUNGEONS.filter(
+                    (d) => !(mapSwitchById[d.id]?.canSwitch ?? false)
+                  ).map((d) => [
+                    d.id,
+                    (mapSwitchById[d.id]?.errors || []).map((e) => `• ${e}`).join('\n') ||
+                      '无法切换',
+                  ])
+                )}
+              />
+
+              {/* Difficulty Switcher (Normal / Heroic / Custom) — h-8 与地图/退出一致 */}
+              <div className="inline-flex h-8 items-center gap-1.5 bg-slate-900/90 px-2.5 rounded-lg border border-slate-800">
+                <span className="text-xs text-slate-400 font-semibold shrink-0">难度:</span>
                 <button
-                  disabled={room.dungeonId === 'shadowfang_keep' || !mapSwitchToSFK.canSwitch}
-                  onClick={() => handleSwitchMap('shadowfang_keep')}
-                  className={`px-2.5 py-1 rounded text-xs transition font-semibold ${
-                    room.dungeonId === 'shadowfang_keep'
-                      ? 'bg-amber-600 text-white font-bold'
-                      : mapSwitchToSFK.canSwitch
-                      ? 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                      : 'bg-slate-900 text-slate-600 border border-red-900/40 cursor-not-allowed opacity-60'
+                  type="button"
+                  onClick={() => handleSwitchDifficulty('NORMAL')}
+                  disabled={!canSwitchToStandardDiff}
+                  title={standardDiffBlockedReason}
+                  className={`h-6 px-2.5 rounded text-xs transition font-semibold leading-none ${
+                    room.difficulty === 'NORMAL'
+                      ? 'bg-sky-600 text-white font-bold'
+                      : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                  } ${
+                    !canSwitchToStandardDiff
+                      ? 'opacity-40 cursor-not-allowed hover:bg-slate-800'
+                      : ''
                   }`}
                 >
-                  影牙城堡 (5人)
+                  普通
                 </button>
-                {!mapSwitchToSFK.canSwitch && room.dungeonId !== 'shadowfang_keep' && (
-                  <div className="absolute left-0 top-full mt-1 z-30 hidden group-hover:block bg-slate-900 text-red-400 text-[11px] p-2 rounded shadow-xl border border-red-500/40 w-48 whitespace-normal">
-                    <div className="font-bold mb-1">无法切换地图：</div>
-                    {mapSwitchToSFK.errors.map((err, i) => (
-                      <div key={i}>• {err}</div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div className="relative group">
                 <button
-                  disabled={room.dungeonId === 'dragon_soul' || !mapSwitchToDS.canSwitch}
-                  onClick={() => handleSwitchMap('dragon_soul')}
-                  className={`px-2.5 py-1 rounded text-xs transition font-semibold ${
-                    room.dungeonId === 'dragon_soul'
-                      ? 'bg-amber-600 text-white font-bold'
-                      : mapSwitchToDS.canSwitch
-                      ? 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                      : 'bg-slate-900 text-slate-600 border border-red-900/40 cursor-not-allowed opacity-60'
+                  type="button"
+                  onClick={() => handleSwitchDifficulty('HEROIC')}
+                  disabled={!canSwitchToStandardDiff}
+                  title={standardDiffBlockedReason}
+                  className={`h-6 px-2.5 rounded text-xs transition font-semibold leading-none ${
+                    room.difficulty === 'HEROIC'
+                      ? 'bg-red-600 text-white font-bold'
+                      : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                  } ${
+                    !canSwitchToStandardDiff
+                      ? 'opacity-40 cursor-not-allowed hover:bg-slate-800'
+                      : ''
                   }`}
                 >
-                  巨龙之魂 (20人)
+                  英雄
                 </button>
-                {!mapSwitchToDS.canSwitch && room.dungeonId !== 'dragon_soul' && (
-                  <div className="absolute left-0 top-full mt-1 z-30 hidden group-hover:block bg-slate-900 text-red-400 text-[11px] p-2 rounded shadow-xl border border-red-500/40 w-48 whitespace-normal">
-                    <div className="font-bold mb-1">无法切换地图：</div>
-                    {mapSwitchToDS.errors.map((err, i) => (
-                      <div key={i}>• {err}</div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* Difficulty Switcher (Normal / Heroic / Custom) */}
-            <div className="flex items-center space-x-1.5 bg-slate-900/90 px-3 py-1.5 rounded-lg border border-slate-800">
-              <span className="text-xs text-slate-400 font-semibold">难度:</span>
-              <button
-                onClick={() => handleSwitchDifficulty('NORMAL')}
-                className={`px-2.5 py-1 rounded text-xs transition font-semibold ${
-                  room.difficulty === 'NORMAL'
-                    ? 'bg-sky-600 text-white font-bold'
-                    : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                }`}
-              >
-                普通
-              </button>
-              <button
-                onClick={() => handleSwitchDifficulty('HEROIC')}
-                className={`px-2.5 py-1 rounded text-xs transition font-semibold ${
-                  room.difficulty === 'HEROIC'
-                    ? 'bg-red-600 text-white font-bold'
-                    : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                }`}
-              >
-                英雄
-              </button>
-              <button
-                onClick={() => handleSwitchDifficulty('CUSTOM')}
-                className={`px-2.5 py-1 rounded text-xs transition font-semibold ${
-                  room.difficulty === 'CUSTOM'
-                    ? 'bg-violet-600 text-white font-bold'
-                    : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
-                }`}
-              >
-                ⚙️ 自定义
-              </button>
-              {room.difficulty === 'CUSTOM' && (
                 <button
-                  onClick={() => setShowCustomConfigModal(true)}
-                  className="px-2 py-1 rounded text-[11px] bg-violet-950/70 hover:bg-violet-900/80 text-violet-200 border border-violet-500/40 transition"
+                  type="button"
+                  onClick={() => handleSwitchDifficulty('CUSTOM')}
+                  className={`h-6 px-2.5 rounded text-xs transition font-semibold leading-none ${
+                    room.difficulty === 'CUSTOM'
+                      ? 'bg-violet-600 text-white font-bold'
+                      : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                  }`}
+                  title="选择自定义难度并打开参数面板"
                 >
-                  设置参数
+                  ⚙️ 自定义
                 </button>
-              )}
-            </div>
-          </div>
-        )}
+              </div>
+            </>
+          )}
+
+          <button
+            type="button"
+            onClick={onLeaveRoom}
+            className="inline-flex h-8 items-center px-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs transition shrink-0"
+          >
+            退出房间
+          </button>
+        </div>
       </div>
 
       {/* Main Grid View */}
       <div className="flex-1 min-h-0 p-3 sm:p-4 w-full flex flex-col gap-3 overflow-y-auto overscroll-contain">
-        {/* Roster Summary Bar */}
-        <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-900/80 p-3 rounded-lg border border-slate-800 text-xs">
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="text-slate-400">
-              队伍容量:{' '}
-              <strong className="text-amber-300 font-mono" title="总数/上限 (AI数)">
-                {room.members.length}/{quota.capacity} ({aiCount})
-              </strong>
-              <span className="ml-2 text-slate-500">玩家{humanCount}</span>
-            </span>
-            <div className="flex items-center space-x-2">
-              <span
-                className={`px-2 py-0.5 rounded border ${
-                  tanks >= quota.roles.TANK.min && tanks <= quota.roles.TANK.max
-                    ? 'bg-blue-950/60 border-blue-600/40 text-blue-300'
-                    : 'bg-rose-950/60 border-rose-500/60 text-rose-300'
-                }`}
-              >
-                🛡️ 坦克: {tanks} / {quota.roles.TANK.min === quota.roles.TANK.max ? quota.roles.TANK.max : `${quota.roles.TANK.min}-${quota.roles.TANK.max}`}
-              </span>
-              <span
-                className={`px-2 py-0.5 rounded border ${
-                  healers >= quota.roles.HEALER.min && healers <= quota.roles.HEALER.max
-                    ? 'bg-emerald-950/60 border-emerald-600/40 text-emerald-300'
-                    : 'bg-rose-950/60 border-rose-500/60 text-rose-300'
-                }`}
-              >
-                💚 治疗: {healers} / {quota.roles.HEALER.min === quota.roles.HEALER.max ? quota.roles.HEALER.max : `${quota.roles.HEALER.min}-${quota.roles.HEALER.max}`}
-              </span>
-              <span
-                className={`px-2 py-0.5 rounded border ${
-                  dps >= quota.roles.DPS.min && dps <= quota.roles.DPS.max
-                    ? 'bg-amber-950/60 border-amber-600/40 text-amber-300'
-                    : 'bg-rose-950/60 border-rose-500/60 text-rose-300'
-                }`}
-              >
-                ⚔️ 输出: {dps} / {quota.roles.DPS.min === quota.roles.DPS.max ? quota.roles.DPS.max : `${quota.roles.DPS.min}-${quota.roles.DPS.max}`}
-              </span>
-            </div>
-          </div>
-
-          {/* AI One-Click Fill Button (Host only) */}
-          {isHost && (
-            <button
-              onClick={handleQuickFillAi}
-              className="px-4 py-1.5 rounded font-bold text-xs bg-gradient-to-r from-amber-600 to-yellow-600 hover:from-amber-500 hover:to-yellow-500 text-slate-950 shadow transition flex items-center space-x-1"
-            >
-              <span>🤖 AI补齐</span>
-            </button>
-          )}
-        </div>
-
         {/* Slot Grid — 20-man uses denser cards so 20 slots fit without large empty gaps */}
         <div
           className={`grid ${
@@ -369,10 +346,13 @@ export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
           }`}
         >
           {room.slots.map(slot => {
-            const member = slot.member;
+            // members 为权威名册，避免 slots.member / occupied 与 members 脱节
+            const member =
+              room.members.find((m) => m.slotIndex === slot.index) ||
+              (slot.occupied ? slot.member : undefined);
             const isSelf = member?.id === currentPlayerId;
 
-            if (!member || !slot.occupied) {
+            if (!member) {
               return (
                 <div
                   key={slot.index}
@@ -469,12 +449,18 @@ export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
                     className={`inline-flex items-center font-bold rounded ${
                       isRaid ? 'text-[8px] px-1 py-0' : 'text-[10px] px-2 py-0.5'
                     } ${
-                      member.isReady
+                      member.isAi || member.isReady
                         ? 'bg-emerald-950/80 text-emerald-300 border border-emerald-700/50'
                         : 'bg-rose-950/80 text-rose-300 border border-rose-700/50 animate-pulse'
                     }`}
                   >
-                    {member.isReady ? (isRaid ? '✓' : '✓ 已准备') : isRaid ? '…' : '✕ 未准备'}
+                    {member.isAi || member.isReady
+                      ? isRaid
+                        ? '✓'
+                        : '✓ 已准备'
+                      : isRaid
+                        ? '…'
+                        : '✕ 未准备'}
                   </span>
 
                   <div className="flex items-center space-x-0.5">
@@ -506,65 +492,105 @@ export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
           })}
         </div>
 
-        {/* Bottom Control & Start Game Panel — ready / start share same size & right slot */}
-        <div className="bg-slate-900/90 border border-slate-800 rounded-lg p-4 flex flex-wrap items-center justify-between gap-4 mt-auto">
-          <div className="flex items-center space-x-3 min-w-0">
-            {!startValidation.canStart ? (
-              <div className="flex items-center space-x-2 text-xs text-amber-400/90 bg-amber-950/30 px-3 py-2 rounded border border-amber-900/50">
-                <span>⚠️ 阻碍开局:</span>
-                <span className="font-semibold">{startValidation.reasons.join('；')}</span>
-              </div>
-            ) : (
-              <div className="flex items-center space-x-2 text-xs text-emerald-300 bg-emerald-950/30 px-3 py-2 rounded border border-emerald-800/50">
-                <span>✅ 队伍分工与准备校验通过，可以开局！</span>
-              </div>
-            )}
-          </div>
-
-          {isHost ? (
-            <div className="relative group">
-              <button
-                disabled={!startValidation.canStart}
-                onClick={onStartGame}
-                className={`w-44 px-4 py-3 rounded-lg font-black text-sm tracking-widest shadow-xl transition flex items-center justify-center gap-2 ${
-                  startValidation.canStart
-                    ? 'bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-500 text-slate-950 hover:brightness-110 animate-pulse'
-                    : 'bg-slate-800 text-slate-600 border border-slate-700 cursor-not-allowed opacity-60'
-                }`}
-              >
-                <span>⚔️</span>
-                <span>开始游戏</span>
-              </button>
-              {!startValidation.canStart && (
-                <div className="absolute right-0 bottom-full mb-2 hidden group-hover:block bg-slate-900 text-amber-300 text-[11px] p-2 rounded shadow-2xl border border-amber-500/40 w-64">
-                  <div className="font-bold mb-1">当前不可开局原因：</div>
-                  {startValidation.reasons.map((r, i) => (
-                    <div key={i}>• {r}</div>
-                  ))}
-                </div>
+        {/* Bottom: 队伍容量 + 准备 + AI补齐 / 开始（或准备） */}
+        <div className="bg-slate-900/90 border border-slate-800 rounded-lg px-4 py-3 flex flex-wrap items-center justify-between gap-3 mt-auto text-xs">
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 min-w-0">
+            <span className="text-slate-400 whitespace-nowrap">
+              队伍容量:{' '}
+              <strong className="text-amber-300 font-mono" title="总数/上限 (AI数)">
+                {rosterTotal}/{quota.capacity} ({aiCount})
+              </strong>
+              <span className="ml-1.5 text-slate-500">玩家{humanCount}</span>
+            </span>
+            <div className="flex flex-wrap items-center gap-1.5">
+              {roleChip(
+                tanks >= quota.roles.TANK.min && tanks <= quota.roles.TANK.max,
+                '🛡️ 坦克',
+                `${tanks} / ${tankQuotaLabel}`
+              )}
+              {roleChip(
+                healers >= quota.roles.HEALER.min && healers <= quota.roles.HEALER.max,
+                '💚 治疗',
+                `${healers} / ${healerQuotaLabel}`
+              )}
+              {roleChip(
+                dps >= quota.roles.DPS.min && dps <= quota.roles.DPS.max,
+                '⚔️ 输出',
+                `${dps} / ${dpsQuotaLabel}`
               )}
             </div>
-          ) : currentMember ? (
-            <button
-              onClick={handleToggleReady}
-              className={`w-44 px-4 py-3 rounded-lg font-black text-sm tracking-widest shadow-xl transition flex items-center justify-center gap-2 ${
-                currentMember.isReady
-                  ? 'bg-gradient-to-r from-rose-600 via-rose-500 to-rose-600 text-white hover:brightness-110'
-                  : 'bg-gradient-to-r from-emerald-500 via-emerald-400 to-emerald-500 text-slate-950 hover:brightness-110 animate-pulse'
+            <span
+              className={`px-2 py-0.5 rounded border font-semibold whitespace-nowrap ${
+                rosterTotal > 0 && readyCount >= rosterTotal
+                  ? 'bg-emerald-950/50 border-emerald-600/40 text-emerald-300'
+                  : 'bg-slate-950/50 border-slate-700 text-slate-300'
               }`}
+              title="AI 一律视为已准备"
             >
-              <span>{currentMember.isReady ? '取消准备' : '准备就绪'}</span>
-            </button>
-          ) : (
-            <div className="text-xs text-slate-400">等待房主开启副本战斗...</div>
-          )}
+              准备:{' '}
+              <span className="font-mono">
+                {readyCount} / {rosterTotal || 0}
+              </span>
+            </span>
+          </div>
+
+          <div className="flex items-center gap-2 shrink-0">
+            {isHost && (
+              <button
+                type="button"
+                onClick={handleQuickFillAi}
+                className="w-32 h-11 px-3 rounded-lg font-black text-sm tracking-widest shadow-xl bg-gradient-to-r from-violet-600 to-purple-600 hover:from-violet-500 hover:to-purple-500 text-white transition flex items-center justify-center gap-1.5"
+              >
+                <span>🤖</span>
+                <span>AI补齐</span>
+              </button>
+            )}
+            {isHost ? (
+              <div className="relative group">
+                <button
+                  disabled={!startValidation.canStart}
+                  onClick={onStartGame}
+                  className={`w-32 h-11 px-3 rounded-lg font-black text-sm tracking-widest shadow-xl transition flex items-center justify-center gap-1.5 ${
+                    startValidation.canStart
+                      ? 'bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-500 text-slate-950 hover:brightness-110 animate-pulse'
+                      : 'bg-slate-800 text-slate-600 border border-slate-700 cursor-not-allowed opacity-60'
+                  }`}
+                  title={
+                    startValidation.canStart
+                      ? '开始游戏'
+                      : startValidation.reasons.join('；') || '暂不可开局'
+                  }
+                >
+                  <span>⚔️</span>
+                  <span>开始游戏</span>
+                </button>
+              </div>
+            ) : currentMember ? (
+              <button
+                onClick={handleToggleReady}
+                className={`w-32 h-11 px-3 rounded-lg font-black text-sm tracking-widest shadow-xl transition flex items-center justify-center gap-1.5 ${
+                  currentMember.isReady
+                    ? 'bg-gradient-to-r from-rose-600 via-rose-500 to-rose-600 text-white hover:brightness-110'
+                    : 'bg-gradient-to-r from-emerald-500 via-emerald-400 to-emerald-500 text-slate-950 hover:brightness-110 animate-pulse'
+                }`}
+              >
+                <span>{currentMember.isReady ? '取消准备' : '准备就绪'}</span>
+              </button>
+            ) : (
+              <div className="text-xs text-slate-400">等待房主开启副本战斗...</div>
+            )}
+          </div>
         </div>
       </div>
 
       {/* Spec Adjuster Modal (Free Role Rearrangement; Start Check Validates Final Roster) */}
       {editingMember && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-          <div className="bg-slate-900 border border-amber-500/40 rounded-xl shadow-2xl max-w-lg w-full p-6 text-slate-100">
+        <DismissibleModal
+          onClose={() => setEditingMemberId(null)}
+          overlayClassName="bg-black/70"
+          panelClassName="bg-slate-900 border border-amber-500/40 rounded-xl shadow-2xl max-w-lg w-full p-6 text-slate-100"
+          aria-label="修改成员专精"
+        >
             <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-4">
               <h2 className="text-sm font-bold text-amber-300">
                 修改成员职业/专精 — {editingMember.name} ({CLASS_META[editingMember.classId]?.label || editingMember.classId})
@@ -648,20 +674,17 @@ export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
                 关闭
               </button>
             </div>
-          </div>
-        </div>
+        </DismissibleModal>
       )}
 
       {/* Custom Difficulty Settings Modal — overlay so room layout isn't squeezed */}
       {showCustomConfigModal && room.difficulty === 'CUSTOM' && (
-        <div
-          className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4 backdrop-blur-sm"
-          onClick={() => setShowCustomConfigModal(false)}
+        <DismissibleModal
+          onClose={() => setShowCustomConfigModal(false)}
+          overlayClassName="bg-black/70"
+          panelClassName="bg-[#111124] border border-violet-500/50 rounded-xl shadow-2xl w-full max-w-3xl max-h-[88vh] overflow-y-auto p-4 space-y-3"
+          aria-label="自定义难度参数"
         >
-          <div
-            className="bg-[#111124] border border-violet-500/50 rounded-xl shadow-2xl w-full max-w-3xl max-h-[88vh] overflow-y-auto p-4 space-y-3"
-            onClick={e => e.stopPropagation()}
-          >
             <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-violet-500/30">
               <div className="flex items-center space-x-2">
                 <span className="text-violet-300 font-extrabold text-sm">
@@ -837,8 +860,7 @@ export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
                 完成
               </button>
             </div>
-          </div>
-        </div>
+        </DismissibleModal>
       )}
     </div>
   );

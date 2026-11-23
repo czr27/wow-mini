@@ -5,8 +5,11 @@
  * - `null / undefined` 代表“使用语义默认停靠位”（例如动作条停靠在窗体下方中部）。
  * - 历史版本曾把重置误存为 `{ x: 0, y: 0 }` 导致动作条贴左上角，`sanitizeSavedActionBarPos`
  *   会自动清洗该脏数据并恢复底部居中默认锚点。
+ * - 所有可拖悬浮框不得进入顶部「魔兽大灾变」标题区（App header h-14），也不得拖出视口。
  */
 export const DEFAULT_ACTION_BAR_BOTTOM_MARGIN_PX = 16;
+/** App 顶栏 `h-14`：悬浮 HUD 不得覆盖标题区 */
+export const HUD_TOP_INSET_PX = 56;
 /**
  * 识别无效坐标或历史遗留的 `{ x: 0, y: 0 }` 重置哨兵脏数据
  */
@@ -36,18 +39,29 @@ export function computeBottomCenterPos(viewportWidth, viewportHeight, elementWid
     const safeEw = Math.max(0, elementWidth);
     const safeEh = Math.max(0, elementHeight);
     const x = Math.max(0, Math.round((safeVw - safeEw) / 2));
-    const y = Math.max(0, Math.round(safeVh - safeEh - bottomMarginPx));
+    const y = Math.max(HUD_TOP_INSET_PX, Math.round(safeVh - safeEh - bottomMarginPx));
     return { x, y };
 }
 /**
- * 将拖拽中的 HUD 坐标钳制在可视视口内，防止拖出屏幕丢失
+ * 将 HUD 坐标钳制在可视区内：不得覆盖标题栏，不得拖出屏幕。
+ * 已出界的旧存档坐标调用一次即可拉回限制区。
  */
-export function clampHudPosToViewport(pos, viewportWidth, viewportHeight, elementWidth, elementHeight) {
-    const maxX = Math.max(0, viewportWidth - elementWidth);
-    const maxY = Math.max(0, viewportHeight - elementHeight);
+export function clampHudPosToViewport(pos, viewportWidth, viewportHeight, elementWidth, elementHeight, opts) {
+    const topInset = (opts && opts.topInsetPx != null) ? opts.topInsetPx : HUD_TOP_INSET_PX;
+    const edge = (opts && opts.edgeInsetPx != null) ? opts.edgeInsetPx : 0;
+    const safeVw = Math.max(0, viewportWidth);
+    const safeVh = Math.max(0, viewportHeight);
+    const safeEw = Math.max(0, elementWidth);
+    const safeEh = Math.max(0, elementHeight);
+    const minX = edge;
+    const minY = Math.max(edge, topInset);
+    const maxX = Math.max(minX, safeVw - safeEw - edge);
+    const maxY = Math.max(minY, safeVh - safeEh - edge);
+    const x = Number.isFinite(pos?.x) ? pos.x : minX;
+    const y = Number.isFinite(pos?.y) ? pos.y : minY;
     return {
-        x: Math.max(0, Math.min(maxX, Math.round(pos.x))),
-        y: Math.max(0, Math.min(maxY, Math.round(pos.y))),
+        x: Math.max(minX, Math.min(maxX, Math.round(x))),
+        y: Math.max(minY, Math.min(maxY, Math.round(y))),
     };
 }
 //# sourceMappingURL=hudLayout.js.map

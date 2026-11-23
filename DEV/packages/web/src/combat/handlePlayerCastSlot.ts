@@ -6,6 +6,7 @@ import type {
   BossAI,
   CharacterRecord,
 } from '@cata-raid-sim/engine';
+import type { NetworkCooldownTimeline } from '@cata-raid-sim/engine';
 import {
   GROUND_TARGET_SPELL_DEFS,
   LEVEL_80_MAX_HASTE,
@@ -15,16 +16,112 @@ import {
   classifySpellCastMode,
   getCastLifecyclePolicy,
   isChanneledSpell,
+  resolveCooldownSpellIds,
+  isTotemUnit,
+  isTotemGroundEffectId,
+  isValidLifebloomTarget,
+  getUnitHaste,
 } from '@cata-raid-sim/engine';
 import { deductPlayerResources } from '../hooks/usePlayerCastController.js';
 import type { ActionSlot, PlayerCastState } from '../components/ActionBar.js';
 import { isOffGcdSpell } from '../components/ActionBar.js';
 import type { IncomingHealCast } from '../components/RaidFrames.js';
 import { DEFAULT_SPELL_COOLDOWNS } from '../assets/defaultActionSlots.js';
+import { cooldownRemainingFromTimelines } from '../net/netTimeline.js';
 import { syncUnitResources } from './unitResources.js';
 import { checkCastSlotResources } from './castResourceGates.js';
 import { executePlayerInstantEffects } from './executePlayerInstantEffects.js';
 import { startPlayerCastBranches } from './startPlayerCastBranches.js';
+import { computePlayerGcdMs } from './playerGcd.js';
+
+/** Local CD map + host timeline + aliases — same source of truth as action-bar UI. */
+function asPlayerClassId(
+  classId: CharacterRecord['classId'] | Unit['classId'] | null | undefined
+): CharacterRecord['classId'] | undefined {
+  if (!classId || classId === 'BOSS' || classId === 'NPC') return undefined;
+  return classId;
+}
+
+export function getEffectivePlayerCooldownMs(
+  spellId: string,
+  opts: {
+    slotCdRemainingMs?: number;
+    playerCooldowns: Record<string, { cdRemainingMs: number; totalCdMs: number }>;
+    unitId?: string | null;
+    guestCdTimelines?: NetworkCooldownTimeline[] | null;
+    classId?: CharacterRecord['classId'] | Unit['classId'];
+  }
+): number {
+  let best = Math.max(0, opts.slotCdRemainingMs || 0);
+  for (const id of resolveCooldownSpellIds(spellId, asPlayerClassId(opts.classId))) {
+    best = Math.max(best, opts.playerCooldowns[id]?.cdRemainingMs || 0);
+  }
+  if (opts.unitId && opts.guestCdTimelines?.length) {
+    best = Math.max(
+      best,
+      cooldownRemainingFromTimelines(opts.guestCdTimelines, opts.unitId, spellId)
+    );
+  }
+  return best;
+}
+
+const FRIENDLY_SPELL_IDS = new Set([
+  'rejuvenation', 'lifebloom', 'regrowth', 'healing_touch', 'nourish', 'swiftmend',
+  'wild_growth', 'tranquility', 'rebirth', 'revive', 'natures_cure', 'riptide',
+  'healing_wave', 'healing_surge', 'greater_healing_wave', 'chain_heal',
+  'healing_rain', 'spirit_link', 'cleanse_spirit', 'ancestral_spirit',
+  'innervate', 'remove_curse', 'remove_corruption', 'bone_shield',
+  'vampiric_blood', 'pillar_of_frost', 'horn_of_winter', 'slice_and_dice',
+  'adrenaline_rush', 'feint', 'bloodlust', 'time_warp', 'arcane_power',
+  'arcane_brilliance', 'mark_of_the_wild', 'natures_swiftness',
+]);
+
+/** Guest → host CAST target: mirror host friendly/hostile retarget; never send boss for heals. */
+export function resolveGuestOutboundTargetId(opts: {
+  spellId: string;
+  classId?: CharacterRecord['classId'];
+  selectedTargetId: string | null;
+  bossTargetId: string | null;
+  playerId: string;
+  bossId: string | null;
+  engine: CombatEngine;
+}): string | null {
+  const { spellId, classId, selectedTargetId, bossTargetId, playerId, bossId, engine } = opts;
+  const norm = getSpellByAnyId(spellId, classId) || getSpellByAnyId(spellId);
+  const isFriendlySpell =
+    FRIENDLY_SPELL_IDS.has(spellId) ||
+    Boolean(
+      norm &&
+        (norm.isHeal ||
+          norm.isHot ||
+          norm.isShield ||
+          norm.isResurrect ||
+          norm.isDispel ||
+          norm.isBuff ||
+          norm.isDefensive ||
+          norm.isResourceRestore ||
+          norm.targetType === 'SELF' ||
+          norm.targetType === 'SINGLE_ALLY' ||
+          norm.targetType === 'SMART_ALLY' ||
+          norm.targetType === 'AOE_ALLY')
+    );
+
+  if (isFriendlySpell) {
+    if (selectedTargetId) {
+      const ally = engine.friendlyUnits.find((u) => u.id === selectedTargetId);
+      if (ally && !isTotemUnit(ally)) return ally.id;
+    }
+    return playerId || null;
+  }
+
+  if (selectedTargetId) {
+    const enemy = engine.enemyUnits.find(
+      (u) => u.id === selectedTargetId && (u.isAlive ?? u.alive) && u.hp > 0
+    );
+    if (enemy) return enemy.id;
+  }
+  return bossTargetId || bossId || selectedTargetId || playerId || null;
+}
 
 export type HandlePlayerCastSlotCtx = {
   getPlayerSlots: () => ActionSlot[];
@@ -33,12 +130,18 @@ export type HandlePlayerCastSlotCtx = {
   isNetworkGuest: boolean;
   netConnected: boolean;
   activeRoomId: string | null;
+  /** Host CD timelines (guest only) — must gate casts the same way UI shows CDs */
+  guestCdTimelinesRef?: { current: NetworkCooldownTimeline[] };
   sendNetworkCast: (payload: {
-    kind: 'CAST';
+    kind: 'CAST' | 'GROUND_CAST' | 'SUMMON';
     playerId: string;
     spellId: string;
-    slotIndex: number;
-    targetId: string | null;
+    spellName?: string;
+    slotIndex?: number;
+    targetId?: string | null;
+    x?: number;
+    y?: number;
+    spawnKind?: 'PET' | 'ADD' | 'NPC';
   }) => void;
   bossTargetId: string | null;
   playerCast: PlayerCastState | null;
@@ -86,19 +189,98 @@ export function handlePlayerCastSlot(slotIdx: number, ctx: HandlePlayerCastSlotC
   const player = engine.friendlyUnits.find(u => u.isPlayer) || (ctx.currentChar ? engine.getUnit(ctx.currentChar.id) : undefined);
   const boss = engine.bossUnit;
 
-  // Network guest: forward cast intent to host only — never resolve locally
+  // Asphyxiate / hard stun: cannot act
+  if (player && engine.isUnitCrowdControlled?.(player)) {
+    engine.effectsManager?.addFloatingText({
+      targetId: player.id,
+      text: '昏迷中，无法行动！',
+      category: 'STATUS',
+      isCrit: false,
+    });
+    return;
+  }
+
+  // Network guest: ground spells still open local reticle; other casts → host only
   // (HoT/DoT/dmg/heal come back via host COMBAT_STATE; avoids double-apply)
   if (ctx.isNetworkGuest && ctx.netConnected && ctx.activeRoomId && ctx.currentChar) {
-    const targetId =
-      ctx.selectedTargetId ||
-      ctx.bossTargetId ||
-      boss?.id ||
-      player?.id ||
-      null;
+    // Gate on slot UI CD + local map + host timelines (aliases). UI can show timeline CD
+    // while playerCooldowns[slot] is still 0 — must not send CAST in that case.
+    const guestCdRem = getEffectivePlayerCooldownMs(slot.spellId, {
+      slotCdRemainingMs: slot.cdRemainingMs,
+      playerCooldowns: ctx.playerCooldowns,
+      unitId: ctx.currentChar.id,
+      guestCdTimelines: ctx.guestCdTimelinesRef?.current,
+      classId: ctx.currentChar.classId,
+    });
+    if (guestCdRem > 0) {
+      engine.effectsManager?.addFloatingText({
+        targetId: player?.id || ctx.currentChar.id,
+        text: '法术还在冷却中！',
+        category: 'STATUS',
+        isCrit: false,
+      });
+      return;
+    }
+    const groundDef = GROUND_TARGET_SPELL_DEFS[slot.spellId];
+    if (groundDef) {
+      if (ctx.groundTargetState && ctx.groundTargetState.spellId === slot.spellId) {
+        ctx.setGroundTargetState(null);
+        return;
+      }
+      ctx.setGroundTargetState({
+        slotIdx,
+        spellId: slot.spellId,
+        name: slot.name,
+        radius: groundDef.radius,
+        color: groundDef.color,
+        maxRange: groundDef.maxRange,
+      });
+      return;
+    }
+    const isOffGcdGuest = isOffGcdSpell(slot.spellId);
+    if (!isOffGcdGuest && ctx.playerGcdRemainingMs > 0) {
+      engine.effectsManager?.addFloatingText({
+        targetId: player?.id || ctx.currentChar.id,
+        text: '公共冷却中！',
+        category: 'STATUS',
+        isCrit: false,
+      });
+      return;
+    }
+    // Friendly heals/HoTs/buffs must NOT fall back to bossTargetId/boss — that
+    // hijacked guest heals onto the boss and made cast-heals/HoTs look broken.
+    const targetId = resolveGuestOutboundTargetId({
+      spellId: slot.spellId,
+      classId: ctx.currentChar.classId,
+      selectedTargetId: ctx.selectedTargetId,
+      bossTargetId: ctx.bossTargetId,
+      playerId: player?.id || ctx.currentChar.id,
+      bossId: boss?.id || null,
+      engine,
+    });
+    const totalCdMs =
+      (slot.totalCdMs && slot.totalCdMs > 0
+        ? slot.totalCdMs
+        : DEFAULT_SPELL_COOLDOWNS[slot.spellId]) ||
+      getSpellByAnyId(slot.spellId, ctx.currentChar.classId)?.cooldownMs ||
+      0;
+    if (totalCdMs > 0) ctx.triggerCooldown(slot.spellId, totalCdMs);
+    if (!isOffGcdGuest) {
+      const gcdMs = computePlayerGcdMs(
+        slot.spellId,
+        ctx.currentChar.classId,
+        getUnitHaste(player, LEVEL_80_MAX_HASTE)
+      );
+      if (gcdMs > 0) {
+        ctx.setPlayerGcdRemainingMs(gcdMs);
+        ctx.setPlayerGcdTotalMs(gcdMs);
+      }
+    }
     ctx.sendNetworkCast({
       kind: 'CAST',
       playerId: ctx.currentChar.id,
       spellId: slot.spellId,
+      spellName: slot.name,
       slotIndex: slotIdx,
       targetId,
     });
@@ -124,8 +306,14 @@ export function handlePlayerCastSlot(slotIdx: number, ctx: HandlePlayerCastSlotC
     return;
   }
 
-  // ── Check Cooldown ───────────────────────────────────────────────
-  if ((ctx.playerCooldowns[slot.spellId]?.cdRemainingMs || 0) > 0) {
+  // ── Check Cooldown (aliases: bloodlust ↔ heroism, etc.) ───────────
+  if (
+    getEffectivePlayerCooldownMs(slot.spellId, {
+      slotCdRemainingMs: slot.cdRemainingMs,
+      playerCooldowns: ctx.playerCooldowns,
+      classId: player.classId,
+    }) > 0
+  ) {
     engine.effectsManager?.addFloatingText({
       targetId: player.id,
       text: '法术还在冷却中！',
@@ -266,8 +454,39 @@ export function handlePlayerCastSlot(slotIdx: number, ctx: HandlePlayerCastSlotC
       effectiveTarget = deadAlly;
     } else {
       const hoveredFriendly = null;
-      const selectedFriendly = ctx.selectedTargetId ? engine.friendlyUnits.find(u => u.id === ctx.selectedTargetId) : null;
+      const selectedRaw = ctx.selectedTargetId
+        ? engine.friendlyUnits.find((u) => u.id === ctx.selectedTargetId)
+        : null;
+      const selectedIsTotem =
+        !!ctx.selectedTargetId &&
+        (isTotemGroundEffectId(engine, ctx.selectedTargetId) ||
+          (selectedRaw ? isTotemUnit(selectedRaw) : false));
+      // 生命绽放：友方有效；图腾不可作为目标
+      if (slot.spellId === 'lifebloom' && selectedIsTotem) {
+        engine.effectsManager?.addFloatingText({
+          targetId: player.id,
+          text: '❌ 无法对图腾施放生命绽放',
+          category: 'STATUS',
+          isCrit: false,
+        });
+        return;
+      }
+      const selectedFriendly =
+        selectedRaw &&
+        !isTotemUnit(selectedRaw) &&
+        (slot.spellId !== 'lifebloom' || isValidLifebloomTarget(selectedRaw, engine))
+          ? selectedRaw
+          : null;
       effectiveTarget = hoveredFriendly || selectedFriendly || player;
+      if (slot.spellId === 'lifebloom' && !isValidLifebloomTarget(effectiveTarget, engine)) {
+        engine.effectsManager?.addFloatingText({
+          targetId: player.id,
+          text: '❌ 生命绽放需要有效的友方目标',
+          category: 'STATUS',
+          isCrit: false,
+        });
+        return;
+      }
     }
   } else {
     const selectedEnemy = ctx.selectedTargetId
@@ -348,7 +567,12 @@ export function handlePlayerCastSlot(slotIdx: number, ctx: HandlePlayerCastSlotC
       'eviscerate', 'kick', 'obliterate', 'frost_strike', 'mutilate', 'envenom',
     ].includes(slot.spellId) ||
     Boolean(normSlotSpell && normSlotSpell.school === 'PHYSICAL' && normSlotSpell.classId !== 'HUNTER' && !normSlotSpell.isTaunt && !normSlotSpell.isDefensive && !normSlotSpell.isHeal);
-  const maxAllowedRange = isMelee ? 80 : 360;
+  // Prefer NormalizedSpell.rangePx (MotW=240≈30yd); fallback 320≈40yd
+  const maxAllowedRange = isMelee
+    ? 80
+    : normSlotSpell && normSlotSpell.rangePx > 0
+      ? normSlotSpell.rangePx
+      : 320;
 
   if (!isSelfOrPartyWide) {
     const tX = effectiveTarget.position?.x ?? 520;
@@ -440,7 +664,7 @@ export function handlePlayerCastSlot(slotIdx: number, ctx: HandlePlayerCastSlotC
 
   if (!isOffGcd && castLifecycle.triggerGcdOnStart) {
     const gcdCat = getSpellGcdCategory(slot.spellId, player.classId);
-    const gcdMs = getEffectiveGcdMs(gcdCat, player.stats?.haste ?? LEVEL_80_MAX_HASTE);
+    const gcdMs = getEffectiveGcdMs(gcdCat, getUnitHaste(player, LEVEL_80_MAX_HASTE));
     if (gcdMs > 0) {
       ctx.setPlayerGcdRemainingMs(gcdMs);
       ctx.setPlayerGcdTotalMs(gcdMs);
@@ -492,6 +716,15 @@ export function handlePlayerCastSlot(slotIdx: number, ctx: HandlePlayerCastSlotC
           [castStateWithLifecycle.targetId!]: (prev[castStateWithLifecycle.targetId!] || 0) + pAmt,
         }));
       }
+      // ST heal cast start → snowflake form FX
+      engine.logCombatAction({
+        actorId: player.id,
+        spellId: castStateWithLifecycle.spellId,
+        spellName: castStateWithLifecycle.spellName,
+        kind: 'CAST_START',
+        targetId: castStateWithLifecycle.targetId,
+        visualTone: 'HEAL',
+      });
     }
   };
 
