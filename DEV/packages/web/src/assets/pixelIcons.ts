@@ -2,7 +2,13 @@
 // Cata Raid Sim — 像素风格职业头像与魔兽世界 4.3 经典技能图标库
 // ============================================================
 
-import type { ClassId } from '@cata-raid-sim/engine';
+import {
+  ALL_CLASSES_NORMALIZED,
+  getHastedCastTimeMs,
+  LEVEL_80_MAX_HASTE,
+  type ClassId,
+  type NormalizedSpell,
+} from '@cata-raid-sim/engine';
 
 /**
  * 经典职业像素头像 SVG 数据 (32x32 规范)
@@ -987,6 +993,92 @@ export const DEFAULT_SPELL_ICONS: Record<string, string> = {
 };
 
 /**
+ * 为全量 10 职业 30 专精新增法术生成高辨识度的经典像素风 SVG 图标（按学派、定位与机制区分造型）
+ */
+function generateThemedSpellSvg(sp: NormalizedSpell): string {
+  const paletteBySchool: Record<string, { bg: string; border: string; primary: string; accent: string }> = {
+    PHYSICAL: { bg: '#21140b', border: '#c79c6e', primary: '#d97706', accent: '#fde68a' },
+    HOLY: { bg: '#241a04', border: '#facc15', primary: '#f59e0b', accent: '#fef9c3' },
+    FIRE: { bg: '#290702', border: '#ea580c', primary: '#ef4444', accent: '#fde047' },
+    FROST: { bg: '#031729', border: '#38bdf8', primary: '#0284c7', accent: '#e0f2fe' },
+    SHADOW: { bg: '#160726', border: '#a855f7', primary: '#7e22ce', accent: '#e9d5ff' },
+    NATURE: { bg: '#041f12', border: '#22c55e', primary: '#16a34a', accent: '#bbf7d0' },
+    ARCANE: { bg: '#130729', border: '#c084fc', primary: '#9333ea', accent: '#f3e8ff' },
+  };
+  const pal = paletteBySchool[sp.school] || paletteBySchool.PHYSICAL;
+
+  // Choose iconic silhouette by spell role/mechanics
+  let glyph = '';
+  if (sp.isTaunt) {
+    glyph = `<path d="M9 24 C9 15 15 9 25 7 L25 29 C15 27 9 24 9 24 Z" fill="${pal.primary}" stroke="${pal.accent}" stroke-width="1.3"/>
+      <circle cx="26" cy="18" r="3" fill="${pal.accent}"/>
+      <path d="M5 13 Q2 18 5 23" stroke="${pal.accent}" stroke-width="2" stroke-linecap="round"/>`;
+  } else if (sp.isInterrupt) {
+    glyph = `<polygon points="18,5 29,12 29,24 18,31 7,24 7,12" stroke="${pal.primary}" stroke-width="2" fill="none"/>
+      <line x1="8" y1="8" x2="28" y2="28" stroke="#ef4444" stroke-width="3" stroke-linecap="round"/>
+      <line x1="28" y1="8" x2="8" y2="28" stroke="${pal.accent}" stroke-width="1.8" stroke-linecap="round"/>`;
+  } else if (sp.isDefensive || sp.isShield) {
+    glyph = `<path d="M18 4 L30 9 V19 C30 26 24 30 18 33 C12 30 6 26 6 19 V9 Z" fill="${pal.primary}" stroke="${pal.accent}" stroke-width="1.6"/>
+      <path d="M18 9 L18 28 M11 16 L25 16" stroke="${pal.accent}" stroke-width="2" stroke-linecap="round"/>`;
+  } else if (sp.isResurrect) {
+    glyph = `<circle cx="18" cy="11" r="5" stroke="${pal.accent}" stroke-width="2.4"/>
+      <line x1="18" y1="16" x2="18" y2="31" stroke="${pal.accent}" stroke-width="2.8" stroke-linecap="round"/>
+      <line x1="11" y1="21" x2="25" y2="21" stroke="${pal.accent}" stroke-width="2.8" stroke-linecap="round"/>`;
+  } else if (sp.isDispel) {
+    glyph = `<path d="M18 4 C13 11 9 16 9 22 C9 28 13 32 18 32 C23 32 27 28 27 22 C27 16 23 11 18 4 Z" fill="${pal.primary}" stroke="${pal.accent}" stroke-width="1.4"/>
+      <polygon points="18,12 20,17 25,19 20,21 18,26 16,21 11,19 16,17" fill="${pal.accent}"/>`;
+  } else if (sp.isResourceRestore) {
+    glyph = `<polygon points="18,4 28,18 18,32 8,18" fill="${pal.primary}" stroke="${pal.accent}" stroke-width="1.5"/>
+      <circle cx="18" cy="18" r="4" fill="${pal.accent}"/>`;
+  } else if (sp.isHeal && sp.isAOE) {
+    glyph = `<circle cx="18" cy="18" r="12" stroke="${pal.accent}" stroke-width="1.8" stroke-dasharray="3 2"/>
+      <rect x="15.5" y="8" width="5" height="20" rx="1.5" fill="${pal.accent}"/>
+      <rect x="8" y="15.5" width="20" height="5" rx="1.5" fill="${pal.accent}"/>
+      <circle cx="18" cy="18" r="3" fill="${pal.primary}"/>`;
+  } else if (sp.isHeal) {
+    glyph = `<circle cx="18" cy="18" r="10" fill="${pal.primary}" opacity="0.45"/>
+      <rect x="15.5" y="9" width="5" height="18" rx="1.5" fill="${pal.accent}"/>
+      <rect x="9" y="15.5" width="18" height="5" rx="1.5" fill="${pal.accent}"/>`;
+  } else if (sp.isAOE) {
+    glyph = `<circle cx="18" cy="18" r="12.5" stroke="${pal.primary}" stroke-width="2" stroke-dasharray="4 2"/>
+      <polygon points="18,5 22,14 31,18 22,22 18,31 14,22 5,18 14,14" fill="${pal.primary}" stroke="${pal.accent}" stroke-width="1.2"/>
+      <circle cx="18" cy="18" r="3.5" fill="${pal.accent}"/>`;
+  } else if (sp.classId === 'HUNTER') {
+    glyph = `<path d="M11 7 C22 10 22 26 11 29" stroke="${pal.border}" stroke-width="2.4" fill="none"/>
+      <line x1="11" y1="7" x2="11" y2="29" stroke="#e2e8f0" stroke-width="1"/>
+      <line x1="7" y1="18" x2="29" y2="18" stroke="${pal.accent}" stroke-width="2.2" stroke-linecap="round"/>
+      <polygon points="31,18 24,14 24,22" fill="${pal.accent}"/>`;
+  } else if (sp.school === 'PHYSICAL') {
+    glyph = `<path d="M8 28 L27 9" stroke="${pal.accent}" stroke-width="3.5" stroke-linecap="round"/>
+      <path d="M27 9 L30 6 L24 6 Z" fill="${pal.accent}"/>
+      <line x1="10" y1="21" x2="15" y2="26" stroke="${pal.primary}" stroke-width="3" stroke-linecap="round"/>
+      <path d="M6 12 Q18 6 29 22" stroke="${pal.primary}" stroke-width="1.8" fill="none" stroke-dasharray="3 2"/>`;
+  } else {
+    glyph = `<circle cx="18" cy="18" r="9.5" fill="${pal.primary}" stroke="${pal.accent}" stroke-width="1.5"/>
+      <circle cx="18" cy="18" r="4.5" fill="${pal.accent}"/>
+      <path d="M6 18 Q18 6 30 18 Q18 30 6 18 Z" stroke="${pal.accent}" stroke-width="1.2" fill="none" opacity="0.7"/>`;
+  }
+
+  return `<svg viewBox="0 0 36 36" fill="none" xmlns="http://www.w3.org/2000/svg">
+    <rect width="36" height="36" rx="3" fill="${pal.bg}"/>
+    <rect x="1" y="1" width="34" height="34" rx="2" stroke="${pal.border}" stroke-width="1.5"/>
+    ${glyph}
+  </svg>`;
+}
+
+// Auto-populate missing icons for ALL 10 classes & 30 specs so zero slots are ever blank
+for (const cls of Object.values(ALL_CLASSES_NORMALIZED)) {
+  for (const sp of cls.allSpells) {
+    if (!DEFAULT_SPELL_ICONS[sp.shortId]) {
+      DEFAULT_SPELL_ICONS[sp.shortId] = generateThemedSpellSvg(sp);
+    }
+    if (!DEFAULT_SPELL_ICONS[sp.id]) {
+      DEFAULT_SPELL_ICONS[sp.id] = DEFAULT_SPELL_ICONS[sp.shortId];
+    }
+  }
+}
+
+/**
  * 实时生效的技能/Buff 图标字典。
  * 在游戏加载时，优先使用 \ART\resources\ 中发现的文件（如 Tranquility.jpg）；若无则使用 DEFAULT_SPELL_ICONS 中的自绘矢量图。
  */
@@ -1291,12 +1383,12 @@ export const SPELL_TOOLTIPS: Record<string, SpellTooltipInfo> = {
   },
   chain_heal: {
     name: '治疗链',
-    cost: '4,500 法力值',
-    castTime: '2.5 秒',
-    cooldown: '无',
+    cost: '2,200 法力值',
+    castTime: '1.67 秒施法（基础 2.5s · 80级满急速）',
+    cooldown: '无冷却',
     range: '40 码',
     school: '自然',
-    description: '萨满标志性群体治疗！向友方目标投掷一道治愈之链，随后自动弹跳至 12.5 码内最多 4 个受伤最重的队友身上，每次弹跳治疗量衰减 15%。',
+    description: '萨满标志性群体治疗！读条施放一道治愈之链，自动弹跳至最多 4 名受伤最重的队友，每次弹跳衰减 15%，无冷却时间。',
   },
   healing_rain: {
     name: '治疗之雨',
@@ -1363,12 +1455,66 @@ export const SPELL_TOOLTIPS: Record<string, SpellTooltipInfo> = {
   },
   chain_lightning: {
     name: '闪电链',
-    cost: '12% 基础法力值',
-    castTime: '2.0 秒',
+    cost: '2,200 法力值',
+    castTime: '2.0 秒施法（基础 2.0s · 80级满急速 1.33s）',
     cooldown: '3 秒',
     range: '40 码',
     school: '自然',
-    description: '射出闪电弹跳至周围最多 5 个目标，造成连锁自然伤害。',
+    description: '射出闪电弹跳至周围最多 4 个目标，造成连锁自然伤害。每次命中敌人时通过【大地之流】为施法者恢复法力值。',
+  },
+  earth_shield: {
+    name: '大地之盾',
+    cost: '1,800 法力值',
+    castTime: '瞬发',
+    cooldown: '无',
+    range: '40 码',
+    school: '自然',
+    description: '为友方目标施加 9 层大地之盾。受击时消耗 1 层回复约 6,800 生命（3 秒内置 CD），并使其受到你的治疗效果提高 20%。坦克保命核心维护技能。',
+  },
+  unleash_life: {
+    name: '生命释放',
+    cost: '1,600 法力值',
+    castTime: '瞬发',
+    cooldown: '15 秒',
+    range: '40 码',
+    school: '自然',
+    description: '释放大地生命武器之力，立即治疗友方目标约 8,500 生命，并使你的下一次直接治疗或治疗之雨效果提高 30%，持续 10 秒。',
+  },
+  healing_tide: {
+    name: '治疗之潮图腾',
+    cost: '1,200 法力值',
+    castTime: '瞬发',
+    cooldown: '3 分钟',
+    range: '40 码半径',
+    school: '自然',
+    description: '召唤治疗之潮图腾，持续 10 秒，每 2 秒为附近最多 5 名伤势最重的友方恢复约 5,200 生命值。恢复萨满团刷大冷却。',
+  },
+  ascendance: {
+    name: '升腾',
+    cost: '1,000 法力值',
+    castTime: '瞬发',
+    cooldown: '3 分钟',
+    range: '自身',
+    school: '自然',
+    description: '化身升腾形态 15 秒：造成的伤害提高 35%。恢复专精额外将你的治疗量 100% 均摊复制给附近最多 5 名受伤友方。',
+  },
+  ancestral_guidance: {
+    name: '先祖指引',
+    cost: '无消耗',
+    castTime: '瞬发',
+    cooldown: '2 分钟',
+    range: '自身',
+    school: '自然',
+    description: '激活 10 秒：你造成的直接伤害的 40%、直接治疗的 60% 转化为智能群体治疗，均摊给最多 3 名伤势最重的友方。',
+  },
+  thunderstorm: {
+    name: '雷霆风暴',
+    cost: '无消耗',
+    castTime: '瞬发（不占 GCD）',
+    cooldown: '45 秒',
+    range: '近身 AoE',
+    school: '自然',
+    description: '释放雷霆风暴造成自然伤害并击退敌人，同时恢复约 15% 最大法力值。元素萨满紧急回蓝与清怪技能。',
   },
   flame_shock: {
     name: '烈焰震击',
@@ -1681,6 +1827,47 @@ export const SPELL_TOOLTIPS: Record<string, SpellTooltipInfo> = {
     description: '移除一名友方目标身上的 1 个诅咒和 1 个中毒效果。',
   },
 };
+
+// Auto-populate Lv.80 max-haste tooltips for all spells across all 10 Cataclysm classes
+const _schoolCn: Record<string, string> = {
+  PHYSICAL: '物理',
+  FIRE: '火焰',
+  FROST: '冰霜',
+  SHADOW: '暗影',
+  NATURE: '自然',
+  ARCANE: '奥术',
+  HOLY: '神圣',
+};
+const _resCn: Record<string, string> = {
+  MANA: '法力值',
+  ENERGY: '能量',
+  RAGE: '怒气',
+  FOCUS: '集中值',
+  RUNIC_POWER: '符文能量',
+  HOLY_POWER: '神圣能量',
+  COMBO_POINTS: '连击点',
+  RUNE: '符文',
+  NONE: '无消耗',
+};
+for (const cls of Object.values(ALL_CLASSES_NORMALIZED)) {
+  for (const sp of cls.allSpells) {
+    if (!SPELL_TOOLTIPS[sp.shortId]) {
+      const hastedMs = sp.castTimeMs > 0 ? getHastedCastTimeMs(sp.castTimeMs, LEVEL_80_MAX_HASTE) : 0;
+      SPELL_TOOLTIPS[sp.shortId] = {
+        name: sp.name,
+        cost: sp.resourceCostAmount > 0 ? `${sp.resourceCostAmount} ${_resCn[sp.resourceKind] || sp.resourceKind}` : '无消耗',
+        castTime:
+          sp.castTimeMs <= 0
+            ? (sp.gcdCategory === 'OFF_GCD' ? '瞬发（不占 GCD）' : '瞬发')
+            : `${(hastedMs / 1000).toFixed(2)} 秒施法（基础 ${(sp.castTimeMs / 1000).toFixed(1)}s）`,
+        cooldown: sp.cooldownMs > 0 ? `${(sp.cooldownMs / 1000).toFixed(sp.cooldownMs % 1000 ? 1 : 0)} 秒` : '无冷却',
+        range: sp.school === 'PHYSICAL' && sp.classId !== 'HUNTER' ? '近战范围' : '40 码',
+        school: _schoolCn[sp.school] || sp.school,
+        description: sp.description,
+      };
+    }
+  }
+}
 
 // ============================================================
 // 外部美术资源 (\ART\resources\) 图标加载与同步机制

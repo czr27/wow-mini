@@ -1,5 +1,52 @@
 import type { CharacterRecord, DungeonClearCertificate, UserAccount } from '../types.js';
 
+/** Normalize character name for server-wide uniqueness (trim + case-insensitive). */
+export function normalizeCharacterNameKey(name: string): string {
+  return (name || '').trim().toLowerCase();
+}
+
+/**
+ * After account merges, keep at most one character per name across the whole server.
+ * On conflict, the earliest created character wins (stable by id if timestamps tie).
+ */
+export function enforceServerUniqueCharacterNames(accounts: UserAccount[]): UserAccount[] {
+  type Entry = { char: CharacterRecord };
+  const byName = new Map<string, Entry[]>();
+  for (const acc of accounts) {
+    for (const char of acc.characters || []) {
+      const key = normalizeCharacterNameKey(char.name || '');
+      if (!key) continue;
+      const list = byName.get(key) || [];
+      list.push({ char });
+      byName.set(key, list);
+    }
+  }
+
+  const winnerIdByName = new Map<string, string>();
+  for (const [nameKey, entries] of byName) {
+    if (entries.length === 1) {
+      winnerIdByName.set(nameKey, entries[0].char.id);
+      continue;
+    }
+    const sorted = [...entries].sort((a, b) => {
+      const ta = Date.parse(a.char.createdAtIso) || a.char.updatedAtMs || 0;
+      const tb = Date.parse(b.char.createdAtIso) || b.char.updatedAtMs || 0;
+      if (ta !== tb) return ta - tb;
+      return a.char.id.localeCompare(b.char.id);
+    });
+    winnerIdByName.set(nameKey, sorted[0].char.id);
+  }
+
+  return accounts.map((acc) => ({
+    ...acc,
+    characters: (acc.characters || []).filter((c) => {
+      const key = normalizeCharacterNameKey(c.name || '');
+      if (!key) return true;
+      return winnerIdByName.get(key) === c.id;
+    }),
+  }));
+}
+
 /** Prefer the record with the later updatedAtMs; missing timestamps lose to any defined value. */
 export function pickNewerByTimestamp<T extends { updatedAtMs?: number }>(a: T, b: T): T {
   const ta = a.updatedAtMs ?? 0;
@@ -106,7 +153,7 @@ export function mergeAccountLists(
     const prev = map.get(key);
     map.set(key, prev ? mergeAccounts(prev, acc) : acc);
   }
-  return Array.from(map.values());
+  return enforceServerUniqueCharacterNames(Array.from(map.values()));
 }
 
 export function bumpUpdatedAt<T extends { updatedAtMs?: number }>(obj: T, now = Date.now()): T {

@@ -222,22 +222,107 @@ export const MAGE: ClassSpec = {
     },
 
     {
-      id: 'mage_ice_barrier',
+      id: 'mage_ice_block',
       name: '寒冰屏障',
+      castTimeMs: 0,
+      gcdType: 'off',
+      gcdCategory: 'OFF_GCD',
+      cooldownMs: 300_000,
+      resourceCost: 'MANA',
+      resourceCostAmount: 800,
+      targetType: 'SELF',
+      school: 'FROST',
+      effects: [
+        {
+          type: 'SHIELD',
+          auraId: 'ice_block',
+          durationMs: 10_000,
+          description: '10s完全免疫所有伤害与有害效果并清除减益，CD 5min（不进GCD）',
+        },
+      ],
+    },
+
+    {
+      id: 'mage_ice_barrier',
+      name: '寒冰护体',
       castTimeMs: 0,
       gcdType: 'normal',
       gcdCategory: 'NORMAL',
-      cooldownMs: 240_000, // 4分钟
+      cooldownMs: 30_000,
       resourceCost: 'MANA',
-      resourceCostAmount: 1200,
+      resourceCostAmount: 1100,
       targetType: 'SELF',
       school: 'FROST',
       effects: [
         {
           type: 'SHIELD',
           auraId: 'ice_barrier',
-          durationMs: 10_000,
-          description: '10s魔法免疫盾（吸收所有魔法伤害），CD 4min',
+          baseValue: 10500,
+          durationMs: 60_000,
+          description: '吸收大量伤害的寒冰护盾，持续60s，CD 30s',
+        },
+      ],
+    },
+
+    {
+      id: 'mage_flamestorm',
+      name: '烈焰风暴',
+      castTimeMs: 2_000,
+      gcdType: 'normal',
+      gcdCategory: 'NORMAL',
+      cooldownMs: 0,
+      resourceCost: 'MANA',
+      resourceCostAmount: 2400,
+      targetType: 'AOE_ENEMY',
+      school: 'FIRE',
+      spec: 'FIRE_DPS',
+      effects: [
+        {
+          type: 'SPELL_DAMAGE',
+          baseValue: 8800,
+          description: '召唤烈焰柱轰击目标区域所有敌人并留存灼烧地面（火法核心AOE）',
+        },
+      ],
+    },
+
+    {
+      id: 'mage_blizzard',
+      name: '暴风雪',
+      castTimeMs: 2_500,
+      gcdType: 'normal',
+      gcdCategory: 'NORMAL',
+      cooldownMs: 0,
+      resourceCost: 'MANA',
+      resourceCostAmount: 2500,
+      targetType: 'AOE_ENEMY',
+      school: 'FROST',
+      spec: 'ICE_DPS',
+      effects: [
+        {
+          type: 'SPELL_DAMAGE',
+          baseValue: 8400,
+          description: '降下暴风雪持续打击区域内所有敌人并减速（冰法核心AOE）',
+        },
+      ],
+    },
+
+    {
+      id: 'mage_arcane_explosion',
+      name: '魔爆术',
+      castTimeMs: 0,
+      gcdType: 'normal',
+      gcdCategory: 'NORMAL',
+      cooldownMs: 0,
+      resourceCost: 'MANA',
+      resourceCostAmount: 1900,
+      targetType: 'AOE_ENEMY',
+      school: 'ARCANE',
+      spec: 'ARCANE_DPS',
+      effects: [
+        {
+          type: 'SPELL_DAMAGE',
+          baseValue: 7800,
+          description: '瞬发奥术冲击波打击周围所有敌人（奥法核心AOE）',
         },
       ],
     },

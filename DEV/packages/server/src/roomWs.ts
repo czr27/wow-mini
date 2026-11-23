@@ -36,6 +36,8 @@ export class RoomWsHub {
   readonly votes = new RoomVoteTracker();
   private sessionsByPlayer = new Map<string, ClientSession>();
   private sessionsByWs = new Map<WebSocket, ClientSession>();
+  /** Per-room throttle for host combat → lobby list sync (rooms stay isolated). */
+  private lastCombatMetaPush = new Map<string, { phase?: string; atMs: number }>();
 
   private humanIdsInRoom(roomId: string): string[] {
     const room = this.roomManager.getRoom(roomId);
@@ -174,17 +176,36 @@ export class RoomWsHub {
         return;
       }
 
-      // Reconnect: cancel pending AI replace
+      const usernameKey = auth.username.trim().toLowerCase();
+
+      // Kick every other live session for the same account (even different characters)
+      for (const [pid, other] of Array.from(this.sessionsByPlayer.entries())) {
+        if (other.ws === ws) continue;
+        if ((other.username || '').trim().toLowerCase() !== usernameKey) continue;
+        if (other.disconnectTimer) {
+          clearTimeout(other.disconnectTimer);
+          other.disconnectTimer = undefined;
+        }
+        try {
+          this.send(other.ws, {
+            type: 'SESSION_KICKED',
+            timeMs: Date.now(),
+            payload: {
+              reason: '同账号已在其他客户端登录',
+              username: auth.username,
+            },
+          });
+          other.ws.close();
+        } catch {}
+        this.sessionsByWs.delete(other.ws);
+        this.sessionsByPlayer.delete(pid);
+      }
+
+      // Reconnect same playerId: cancel pending AI replace
       const existing = this.sessionsByPlayer.get(auth.playerId);
       if (existing?.disconnectTimer) {
         clearTimeout(existing.disconnectTimer);
         existing.disconnectTimer = undefined;
-      }
-      if (existing && existing.ws !== ws) {
-        try {
-          existing.ws.close();
-        } catch {}
-        this.sessionsByWs.delete(existing.ws);
       }
 
       const session: ClientSession = {
@@ -271,42 +292,50 @@ export class RoomWsHub {
           this.send(ws, { type: 'ROOM_UPDATE', roomId: room.id, payload: room });
           break;
         }
-        // Place into first matching empty slot
-        const role =
-          (session.role as any) ||
-          room.slots.find((s) => !s.occupied)?.role ||
-          'DPS';
-        let slot = room.slots.find((s) => !s.occupied && s.role === role);
-        if (!slot) slot = room.slots.find((s) => !s.occupied);
-        if (!slot) {
-          this.roomManager.joinWaitingQueue(roomId, {
-            id: session.playerId,
-            name: session.playerName,
-            classId: session.classId as any,
-            spec: session.spec,
-            role,
-          });
-          session.roomId = room.id;
-          this.pushRoomUpdate(room);
-          break;
-        }
-        const member = {
+
+        const join = this.roomManager.joinOrHotSwapPlayer(roomId, {
           id: session.playerId,
           name: session.playerName,
           classId: session.classId as any,
           spec: session.spec,
-          role: slot.role,
-          isPlayer: true,
-          isAi: false,
-          isHost: false,
-          isReady: false,
-          slotIndex: slot.index,
-        };
-        slot.occupied = true;
-        slot.member = member;
-        room.members.push(member);
+          role: session.role as any,
+        });
+        if (!join.ok || !join.room) {
+          // Fall back to waiting queue if humans not full but no AI to replace
+          const humans = this.roomManager.countHumanPlayers(roomId);
+          const quota = this.roomManager.getQuota(room.dungeonId);
+          if (humans < quota.capacity) {
+            this.roomManager.joinWaitingQueue(roomId, {
+              id: session.playerId,
+              name: session.playerName,
+              classId: session.classId as any,
+              spec: session.spec,
+              role: (session.role as any) || 'DPS',
+            });
+            session.roomId = room.id;
+            this.pushRoomUpdate(this.roomManager.getRoom(roomId)!);
+          } else {
+            this.send(ws, { type: 'ERROR', error: join.reason || '玩家人数已满' });
+          }
+          break;
+        }
+
         session.roomId = room.id;
-        this.pushRoomUpdate(room);
+        this.pushRoomUpdate(join.room);
+        if (join.replacedAiId) {
+          // Mid-combat / AI-filled: notify host to inherit combat unit; AI disappears after swap
+          this.broadcastRoom(room.id, {
+            type: 'MEMBER_HOT_SWAP',
+            roomId: room.id,
+            timeMs: Date.now(),
+            payload: {
+              roomId: room.id,
+              room: join.room,
+              playerId: session.playerId,
+              replacedAiId: join.replacedAiId,
+            },
+          });
+        }
         break;
       }
 
@@ -316,22 +345,46 @@ export class RoomWsHub {
         const leftRoomId = session.roomId;
         session.roomId = null;
         if (result.roomDeleted) {
+          this.broadcastAll({
+            type: 'ROOM_CLOSED',
+            roomId: leftRoomId,
+            timeMs: Date.now(),
+            payload: {
+              roomId: leftRoomId,
+              reason: result.destroyedByHost ? 'host_left' : 'empty',
+            },
+          });
           this.pushRoomList();
         } else {
           const room = this.roomManager.getRoom(leftRoomId);
-          if (room) {
-            if (result.newHostId) {
-              this.broadcastRoom(leftRoomId, {
-                type: 'HOST_TRANSFER',
-                roomId: leftRoomId,
-                payload: { newHostId: result.newHostId, room },
-              });
-            }
-            this.pushRoomUpdate(room);
-          } else {
-            this.pushRoomList();
-          }
+          if (room) this.pushRoomUpdate(room);
+          else this.pushRoomList();
         }
+        break;
+      }
+
+      case 'ROOM_CLOSED': {
+        // Host requests destroy (e.g. wipe FINISH)
+        if (msg.roomId) this.lastCombatMetaPush.delete(msg.roomId);
+        const roomId = msg.roomId || session.roomId;
+        if (!roomId) break;
+        const room = this.roomManager.getRoom(roomId);
+        if (!room) break;
+        if (room.hostId !== session.playerId) {
+          this.send(ws, { type: 'ERROR', error: 'Host only' });
+          break;
+        }
+        this.roomManager.destroyRoom(roomId);
+        for (const s of this.sessionsByPlayer.values()) {
+          if (s.roomId === roomId) s.roomId = null;
+        }
+        this.broadcastAll({
+          type: 'ROOM_CLOSED',
+          roomId,
+          timeMs: Date.now(),
+          payload: { roomId, reason: (msg.payload as any)?.reason || 'destroyed' },
+        });
+        this.pushRoomList();
         break;
       }
 
@@ -423,6 +476,7 @@ export class RoomWsHub {
       case 'PLAYER_INPUT': {
         if (!msg.roomId && session.roomId) msg.roomId = session.roomId;
         if (!msg.roomId) break;
+        if (session.roomId && session.roomId !== msg.roomId) break;
         const input = msg.payload as PlayerInputPayload;
         if (input?.kind === 'REQUEST_SKIP_TRAVEL') {
           this.startVote(msg.roomId, 'SKIP_TRAVEL');
@@ -452,12 +506,39 @@ export class RoomWsHub {
         // Relay only within room; combat tick stays on host client
         if (!msg.roomId && session.roomId) msg.roomId = session.roomId;
         if (!msg.roomId) break;
-        // Auto-start wipe vote when host first reports WIPE_VOTE phase
-        if (msg.type === 'COMBAT_STATE' && (msg.payload as any)?.runPhase === 'WIPE_VOTE') {
-          if (!this.votes.get(msg.roomId, 'WIPE')) {
+        // Drop cross-room spoofing (session must belong to this room)
+        if (session.roomId && session.roomId !== msg.roomId) break;
+
+        if (msg.type === 'COMBAT_STATE') {
+          const snap = msg.payload as any;
+          const updated = this.roomManager.applyHostCombatSnapshot(msg.roomId, {
+            runPhase: snap?.runPhase,
+            travelRemainingMs: snap?.travelRemainingMs,
+            currentBossIndex: snap?.currentBossIndex,
+            isCleared: snap?.isCleared,
+            units: snap?.units,
+          });
+          // Auto-start wipe vote when host first reports WIPE_VOTE phase
+          if (snap?.runPhase === 'WIPE_VOTE' && !this.votes.get(msg.roomId, 'WIPE')) {
             this.startVote(msg.roomId, 'WIPE');
           }
+          // Clear votes when leaving wipe / settling
+          if (snap?.runPhase === 'SUMMARY' || snap?.runPhase === 'TRAVEL_RECOVERY') {
+            this.votes.clearRoom(msg.roomId);
+          }
+          // Push room meta for queue/list: always on phase change; throttle HP otherwise (~1Hz)
+          if (updated) {
+            const prev = this.lastCombatMetaPush.get(msg.roomId);
+            const now = Date.now();
+            const phaseChanged = !!snap?.runPhase && snap.runPhase !== prev?.phase;
+            const dueHp = !prev || now - prev.atMs >= 1000;
+            if (phaseChanged || dueHp || snap?.runPhase === 'SUMMARY') {
+              this.lastCombatMetaPush.set(msg.roomId, { phase: snap?.runPhase, atMs: now });
+              this.pushRoomUpdate(updated);
+            }
+          }
         }
+
         this.broadcastRoom(msg.roomId, msg, session.playerId);
         break;
       }
@@ -485,27 +566,47 @@ export class RoomWsHub {
         const room = this.roomManager.getRoom(current.roomId);
         if (!room) return;
 
+        // Host disconnect / leave always destroys the room
+        if (room.hostId === session.playerId) {
+          this.lastCombatMetaPush.delete(current.roomId);
+          this.roomManager.destroyRoom(current.roomId);
+          for (const s of this.sessionsByPlayer.values()) {
+            if (s.roomId === current.roomId) s.roomId = null;
+          }
+          this.broadcastAll({
+            type: 'ROOM_CLOSED',
+            roomId: current.roomId,
+            timeMs: Date.now(),
+            payload: { roomId: current.roomId, reason: 'host_left' },
+          });
+          this.pushRoomList();
+          return;
+        }
+
         if (room.status === 'LOBBY') {
           const result = this.roomManager.leaveRoom(current.roomId, session.playerId);
           if (result.roomDeleted) {
+            this.broadcastAll({
+              type: 'ROOM_CLOSED',
+              roomId: current.roomId,
+              timeMs: Date.now(),
+              payload: { roomId: current.roomId, reason: 'empty' },
+            });
             this.pushRoomList();
           } else {
             const updated = this.roomManager.getRoom(current.roomId);
-            if (updated) {
-              if (result.newHostId) {
-                this.broadcastRoom(current.roomId, {
-                  type: 'HOST_TRANSFER',
-                  roomId: current.roomId,
-                  payload: { newHostId: result.newHostId, room: updated },
-                });
-              }
-              this.pushRoomUpdate(updated);
-            }
+            if (updated) this.pushRoomUpdate(updated);
           }
         } else {
-          // In combat / out of combat: replace with AI and notify host + room
+          // Non-host disconnect mid-run: replace with AI
           const replaced = this.roomManager.replaceHumanWithAi(current.roomId, session.playerId);
           if (replaced.roomDeleted) {
+            this.broadcastAll({
+              type: 'ROOM_CLOSED',
+              roomId: current.roomId,
+              timeMs: Date.now(),
+              payload: { roomId: current.roomId, reason: 'empty' },
+            });
             this.pushRoomList();
             return;
           }
@@ -521,13 +622,6 @@ export class RoomWsHub {
                 room: replaced.room,
               },
             });
-            if (replaced.newHostId) {
-              this.broadcastRoom(current.roomId, {
-                type: 'HOST_TRANSFER',
-                roomId: current.roomId,
-                payload: { newHostId: replaced.newHostId, room: replaced.room },
-              });
-            }
             this.pushRoomUpdate(replaced.room);
           }
         }

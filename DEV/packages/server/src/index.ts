@@ -4,7 +4,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, WebSocket } from 'ws';
 import type { UserAccount, CharacterUiLayout } from '@cata-raid-sim/engine';
-import { mergeAccountLists } from '@cata-raid-sim/engine';
+import {
+  mergeAccountLists,
+  normalizeCharacterNameKey,
+  isReservedAiName,
+} from '@cata-raid-sim/engine';
 import { RoomWsHub } from './roomWs.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -127,6 +131,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     // 4. Batch sync accounts from client to server (LWW by updatedAtMs, then persist)
+    // Character names are unique server-wide (enforced inside mergeAccountLists).
     if (pathname === '/api/accounts/sync' && req.method === 'POST') {
       const body = await readJsonBody(req);
       const accountsToSync: UserAccount[] = Array.isArray(body) ? body : (body.accounts || (body.id ? [body] : []));
@@ -141,6 +146,35 @@ const server = http.createServer(async (req, res) => {
       saveAccountsToDisk();
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ success: true, count: accountsMap.size, accounts: merged }));
+      return;
+    }
+
+    // 5a. Check character name availability (all accounts + reserved AI names)
+    if (pathname === '/api/characters/check-name' && req.method === 'GET') {
+      const rawName = parsedUrl.searchParams.get('name') || '';
+      const key = normalizeCharacterNameKey(rawName);
+      if (!key) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ available: false, reason: 'empty', error: '请输入角色名称' }));
+        return;
+      }
+      if (isReservedAiName(rawName)) {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ available: false, reason: 'ai' }));
+        return;
+      }
+      let taken = false;
+      for (const acc of accountsMap.values()) {
+        for (const char of acc.characters || []) {
+          if (normalizeCharacterNameKey(char.name) === key) {
+            taken = true;
+            break;
+          }
+        }
+        if (taken) break;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ available: !taken, reason: taken ? 'taken' : undefined }));
       return;
     }
 
@@ -175,14 +209,20 @@ const server = http.createServer(async (req, res) => {
       return;
     }
 
-    // 6. User Login
+    // 6. User Login (password required)
     if (pathname === '/api/auth/login' && req.method === 'POST') {
-      const body = await readJsonBody<{ username: string; passwordHash?: string }>(req);
+      const body = await readJsonBody<{ username: string; passwordHash?: string; password?: string }>(req);
       const key = (body.username || '').trim().toLowerCase();
+      const password = body.passwordHash || body.password || '';
       const acc = accountsMap.get(key);
       if (!acc) {
         res.writeHead(404, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Account not found' }));
+        res.end(JSON.stringify({ error: '账号不存在' }));
+        return;
+      }
+      if (!password || acc.passwordHash !== password) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: '密码错误' }));
         return;
       }
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -192,30 +232,67 @@ const server = http.createServer(async (req, res) => {
 
     // 7. User Register
     if (pathname === '/api/auth/register' && req.method === 'POST') {
-      const body = await readJsonBody<{ username: string; passwordHash?: string; account?: UserAccount }>(req);
+      const body = await readJsonBody<{ username: string; passwordHash?: string; password?: string; account?: UserAccount }>(req);
       const username = (body.username || (body.account ? body.account.username : '')).trim();
       const key = username.toLowerCase();
+      const password = body.passwordHash || body.password || body.account?.passwordHash || '';
       if (!key) {
         res.writeHead(400, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Username required' }));
+        res.end(JSON.stringify({ error: '请输入用户名' }));
+        return;
+      }
+      if (!password || password.length < 4) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: '密码至少 4 个字符' }));
         return;
       }
       if (accountsMap.has(key)) {
         res.writeHead(409, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Account already exists' }));
+        res.end(JSON.stringify({ error: '用户名已被占用' }));
         return;
       }
+      const now = Date.now();
       const newAcc: UserAccount = body.account || {
-        id: `acc_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        id: `acc_${now}_${Math.random().toString(36).substring(2, 7)}`,
         username,
-        passwordHash: body.passwordHash || 'default',
+        passwordHash: password,
         characters: [],
         createdAtIso: new Date().toISOString(),
+        updatedAtMs: now,
       };
+      if (!newAcc.passwordHash) newAcc.passwordHash = password;
       accountsMap.set(key, newAcc);
       saveAccountsToDisk();
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(newAcc));
+      return;
+    }
+
+    // 8. Delete / cancel account (注销账号)
+    if (pathname === '/api/auth/delete' && req.method === 'POST') {
+      const body = await readJsonBody<{ username: string; passwordHash?: string; password?: string }>(req);
+      const key = (body.username || '').trim().toLowerCase();
+      const password = body.passwordHash || body.password || '';
+      if (!key) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: '请输入用户名' }));
+        return;
+      }
+      const acc = accountsMap.get(key);
+      if (!acc) {
+        res.writeHead(404, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: '账号不存在' }));
+        return;
+      }
+      if (!password || acc.passwordHash !== password) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: '密码错误，无法注销' }));
+        return;
+      }
+      accountsMap.delete(key);
+      saveAccountsToDisk();
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ success: true }));
       return;
     }
 
@@ -238,8 +315,9 @@ wss.on('connection', (ws: WebSocket) => {
 });
 
 if (process.env.NODE_ENV !== 'test') {
-  server.listen(PORT, () => {
-    console.log(`[Cata Raid Sim Server] Ready on http://localhost:${PORT} (WS on ws://localhost:${PORT})`);
+  // Bind IPv4 explicitly so Windows clients using 127.0.0.1 (not ::1) connect reliably
+  server.listen(PORT, '0.0.0.0', () => {
+    console.log(`[Cata Raid Sim Server] Ready on http://127.0.0.1:${PORT} (WS on ws://127.0.0.1:${PORT})`);
   });
 }
 

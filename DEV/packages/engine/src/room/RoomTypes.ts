@@ -1,4 +1,4 @@
-import type { ClassId, RoleId, DungeonDifficulty } from '../types.js';
+import type { ClassId, RoleId, DungeonDifficulty, CustomDifficultySettings } from '../types.js';
 
 export type RoomStatus = 'LOBBY' | 'IN_COMBAT' | 'OUT_OF_COMBAT' | 'CLEARED' | 'CLOSED';
 
@@ -91,6 +91,7 @@ export interface LobbyRoom {
   name: string;
   dungeonId: string;
   difficulty: DungeonDifficulty;
+  customDifficulty?: CustomDifficultySettings;
   status: RoomStatus;
   hostId: string;
   slots: RoomSlot[];
@@ -101,6 +102,16 @@ export interface LobbyRoom {
   inCombatBossName?: string;
   inCombatBossHp?: number;
   inCombatBossMaxHp?: number;
+  /** Host-reported dungeon phase (server mirrors for list/queue; combat sim stays on host). */
+  runPhase?: string;
+  travelRemainingMs?: number;
+  currentBossIndex?: number;
+  /** Last settlement snapshot written when host reaches SUMMARY (per-room, isolated). */
+  lastSettlement?: {
+    cleared: boolean;
+    currentBossIndex: number;
+    settledAtMs: number;
+  };
 }
 
 export const CLASS_SPECS_MAP: Record<ClassId, { id: string; name: string; role: RoleId }[]> = {

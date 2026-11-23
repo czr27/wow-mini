@@ -108,14 +108,49 @@ export class EffectsManager {
   private evaluateGroundEffectTick(eff: GroundEffect): void {
     if (!this.engine) return;
     const value = eff.tickValue || (eff.kind === 'HEAL_ZONE' ? 4500 : 3800);
+    const spellId = (eff.spellId || '').toLowerCase();
+    const isHealingTide =
+      spellId === 'healing_tide' ||
+      spellId === 'healing_tide_totem' ||
+      spellId === 'shaman_healing_tide_totem' ||
+      spellId === '治疗之潮' ||
+      spellId === '治疗之潮图腾';
 
-    if (eff.kind === 'HEAL_ZONE') {
-      // Heal friendly units standing inside radius
+    if (eff.kind === 'HEAL_ZONE' || (eff.kind === 'TOTEM' && isHealingTide)) {
+      // Heal friendly units standing inside radius (Healing Rain / Healing Tide Totem)
       const owner = (this.engine.units.get(eff.ownerId) || this.engine.friendlyUnits.find((f: any) => f.id === eff.ownerId) || this.engine.friendlyUnits[0]) as any;
-      for (const u of this.engine.friendlyUnits) {
-        if ((u.isAlive ?? u.alive) && this.isPositionInEffect(u.position, eff)) {
-          this.engine.healUnit(owner, u, value, false, eff.spellId === 'healing_rain' ? '治疗之雨' : '百花齐放');
-        }
+      const living = this.engine.friendlyUnits.filter(
+        (u: any) => (u.isAlive ?? u.alive) && u.hp > 0 && this.isPositionInEffect(u.position, eff)
+      );
+      const targets = isHealingTide
+        ? [...living].sort((a: any, b: any) => a.hp / a.maxHp - b.hp / b.maxHp).slice(0, 5)
+        : living;
+      const isHealingRain = spellId === 'healing_rain' || spellId === 'shaman_healing_rain' || spellId === '治疗之雨';
+      const healName = isHealingTide
+        ? '治疗之潮图腾'
+        : (isHealingRain ? '治疗之雨' : '百花齐放');
+
+      // 生命释放：下一次治疗之雨效果 +30%（仅首跳消耗 buff，与技能描述一致）
+      let tickHeal = value;
+      if (
+        isHealingRain &&
+        owner?.buffs?.some(
+          (b: any) => b.spellId === 'unleash_life' || b.spellId === 'shaman_unleash_life'
+        )
+      ) {
+        tickHeal = Math.round(value * 1.30);
+        const ulIdx = owner.buffs.findIndex(
+          (b: any) => b.spellId === 'unleash_life' || b.spellId === 'shaman_unleash_life'
+        );
+        if (ulIdx !== -1) owner.buffs.splice(ulIdx, 1);
+        // 标记本地面效果已享受生命释放，后续跳字保持增效且不再重复消耗
+        (eff as any)._unleashLifeBoosted = true;
+      } else if ((eff as any)._unleashLifeBoosted) {
+        tickHeal = Math.round(value * 1.30);
+      }
+
+      for (const u of targets) {
+        this.engine.healUnit(owner, u, tickHeal, false, healName);
       }
     } else if (eff.kind === 'DAMAGE_ZONE') {
       // If placed by boss: damage any friendly unit inside

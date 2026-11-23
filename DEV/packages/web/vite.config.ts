@@ -124,14 +124,18 @@ export default defineConfig({
       ],
     },
     proxy: {
+      // Proxy fallback on the Vite host machine; browser clients use resolveGameApiBaseUrl (same host as page)
       '/api': {
-        target: 'http://localhost:3001',
+        target: 'http://127.0.0.1:3001',
         changeOrigin: true,
+        timeout: 8000,
+        proxyTimeout: 8000,
       },
       '/ws-proxy': {
-        target: 'ws://localhost:3001',
+        target: 'ws://127.0.0.1:3001',
         ws: true,
         rewrite: () => '/',
+        timeout: 8000,
       },
     },
   },

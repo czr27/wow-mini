@@ -4,15 +4,12 @@ import type {
   ClassId,
   KeybindingMap,
   DungeonClearCertificate,
-  DungeonDifficulty,
-  CustomDifficultySettings,
 } from '@cata-raid-sim/engine';
-import { DEFAULT_CUSTOM_DIFFICULTY } from '@cata-raid-sim/engine';
-import { CLASS_PIXEL_AVATARS, SPELL_ICONS, SPELL_TOOLTIPS } from '../assets/pixelIcons.js';
-import { SkillBookModal } from './SkillBookModal.js';
+import { CLASS_PIXEL_AVATARS, SPELL_ICONS } from '../assets/pixelIcons.js';
+import { SkillBookModal, getSpellTooltipWithFallback } from './SkillBookModal.js';
 import { getDefaultActionSlots } from '../assets/defaultActionSlots.js';
 import type { ActionSlot } from './ActionBar.js';
-import { DEFAULT_KEYBINDINGS } from './ActionBar.js';
+import { resolveSlotHotkey } from './ActionBar.js';
 
 function loadSavedSlots(charId: string, specId: string, classId: ClassId): ActionSlot[] {
   try {
@@ -55,14 +52,17 @@ export const CLASS_SPECS: Record<ClassId, { id: string; name: string; role: 'TAN
   DK: [
     { id: 'BLOOD', name: '鲜血（主坦）', role: 'TANK' },
     { id: 'FROST', name: '冰霜（输出）', role: 'DPS' },
+    { id: 'UNHOLY', name: '邪恶（输出）', role: 'DPS' },
   ],
   DRUID: [
     { id: 'RESTORATION', name: '恢复（治疗）', role: 'HEALER' },
     { id: 'BALANCE', name: '平衡（输出）', role: 'DPS' },
+    { id: 'FERAL', name: '野性（坦克/近战）', role: 'TANK' },
   ],
   SHAMAN: [
     { id: 'RESTORATION', name: '恢复（治疗）', role: 'HEALER' },
     { id: 'ELEMENTAL', name: '元素（输出）', role: 'DPS' },
+    { id: 'ENHANCEMENT', name: '增强（输出）', role: 'DPS' },
   ],
   MAGE: [
     { id: 'FIRE', name: '火焰（输出）', role: 'DPS' },
@@ -72,10 +72,12 @@ export const CLASS_SPECS: Record<ClassId, { id: string; name: string; role: 'TAN
   ROGUE: [
     { id: 'COMBAT', name: '战斗（输出）', role: 'DPS' },
     { id: 'ASSASSINATION', name: '刺杀（输出）', role: 'DPS' },
+    { id: 'SUBTLETY', name: '敏锐（输出）', role: 'DPS' },
   ],
   WARRIOR: [
     { id: 'PROTECTION', name: '防护（主坦）', role: 'TANK' },
     { id: 'ARMS', name: '武器（输出）', role: 'DPS' },
+    { id: 'FURY', name: '狂怒（输出）', role: 'DPS' },
   ],
   PALADIN: [
     { id: 'HOLY', name: '神圣（治疗）', role: 'HEALER' },
@@ -83,43 +85,268 @@ export const CLASS_SPECS: Record<ClassId, { id: string; name: string; role: 'TAN
     { id: 'RETRIBUTION', name: '惩戒（输出）', role: 'DPS' },
   ],
   HUNTER: [
+    { id: 'BEAST_MASTERY', name: '野兽控制（输出）', role: 'DPS' },
     { id: 'MARKSMANSHIP', name: '射击（输出）', role: 'DPS' },
     { id: 'SURVIVAL', name: '生存（输出）', role: 'DPS' },
   ],
   PRIEST: [
-    { id: 'HOLY', name: '神圣（治疗）', role: 'HEALER' },
     { id: 'DISCIPLINE', name: '戒律（治疗）', role: 'HEALER' },
+    { id: 'HOLY', name: '神圣（治疗）', role: 'HEALER' },
     { id: 'SHADOW', name: '暗影（输出）', role: 'DPS' },
   ],
   WARLOCK: [
     { id: 'AFFLICTION', name: '痛苦（输出）', role: 'DPS' },
+    { id: 'DEMONOLOGY', name: '恶魔学识（输出）', role: 'DPS' },
     { id: 'DESTRUCTION', name: '毁灭（输出）', role: 'DPS' },
   ],
 };
+
+/** Cataclysm-flavored intro copy for the selected talent spec (shown on the right panel). */
+export const SPEC_INTROS: Record<ClassId, Record<string, { summary: string; playstyle: string; highlights: string[] }>> = {
+  DK: {
+    BLOOD: {
+      summary: '鲜血死亡骑士以符文与符能维持生存，是可靠的主坦克专精。',
+      playstyle: '近战坦克 · 自我治疗 · 稳定仇恨',
+      highlights: ['死亡打击回血', '符文打击补仇', '冰封之韧减伤'],
+    },
+    FROST: {
+      summary: '冰霜死亡骑士以双持或双手武器打出爆发斩击，侧重单体与近战输出。',
+      playstyle: '近战输出 · 爆发窗口 · 减速控制',
+      highlights: ['湮灭 / 冰霜打击', '冰霜之柱爆发', '心灵冰冻打断'],
+    },
+    UNHOLY: {
+      summary: '邪恶死亡骑士召唤食尸鬼与疫病，擅长持续与范围伤害。',
+      playstyle: '近战输出 · 宠物协同 · DoT 铺垫',
+      highlights: ['脓疮打击', '天灾打击', '亡者大军'],
+    },
+  },
+  DRUID: {
+    RESTORATION: {
+      summary: '恢复德鲁伊以 HoT 堆叠与迅捷治愈稳住团队血线，机动治疗优秀。',
+      playstyle: '治疗 · 持续回血 · 团灭救急',
+      highlights: ['回春 / 愈合', '迅捷治愈', '野性成长'],
+    },
+    BALANCE: {
+      summary: '平衡德鲁伊在日月蚀循环间切换法术，远程输出并兼顾控场。',
+      playstyle: '远程法伤 · 日月蚀循环 · 多目标',
+      highlights: ['愤怒 / 星火术', '星涌术', '月火 / 阳炎'],
+    },
+    FERAL: {
+      summary: '野性德鲁伊可熊形态承担主坦，或以豹形态输出近战伤害。',
+      playstyle: '坦克 / 近战 · 变形灵活 · 流血与连击',
+      highlights: ['裂伤 / 割伤', '野蛮咆哮', '狂暴'],
+    },
+  },
+  SHAMAN: {
+    RESTORATION: {
+      summary: '恢复萨满以激流、治疗链与治疗之雨覆盖小队，图腾辅助团队。',
+      playstyle: '治疗 · 连锁治疗 · 图腾增益',
+      highlights: ['激流', '治疗链 / 治疗之雨', '灵魂链接图腾'],
+    },
+    ELEMENTAL: {
+      summary: '元素萨满以闪电与熔岩爆发打出高爆发远程法伤。',
+      playstyle: '远程法伤 · 爆发 · 打断',
+      highlights: ['闪电箭', '熔岩爆裂', '烈焰震击'],
+    },
+    ENHANCEMENT: {
+      summary: '增强萨满双持近战，风暴打击与漩涡武器驱动爆发。',
+      playstyle: '近战输出 · 漩涡武器 · 图腾',
+      highlights: ['风暴打击', '熔岩猛击', '烈焰震击'],
+    },
+  },
+  MAGE: {
+    FIRE: {
+      summary: '火焰法师以灼烧叠暴击，活体炸弹与炎爆术打出点燃爆发。',
+      playstyle: '远程法伤 · 暴击爆发 · 点燃',
+      highlights: ['火球术', '活体炸弹', '燃烧'],
+    },
+    FROST: {
+      summary: '冰霜法师以减速与碎冰打出稳健输出，生存能力出色。',
+      playstyle: '远程法伤 · 控场 · 碎冰',
+      highlights: ['寒冰箭', '冰枪术', '冰霜新星'],
+    },
+    ARCANE: {
+      summary: '奥术法师以奥术冲击叠层爆发，蓝量管理是核心。',
+      playstyle: '远程法伤 · 蓝量循环 · 爆发窗',
+      highlights: ['奥术冲击', '奥术弹幕', '唤醒'],
+    },
+  },
+  ROGUE: {
+    COMBAT: {
+      summary: '战斗贼以速度与切割维持高攻速近战输出。',
+      playstyle: '近战输出 · 攻速 · 终结技',
+      highlights: ['邪恶攻击', '切割', '刺骨'],
+    },
+    ASSASSINATION: {
+      summary: '刺杀贼依赖毒药与毁伤打出稳定单体伤害。',
+      playstyle: '近战输出 · 毒药 · 单体',
+      highlights: ['毁伤', '毒伤', '切割'],
+    },
+    SUBTLETY: {
+      summary: '敏锐贼以暗影舞与预谋打出高爆发，机动性强。',
+      playstyle: '近战输出 · 暗影爆发 · 潜行',
+      highlights: ['背刺', '暗影之舞', '预谋'],
+    },
+  },
+  WARRIOR: {
+    PROTECTION: {
+      summary: '防护战士以盾牌格挡与主动减伤稳住仇恨，是经典主坦克。',
+      playstyle: '近战坦克 · 盾墙减伤 · 嘲讽',
+      highlights: ['盾牌猛击', '复仇', '盾墙'],
+    },
+    ARMS: {
+      summary: '武器战士以致死打击与巨人打击打出强力单体斩击。',
+      playstyle: '近战输出 · 斩杀 · 爆发',
+      highlights: ['致死打击', '巨人打击', '斩杀'],
+    },
+    FURY: {
+      summary: '狂怒战士双持狂暴，嗜血与怒击堆叠高攻速输出。',
+      playstyle: '近战输出 · 双持 · 狂暴',
+      highlights: ['嗜血', '怒击', '斩杀'],
+    },
+  },
+  PALADIN: {
+    HOLY: {
+      summary: '神圣圣骑士以圣光术与圣光闪现急救，圣光道标稳定抬血。',
+      playstyle: '治疗 · 急救 · 道标',
+      highlights: ['圣光闪现', '圣光术', '圣光道标'],
+    },
+    PROTECTION: {
+      summary: '防护圣骑士以神圣怒火与圣盾技能减伤坦伤，仇恨稳定。',
+      playstyle: '近战坦克 · 减伤轮换 · 神圣能量',
+      highlights: ['审判', '正义盾击', '圣佑术'],
+    },
+    RETRIBUTION: {
+      summary: '惩戒圣骑士以神圣能量驱动终结技，近战爆发强劲。',
+      playstyle: '近战输出 · 神圣能量 · 爆发',
+      highlights: ['十字军打击', '神圣风暴', '愤怒之锤'],
+    },
+  },
+  HUNTER: {
+    BEAST_MASTERY: {
+      summary: '野兽控制猎人与宠物并肩作战，专注宠物伤害与协同。',
+      playstyle: '远程物理 · 宠物输出 · 机动',
+      highlights: ['杀戮命令', '稳固射击', '狂野怒火'],
+    },
+    MARKSMANSHIP: {
+      summary: '射击猎人以瞄准射击与奇美拉射击打出精准远程伤害。',
+      playstyle: '远程物理 · 瞄准爆发 · 陷阱',
+      highlights: ['瞄准射击', '奇美拉射击', '稳固射击'],
+    },
+    SURVIVAL: {
+      summary: '生存猎人偏重爆炸射击与陷阱，多目标表现优秀。',
+      playstyle: '远程物理 · 爆炸射击 · 陷阱',
+      highlights: ['爆炸射击', '毒蛇钉刺', '陷阱'],
+    },
+  },
+  PRIEST: {
+    DISCIPLINE: {
+      summary: '戒律牧师以盾与救赎吸收伤害，预减伤型治疗专精。',
+      playstyle: '治疗 · 护盾 · 救赎',
+      highlights: ['真言术：盾', '苦修', '救赎'],
+    },
+    HOLY: {
+      summary: '神圣牧师以快速治疗与治疗祷言稳住团队，应急能力强。',
+      playstyle: '治疗 · 直接抬血 · 团灭救急',
+      highlights: ['快速治疗', '治疗祷言', '神圣赞美诗'],
+    },
+    SHADOW: {
+      summary: '暗影牧师以暗言术与精神鞭笞打出持续法伤。',
+      playstyle: '远程法伤 · DoT · 精神鞭笞',
+      highlights: ['暗言术：痛', '吸血鬼之触', '精神鞭笞'],
+    },
+  },
+  WARLOCK: {
+    AFFLICTION: {
+      summary: '痛苦术士以多重诅咒与吸取灵魂维持持续伤害。',
+      playstyle: '远程法伤 · DoT · 吸取',
+      highlights: ['痛苦诅咒', '痛苦无常', '吸取灵魂'],
+    },
+    DEMONOLOGY: {
+      summary: '恶魔学识术士召唤恶魔军团，变身爆发输出。',
+      playstyle: '远程法伤 · 恶魔 · 变身爆发',
+      highlights: ['献祭', '暗影箭', '恶魔变形'],
+    },
+    DESTRUCTION: {
+      summary: '毁灭术士以烧尽与混乱之箭打出爆发单体法伤。',
+      playstyle: '远程法伤 · 烧尽 · 混乱之箭',
+      highlights: ['烧尽', '献祭', '混乱之箭'],
+    },
+  },
+};
+
+function getSpecIntro(classId: ClassId, specId: string) {
+  const byClass = SPEC_INTROS[classId];
+  const hit = byClass?.[specId] || byClass?.[specId.toUpperCase()];
+  if (hit) return hit;
+  return {
+    summary: '选择专精后可查看玩法概要与核心技能方向。',
+    playstyle: '—',
+    highlights: [] as string[],
+  };
+}
 
 interface Props {
   currentAccountName: string;
   characters: CharacterRecord[];
   selectedCharId: string | null;
   onSelectCharacter: (charId: string) => void;
-  onCreateCharacter: (name: string, classId: ClassId, spec: string) => void;
+  onCreateCharacter: (
+    name: string,
+    classId: ClassId,
+    spec: string
+  ) =>
+    | { success: boolean; error?: string }
+    | Promise<{ success: boolean; error?: string }>
+    | void;
   onDeleteCharacter: (charId: string) => void;
   onChangeSpec: (charId: string, spec: string) => void;
   onSaveKeybinding: (charId: string, spec: string, slotIdx: number, key: string) => void;
   onViewCertificate: (cert: DungeonClearCertificate) => void;
   onOpenLeaderboard: () => void;
   onStartAdventure: () => void;
-  onLogin: (username: string) => void;
-  dungeonTier?: '5man' | '20man';
-  onSelectDungeonTier?: (tier: '5man' | '20man') => void;
-  dungeonDifficulty?: DungeonDifficulty;
-  onSelectDungeonDifficulty?: (diff: DungeonDifficulty) => void;
-  customDifficulty?: CustomDifficultySettings;
-  onChangeCustomDifficulty?: (settings: CustomDifficultySettings) => void;
+  /** mode=login | register；走服务器，返回是否成功与错误文案 */
+  onAuth: (
+    username: string,
+    password: string,
+    mode: 'login' | 'register'
+  ) => Promise<{ success: boolean; error?: string }>;
+  onLogout?: () => void;
+  /** 注销账号（服务器删除 + 本地清除），需密码确认 */
+  onDeleteAccount?: (password: string) => Promise<{ success: boolean; error?: string }>;
   slots?: ActionSlot[];
   onSwapSlots?: (srcIdx: number, destIdx: number, targetCharId?: string, targetSpecId?: string) => void;
   onAssignSlot?: (slotIdx: number, spellId: string, targetCharId?: string, targetSpecId?: string) => void;
   onClearSlot?: (slotIdx: number, targetCharId?: string, targetSpecId?: string) => void;
+}
+
+const REMEMBER_AUTH_KEY = 'cata_raid_sim_remembered_auth_v1';
+
+function loadRememberedAuth(): { username: string; password: string } | null {
+  if (typeof localStorage === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(REMEMBER_AUTH_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed?.username && typeof parsed.password === 'string') {
+      return { username: String(parsed.username), password: String(parsed.password) };
+    }
+  } catch {}
+  return null;
+}
+
+function saveRememberedAuth(username: string, password: string) {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.setItem(REMEMBER_AUTH_KEY, JSON.stringify({ username, password }));
+  } catch {}
+}
+
+function clearRememberedAuth() {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.removeItem(REMEMBER_AUTH_KEY);
+  } catch {}
 }
 
 export const AuthAndCharacterModal: React.FC<Props> = ({
@@ -134,13 +361,9 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
   onViewCertificate,
   onOpenLeaderboard,
   onStartAdventure,
-  onLogin,
-  dungeonTier = '5man',
-  onSelectDungeonTier,
-  dungeonDifficulty = 'NORMAL',
-  onSelectDungeonDifficulty,
-  customDifficulty = DEFAULT_CUSTOM_DIFFICULTY,
-  onChangeCustomDifficulty,
+  onAuth,
+  onLogout,
+  onDeleteAccount,
   slots,
   onSwapSlots,
   onAssignSlot,
@@ -148,44 +371,148 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
 }) => {
   const [draggedSlotIdx, setDraggedSlotIdx] = useState<number | null>(null);
   const [sniffingSlotIdx, setSniffingSlotIdx] = useState<number | null>(null);
-  const [hoveredSlot, setHoveredSlot] = useState<ActionSlot | null>(null);
-
-  const customSettings = customDifficulty || DEFAULT_CUSTOM_DIFFICULTY;
-  const updateCoeff = (key: keyof CustomDifficultySettings, val: number) => {
-    if (onChangeCustomDifficulty) {
-      const clamped = Math.min(20.0, Math.max(0.01, Math.round(val * 100) / 100));
-      onChangeCustomDifficulty({
-        ...customSettings,
-        [key]: clamped,
-      });
-    }
-  };
-
-  const formatCoeff = (val: number | undefined) => {
-    const num = val ?? 1.0;
-    if (num < 1) {
-      return num.toFixed(2);
-    }
-    return (num * 10) % 1 === 0 ? num.toFixed(1) : num.toFixed(2);
-  };
-  const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [inspectedSpellId, setInspectedSpellId] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [isSkillBookOpen, setIsSkillBookOpen] = useState(false);
   const [newCharName, setNewCharName] = useState('');
   const [newCharClass, setNewCharClass] = useState<ClassId>('DK');
   const [newCharSpec, setNewCharSpec] = useState('BLOOD');
+  const [createCharError, setCreateCharError] = useState<string | null>(null);
   const [editingKeybinding, setEditingKeybinding] = useState(false);
-  const [loginInput, setLoginInput] = useState('');
   const [showLoginModal, setShowLoginModal] = useState(false);
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [authUsername, setAuthUsername] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authPasswordConfirm, setAuthPasswordConfirm] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
+  const [authBusy, setAuthBusy] = useState(false);
+  const [rememberAuth, setRememberAuth] = useState(() => !!loadRememberedAuth());
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deletePassword, setDeletePassword] = useState('');
+  const isLoggedIn = !!(currentAccountName && currentAccountName !== '未登录');
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+
+  const resetAuthForm = (keepRemembered = false) => {
+    if (!keepRemembered) {
+      setAuthUsername('');
+      setAuthPassword('');
+    }
+    setAuthPasswordConfirm('');
+    setAuthError(null);
+    setShowPassword(false);
+    setAuthBusy(false);
+  };
+
+  const openAuthModal = (mode: 'login' | 'register' = 'login') => {
+    const remembered = loadRememberedAuth();
+    setAuthMode(mode);
+    setAuthError(null);
+    setAuthPasswordConfirm('');
+    setShowPassword(false);
+    setAuthBusy(false);
+    if (remembered) {
+      setAuthUsername(remembered.username);
+      setAuthPassword(remembered.password);
+      setRememberAuth(true);
+    } else {
+      setAuthUsername('');
+      setAuthPassword('');
+      setRememberAuth(false);
+    }
+    setShowLoginModal(true);
+  };
+
+  const handleAuthSubmit = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    const user = authUsername.trim();
+    const pass = authPassword;
+    if (!user) {
+      setAuthError('请输入用户名');
+      return;
+    }
+    if (!pass) {
+      setAuthError('请输入密码');
+      return;
+    }
+    if (authMode === 'register') {
+      if (pass.length < 4) {
+        setAuthError('密码至少 4 个字符');
+        return;
+      }
+      if (pass !== authPasswordConfirm) {
+        setAuthError('两次输入的密码不一致');
+        return;
+      }
+    }
+    setAuthBusy(true);
+    setAuthError(null);
+    try {
+      const result = await onAuth(user, pass, authMode);
+      if (!result.success) {
+        setAuthError(result.error || (authMode === 'login' ? '登录失败' : '注册失败'));
+        return;
+      }
+      if (rememberAuth) {
+        saveRememberedAuth(user, pass);
+      } else {
+        clearRememberedAuth();
+      }
+      setShowLoginModal(false);
+      resetAuthForm();
+    } finally {
+      setAuthBusy(false);
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    if (!onDeleteAccount) return;
+    if (!deletePassword) {
+      setDeleteError('请输入密码以确认删除');
+      return;
+    }
+    setDeleteBusy(true);
+    setDeleteError(null);
+    try {
+      const result = await onDeleteAccount(deletePassword);
+      if (!result.success) {
+        setDeleteError(result.error || '删除失败');
+        return;
+      }
+      clearRememberedAuth();
+      setShowDeleteConfirm(false);
+      setDeletePassword('');
+    } finally {
+      setDeleteBusy(false);
+    }
+  };
 
   const selectedChar = characters.find(c => c.id === selectedCharId) || characters[0];
 
-  const handleCreateSubmit = (e: React.FormEvent) => {
+  const [createCharBusy, setCreateCharBusy] = useState(false);
+
+  const handleCreateSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newCharName.trim()) return;
-    onCreateCharacter(newCharName.trim(), newCharClass, newCharSpec);
-    setNewCharName('');
-    setIsCreating(false);
+    if (!newCharName.trim() || createCharBusy) return;
+    setCreateCharError(null);
+    setCreateCharBusy(true);
+    try {
+      const result = await Promise.resolve(
+        onCreateCharacter(newCharName.trim(), newCharClass, newCharSpec)
+      );
+      if (result && result.success === false) {
+        setCreateCharError(result.error || '创建失败');
+        return;
+      }
+      setNewCharName('');
+      setCreateCharError(null);
+      setIsCreating(false);
+    } catch (err: any) {
+      setCreateCharError(err?.message || '创建失败');
+    } finally {
+      setCreateCharBusy(false);
+    }
   };
 
   const handleClassChange = (cls: ClassId) => {
@@ -202,6 +529,10 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
     : (selectedChar
         ? loadSavedSlots(selectedChar.id, selectedChar.lastSpec, selectedChar.classId)
         : []);
+
+  useEffect(() => {
+    setInspectedSpellId(null);
+  }, [selectedCharId, selectedChar?.lastSpec]);
 
   // Global keydown listener for sniffing hotkey in Lobby (Supports single keys like F2 and combos like Shift+C)
   useEffect(() => {
@@ -271,11 +602,10 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
   }, [sniffingSlotIdx, selectedChar, onSaveKeybinding]);
 
   return (
-    <div className="fixed inset-0 bg-black/85 backdrop-blur-md flex items-center justify-center z-50 p-4">
-      <div className="bg-[#141424] border border-[#3b3b5c] rounded-xl shadow-2xl max-w-6xl xl:max-w-[1360px] 2xl:max-w-[1440px] w-full flex flex-col max-h-[92vh] overflow-hidden text-gray-200">
+    <div className="flex flex-col h-full min-h-0 w-full bg-[#141424] text-gray-200 select-none overflow-hidden">
         
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-[#2a2a44] bg-[#1a1a30]">
+        <div className="shrink-0 flex items-center justify-between px-4 sm:px-6 py-3 border-b border-amber-500/30 bg-gradient-to-r from-slate-900 via-amber-950/40 to-slate-900">
           <div className="flex items-center space-x-3">
             <span className="text-2xl">⚔️</span>
             <div>
@@ -286,15 +616,54 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
             </div>
           </div>
           <div className="flex items-center space-x-2">
-            <button
-              onClick={() => setShowLoginModal(true)}
-              className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 rounded transition border border-slate-500"
-            >
-              切换账号
-            </button>
+            {!isLoggedIn ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => openAuthModal('login')}
+                  className="px-3 py-1.5 text-xs bg-[#1e2a44] hover:bg-[#263556] rounded-lg transition border border-sky-700/50 text-sky-200 font-semibold"
+                >
+                  登录
+                </button>
+                <button
+                  type="button"
+                  onClick={() => openAuthModal('register')}
+                  className="px-3 py-1.5 text-xs bg-emerald-800/80 hover:bg-emerald-700 rounded-lg transition border border-emerald-500/40 text-emerald-100 font-semibold"
+                >
+                  注册
+                </button>
+              </>
+            ) : (
+              <>
+                {onLogout && (
+                  <button
+                    type="button"
+                    onClick={onLogout}
+                    className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 rounded-lg transition border border-slate-500 text-slate-200 font-semibold"
+                    title="注销当前登录会话"
+                  >
+                    注销
+                  </button>
+                )}
+                {onDeleteAccount && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDeletePassword('');
+                      setDeleteError(null);
+                      setShowDeleteConfirm(true);
+                    }}
+                    className="px-3 py-1.5 text-xs bg-red-950/70 hover:bg-red-900 rounded-lg transition border border-red-700/50 text-red-200 font-semibold"
+                    title="从服务器永久删除此账号"
+                  >
+                    删除账号
+                  </button>
+                )}
+              </>
+            )}
             <button
               onClick={onOpenLeaderboard}
-              className="px-3 py-1.5 text-xs bg-amber-600 hover:bg-amber-500 text-white rounded font-bold shadow flex items-center space-x-1"
+              className="px-3 py-1.5 text-xs bg-amber-600 hover:bg-amber-500 text-white rounded-lg font-bold shadow flex items-center space-x-1"
             >
               <span>🏆</span>
               <span>世界排行榜</span>
@@ -302,15 +671,43 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
           </div>
         </div>
 
-        {/* Main Content Area */}
-        <div className="flex-1 grid grid-cols-1 md:grid-cols-12 overflow-hidden">
+        {/* Main Content Area — character UI only when logged in */}
+        {!isLoggedIn ? (
+          <div className="flex-1 flex flex-col items-center justify-center gap-4 p-10 bg-[#10101c] text-center">
+            <span className="text-5xl opacity-80">🔐</span>
+            <h3 className="text-lg font-bold text-amber-300">请先登录或注册账号</h3>
+            <p className="text-sm text-gray-400 max-w-md">
+              登录后才能创建与切换角色、配置快捷键，并进入副本大厅。
+            </p>
+            <div className="flex items-center gap-3 mt-2">
+              <button
+                type="button"
+                onClick={() => openAuthModal('login')}
+                className="px-5 py-2 text-sm bg-[#1e2a44] hover:bg-[#263556] rounded-lg transition border border-sky-700/50 text-sky-200 font-bold"
+              >
+                登录
+              </button>
+              <button
+                type="button"
+                onClick={() => openAuthModal('register')}
+                className="px-5 py-2 text-sm bg-emerald-800/80 hover:bg-emerald-700 rounded-lg transition border border-emerald-500/40 text-emerald-100 font-bold"
+              >
+                注册
+              </button>
+            </div>
+          </div>
+        ) : (
+        <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-12 overflow-hidden">
           
           {/* Left Column: Character List (3 cols / 25%) */}
           <div className="md:col-span-3 border-r border-[#2a2a44] p-4 flex flex-col overflow-y-auto bg-[#10101c]">
             <div className="flex items-center justify-between mb-3">
               <span className="text-xs font-bold uppercase tracking-wider text-gray-400">我的角色 ({characters.length})</span>
               <button
-                onClick={() => setIsCreating(true)}
+                onClick={() => {
+                  setCreateCharError(null);
+                  setIsCreating(true);
+                }}
                 className="text-xs bg-emerald-600 hover:bg-emerald-500 text-white px-2 py-1 rounded flex items-center space-x-1 font-semibold"
               >
                 <span>+</span>
@@ -370,346 +767,6 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
           <div className="md:col-span-9 p-5 flex flex-col overflow-y-auto space-y-5 bg-[#141424]">
             {selectedChar ? (
               <>
-                {/* ── Dungeon Mode & Difficulty Pre-Selection Card (R8) ─────────────── */}
-                <div className="bg-[#1a1a32] border-2 border-amber-500/40 p-4 rounded-xl shadow-lg space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h4 className="font-extrabold text-sm text-amber-300 flex items-center space-x-1.5">
-                        <span>🏰</span>
-                        <span>副本模式与挑战难度前置选择</span>
-                      </h4>
-                      <p className="text-xs text-gray-400 mt-0.5">
-                        进本前配置副本规格与难度，进入挑战后锁定不可更改
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    {/* Dungeon Mode Selection (5man vs 20man) */}
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-bold text-gray-300">副本模式：</label>
-                      <div className="grid grid-cols-2 gap-2">
-                        <button
-                          type="button"
-                          onClick={() => onSelectDungeonTier && onSelectDungeonTier('5man')}
-                          className={`p-2.5 rounded-lg border text-left transition flex flex-col justify-between ${
-                            dungeonTier === '5man'
-                              ? 'bg-emerald-950/80 border-emerald-400 ring-2 ring-emerald-400/50 shadow-[0_0_12px_rgba(52,211,153,0.3)]'
-                              : 'bg-black/40 border-gray-700 hover:border-gray-500 text-gray-300'
-                          }`}
-                        >
-                          <div className="flex items-center space-x-1.5">
-                            <span className="text-base">🏰</span>
-                            <span className="font-extrabold text-xs text-white">5人地下城</span>
-                          </div>
-                          <span className="text-[10px] text-emerald-300 font-bold mt-1">
-                            影牙城堡 (5 Boss 连战)
-                          </span>
-                          <span className="text-[9px] text-gray-400 mt-0.5">
-                            1坦 · 1疗 · 3输出 经典队伍
-                          </span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => onSelectDungeonTier && onSelectDungeonTier('20man')}
-                          className={`p-2.5 rounded-lg border text-left transition flex flex-col justify-between ${
-                            dungeonTier === '20man'
-                              ? 'bg-purple-950/80 border-purple-400 ring-2 ring-purple-400/50 shadow-[0_0_12px_rgba(192,132,252,0.3)]'
-                              : 'bg-black/40 border-gray-700 hover:border-gray-500 text-gray-300'
-                          }`}
-                        >
-                          <div className="flex items-center space-x-1.5">
-                            <span className="text-base">🐉</span>
-                            <span className="font-extrabold text-xs text-white">20人团队副本</span>
-                          </div>
-                          <span className="text-[10px] text-purple-300 font-bold mt-1">
-                            巨龙之魂 (8 Boss 攻坚)
-                          </span>
-                          <span className="text-[9px] text-gray-400 mt-0.5">
-                            2坦 · 4疗 · 14输出 史诗团本
-                          </span>
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Difficulty Selection (Normal vs Heroic vs Custom) */}
-                    <div className="space-y-1.5">
-                      <label className="text-xs font-bold text-gray-300">挑战难度：</label>
-                      <div className="grid grid-cols-3 gap-2">
-                        <button
-                          type="button"
-                          onClick={() => onSelectDungeonDifficulty && onSelectDungeonDifficulty('NORMAL')}
-                          className={`p-2 rounded-lg border text-left transition flex flex-col justify-between ${
-                            dungeonDifficulty === 'NORMAL'
-                              ? 'bg-blue-950/80 border-blue-400 ring-2 ring-blue-400/50 shadow-[0_0_12px_rgba(96,165,250,0.3)]'
-                              : 'bg-black/40 border-gray-700 hover:border-gray-500 text-gray-300'
-                          }`}
-                        >
-                          <div className="flex items-center space-x-1.5">
-                            <span className="text-base">⚔️</span>
-                            <span className="font-extrabold text-xs text-white">普通难度</span>
-                          </div>
-                          <span className="text-[10px] text-blue-300 font-bold mt-1">
-                            Normal (标准)
-                          </span>
-                          <span className="text-[9px] text-gray-400 mt-0.5">
-                            常规机制
-                          </span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => onSelectDungeonDifficulty && onSelectDungeonDifficulty('HEROIC')}
-                          className={`p-2 rounded-lg border text-left transition flex flex-col justify-between ${
-                            dungeonDifficulty === 'HEROIC'
-                              ? 'bg-amber-950/80 border-amber-400 ring-2 ring-amber-400/50 shadow-[0_0_12px_rgba(251,191,36,0.3)]'
-                              : 'bg-black/40 border-gray-700 hover:border-gray-500 text-gray-300'
-                          }`}
-                        >
-                          <div className="flex items-center space-x-1.5">
-                            <span className="text-base">🛡️</span>
-                            <span className="font-extrabold text-xs text-white">英雄难度</span>
-                          </div>
-                          <span className="text-[10px] text-amber-300 font-bold mt-1">
-                            Heroic (1.5x)
-                          </span>
-                          <span className="text-[9px] text-gray-400 mt-0.5">
-                            高压全团AOE
-                          </span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() => onSelectDungeonDifficulty && onSelectDungeonDifficulty('CUSTOM')}
-                          className={`p-2 rounded-lg border text-left transition flex flex-col justify-between ${
-                            dungeonDifficulty === 'CUSTOM'
-                              ? 'bg-violet-950/80 border-violet-400 ring-2 ring-violet-400/50 shadow-[0_0_12px_rgba(167,139,250,0.3)]'
-                              : 'bg-black/40 border-gray-700 hover:border-gray-500 text-gray-300'
-                          }`}
-                        >
-                          <div className="flex items-center space-x-1.5">
-                            <span className="text-base">⚙️</span>
-                            <span className="font-extrabold text-xs text-white">自定义难度</span>
-                          </div>
-                          <span className="text-[10px] text-violet-300 font-bold mt-1">
-                            Custom (自由调节)
-                          </span>
-                          <span className="text-[9px] text-gray-400 mt-0.5">
-                            独立玩家/AI攻防血蓝
-                          </span>
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* ── Custom Difficulty Settings Panel ──────────────────────────── */}
-                  {dungeonDifficulty === 'CUSTOM' && (
-                    <div className="mt-3 p-3.5 bg-[#111124] border border-violet-500/50 rounded-xl space-y-3 shadow-inner">
-                      <div className="flex items-center justify-between pb-2 border-b border-violet-500/30">
-                        <div className="flex items-center space-x-2">
-                          <span className="text-violet-300 font-extrabold text-xs">⚙️ 自定义难度数值系数设置 (0.01x ~ 20.0x)</span>
-                          <span className="text-[10px] text-gray-400 font-mono">(调整后实时生效)</span>
-                        </div>
-                        <div className="flex items-center space-x-1.5">
-                          <button
-                            type="button"
-                            onClick={() => onChangeCustomDifficulty && onChangeCustomDifficulty({
-                              playerDamageCoeff: 2.0, playerHealingCoeff: 2.0, playerHpCoeff: 1.5, playerMpCoeff: 1.5,
-                              aiDamageCoeff: 1.5, aiHealingCoeff: 1.5, aiHpCoeff: 1.2, aiMpCoeff: 1.2,
-                              enemyDamageCoeff: 0.6, bossHpCoeff: 0.7,
-                            })}
-                            className="text-[9px] bg-emerald-950/80 text-emerald-300 border border-emerald-500/40 px-2 py-0.5 rounded hover:bg-emerald-900/90 font-bold transition"
-                            title="玩家与AI大幅增强，首领与小怪削弱"
-                          >
-                            爽快割草
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => onChangeCustomDifficulty && onChangeCustomDifficulty({
-                              playerDamageCoeff: 0.8, playerHealingCoeff: 0.8, playerHpCoeff: 0.8, playerMpCoeff: 0.8,
-                              aiDamageCoeff: 0.8, aiHealingCoeff: 0.8, aiHpCoeff: 0.8, aiMpCoeff: 0.8,
-                              enemyDamageCoeff: 2.0, bossHpCoeff: 2.5,
-                            })}
-                            className="text-[9px] bg-red-950/80 text-red-300 border border-red-500/40 px-2 py-0.5 rounded hover:bg-red-900/90 font-bold transition"
-                            title="敌方攻击翻倍，首领血量2.5倍"
-                          >
-                            地狱挑战
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => onChangeCustomDifficulty && onChangeCustomDifficulty({ ...DEFAULT_CUSTOM_DIFFICULTY })}
-                            className="text-[9px] bg-gray-800 text-gray-300 border border-gray-600 px-2 py-0.5 rounded hover:bg-gray-700 font-bold transition"
-                            title="恢复全系数 1.0x 标准值"
-                          >
-                            重置 1.0x
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* 3 Columns: Player (玩家), AI (友方AI), Enemy & Boss (敌方与首领) */}
-                      <div className="grid grid-cols-1 md:grid-cols-3 gap-2.5">
-                        {/* 1. 玩家自身系数 (Player) */}
-                        <div className="bg-[#181832] p-2.5 rounded-lg border border-blue-500/30 space-y-2">
-                          <div className="flex items-center space-x-1 text-blue-300 text-[11px] font-bold pb-1 border-b border-blue-500/20">
-                            <span>👤</span>
-                            <span>玩家参数 (Player)</span>
-                          </div>
-                          {/* 玩家攻击系数 */}
-                          <div className="space-y-0.5">
-                            <div className="flex justify-between text-[10px]">
-                              <span className="text-gray-300">攻击系数:</span>
-                              <span className="text-blue-300 font-mono font-bold">{formatCoeff(customSettings.playerDamageCoeff)}x</span>
-                            </div>
-                            <input
-                              type="range" min="0.01" max="20.0" step="0.01"
-                              value={customSettings.playerDamageCoeff}
-                              onChange={(e) => updateCoeff('playerDamageCoeff', parseFloat(e.target.value))}
-                              className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-blue-400"
-                            />
-                          </div>
-                          {/* 玩家治疗系数 */}
-                          <div className="space-y-0.5">
-                            <div className="flex justify-between text-[10px]">
-                              <span className="text-gray-300">治疗系数:</span>
-                              <span className="text-green-300 font-mono font-bold">{formatCoeff(customSettings.playerHealingCoeff)}x</span>
-                            </div>
-                            <input
-                              type="range" min="0.01" max="20.0" step="0.01"
-                              value={customSettings.playerHealingCoeff}
-                              onChange={(e) => updateCoeff('playerHealingCoeff', parseFloat(e.target.value))}
-                              className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-green-400"
-                            />
-                          </div>
-                          {/* 友方血量系数 (玩家) */}
-                          <div className="space-y-0.5">
-                            <div className="flex justify-between text-[10px]">
-                              <span className="text-gray-300">血量系数:</span>
-                              <span className="text-emerald-300 font-mono font-bold">{formatCoeff(customSettings.playerHpCoeff)}x</span>
-                            </div>
-                            <input
-                              type="range" min="0.01" max="20.0" step="0.01"
-                              value={customSettings.playerHpCoeff}
-                              onChange={(e) => updateCoeff('playerHpCoeff', parseFloat(e.target.value))}
-                              className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-emerald-400"
-                            />
-                          </div>
-                          {/* 友方蓝量系数 (玩家) */}
-                          <div className="space-y-0.5">
-                            <div className="flex justify-between text-[10px]">
-                              <span className="text-gray-300">蓝量系数:</span>
-                              <span className="text-cyan-300 font-mono font-bold">{formatCoeff(customSettings.playerMpCoeff)}x</span>
-                            </div>
-                            <input
-                              type="range" min="0.01" max="20.0" step="0.01"
-                              value={customSettings.playerMpCoeff}
-                              onChange={(e) => updateCoeff('playerMpCoeff', parseFloat(e.target.value))}
-                              className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-400"
-                            />
-                          </div>
-                        </div>
-
-                        {/* 2. 友方 AI 系数 (AI Teammates) */}
-                        <div className="bg-[#181832] p-2.5 rounded-lg border border-purple-500/30 space-y-2">
-                          <div className="flex items-center space-x-1 text-purple-300 text-[11px] font-bold pb-1 border-b border-purple-500/20">
-                            <span>🤖</span>
-                            <span>友方 AI 参数 (AI Teammates)</span>
-                          </div>
-                          {/* AI 攻击系数 */}
-                          <div className="space-y-0.5">
-                            <div className="flex justify-between text-[10px]">
-                              <span className="text-gray-300">攻击系数:</span>
-                              <span className="text-purple-300 font-mono font-bold">{formatCoeff(customSettings.aiDamageCoeff)}x</span>
-                            </div>
-                            <input
-                              type="range" min="0.01" max="20.0" step="0.01"
-                              value={customSettings.aiDamageCoeff}
-                              onChange={(e) => updateCoeff('aiDamageCoeff', parseFloat(e.target.value))}
-                              className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-purple-400"
-                            />
-                          </div>
-                          {/* AI 治疗系数 */}
-                          <div className="space-y-0.5">
-                            <div className="flex justify-between text-[10px]">
-                              <span className="text-gray-300">治疗系数:</span>
-                              <span className="text-green-300 font-mono font-bold">{formatCoeff(customSettings.aiHealingCoeff)}x</span>
-                            </div>
-                            <input
-                              type="range" min="0.01" max="20.0" step="0.01"
-                              value={customSettings.aiHealingCoeff}
-                              onChange={(e) => updateCoeff('aiHealingCoeff', parseFloat(e.target.value))}
-                              className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-green-400"
-                            />
-                          </div>
-                          {/* 友方血量系数 (AI) */}
-                          <div className="space-y-0.5">
-                            <div className="flex justify-between text-[10px]">
-                              <span className="text-gray-300">血量系数:</span>
-                              <span className="text-emerald-300 font-mono font-bold">{formatCoeff(customSettings.aiHpCoeff)}x</span>
-                            </div>
-                            <input
-                              type="range" min="0.01" max="20.0" step="0.01"
-                              value={customSettings.aiHpCoeff}
-                              onChange={(e) => updateCoeff('aiHpCoeff', parseFloat(e.target.value))}
-                              className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-emerald-400"
-                            />
-                          </div>
-                          {/* 友方蓝量系数 (AI) */}
-                          <div className="space-y-0.5">
-                            <div className="flex justify-between text-[10px]">
-                              <span className="text-gray-300">蓝量系数:</span>
-                              <span className="text-cyan-300 font-mono font-bold">{formatCoeff(customSettings.aiMpCoeff)}x</span>
-                            </div>
-                            <input
-                              type="range" min="0.01" max="20.0" step="0.01"
-                              value={customSettings.aiMpCoeff}
-                              onChange={(e) => updateCoeff('aiMpCoeff', parseFloat(e.target.value))}
-                              className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-400"
-                            />
-                          </div>
-                        </div>
-
-                        {/* 3. 敌方与首领系数 (Enemy & Boss) */}
-                        <div className="bg-[#181832] p-2.5 rounded-lg border border-red-500/30 space-y-2">
-                          <div className="flex items-center space-x-1 text-red-300 text-[11px] font-bold pb-1 border-b border-red-500/20">
-                            <span>💀</span>
-                            <span>敌方与首领 (Enemy & Boss)</span>
-                          </div>
-                          {/* 敌方攻击系数 */}
-                          <div className="space-y-0.5">
-                            <div className="flex justify-between text-[10px]">
-                              <span className="text-gray-300">敌方攻击系数:</span>
-                              <span className="text-red-300 font-mono font-bold">{formatCoeff(customSettings.enemyDamageCoeff)}x</span>
-                            </div>
-                            <input
-                              type="range" min="0.01" max="20.0" step="0.01"
-                              value={customSettings.enemyDamageCoeff}
-                              onChange={(e) => updateCoeff('enemyDamageCoeff', parseFloat(e.target.value))}
-                              className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-red-400"
-                            />
-                          </div>
-                          {/* BOSS血量系数 */}
-                          <div className="space-y-0.5">
-                            <div className="flex justify-between text-[10px]">
-                              <span className="text-gray-300">BOSS血量系数:</span>
-                              <span className="text-amber-300 font-mono font-bold">{formatCoeff(customSettings.bossHpCoeff)}x</span>
-                            </div>
-                            <input
-                              type="range" min="0.01" max="20.0" step="0.01"
-                              value={customSettings.bossHpCoeff}
-                              onChange={(e) => updateCoeff('bossHpCoeff', parseFloat(e.target.value))}
-                              className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-amber-400"
-                            />
-                          </div>
-                          <div className="pt-2 text-[9px] text-gray-400 leading-relaxed border-t border-red-500/10">
-                            💡 提示：降低首领血量或提高友方攻击可加速击杀；调高敌方攻击与首领血量将带来极限压迫感。
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
                 {/* Character Profile Banner */}
                 <div className="flex items-center justify-between bg-[#1d1d36] border border-[#343454] p-4 rounded-xl">
                   <div className="flex items-center space-x-3">
@@ -749,114 +806,85 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
                   </button>
                 </div>
 
-                {/* Talent Spec Switcher & Habit Keybindings */}
-                <div className="bg-[#1a1a30] border border-[#2e2e4e] p-4 rounded-xl space-y-3">
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h4 className="font-bold text-sm text-gray-200">当前专精天赋与独立快捷键习惯</h4>
-                      <p className="text-xs text-gray-400">每个天赋独立记忆快捷键布局，战斗时自动加载</p>
-                    </div>
-                    <div className="flex items-center space-x-2">
-                      <button
-                        onClick={() => setIsSkillBookOpen(true)}
-                        className="text-xs px-2.5 py-1 bg-amber-700/60 hover:bg-amber-600 rounded text-amber-200 border border-amber-500/60 flex items-center space-x-1"
-                        title="查看全部职业/专精技能与设定快捷键"
-                      >
-                        <span>📖</span>
-                        <span>全技能书与快捷键</span>
-                      </button>
-                      <button
-                        onClick={() => setEditingKeybinding(!editingKeybinding)}
-                        className="text-xs px-2.5 py-1 bg-slate-700 hover:bg-slate-600 rounded text-amber-300 border border-slate-500"
-                      >
-                        {editingKeybinding ? '完成配置' : '⚙️ 自定义快捷键'}
-                      </button>
-                    </div>
+                {/* Spec talents + action bars (left ~46.7%) / intro or spell tip (right) */}
+                <div
+                  className="bg-[#1a1a30] border border-[#2e2e4e] p-4 rounded-xl"
+                  onClick={() => setInspectedSpellId(null)}
+                >
+                  <div className="mb-3">
+                    <h4 className="font-bold text-sm text-gray-200">专精天赋</h4>
                   </div>
 
-                  {/* Spec Selector */}
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                    {CLASS_SPECS[selectedChar.classId].map(spec => {
-                      const isActive = selectedChar.lastSpec === spec.id;
-                      return (
-                        <button
-                          key={spec.id}
-                          onClick={() => onChangeSpec(selectedChar.id, spec.id)}
-                          className={`px-3 py-2 rounded-lg border text-xs font-bold transition flex items-center justify-between ${
-                            isActive
-                              ? 'border-amber-400 bg-amber-500/20 text-amber-300'
-                              : 'border-[#333355] bg-[#121222] text-gray-400 hover:border-gray-500'
-                          }`}
-                        >
-                          <span>{spec.name}</span>
-                          <span className="text-[10px] text-gray-400">
-                            {spec.role === 'TANK' ? '🛡️ 坦' : spec.role === 'HEALER' ? '💚 奶' : '⚔️ DPS'}
-                          </span>
-                        </button>
-                      );
-                    })}
-                  </div>
+                  {/* Left shrunk ~20% from previous 7/12 → ~5.6/12 */}
+                  <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,46.67%)_minmax(0,1fr)] gap-4 items-start">
+                    {/* Left: specs + action bars */}
+                    <div className="space-y-3 min-w-0" onClick={(e) => e.stopPropagation()}>
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                        {CLASS_SPECS[selectedChar.classId].map(spec => {
+                          const isActive = selectedChar.lastSpec === spec.id;
+                          return (
+                            <button
+                              key={spec.id}
+                              onClick={() => {
+                                setInspectedSpellId(null);
+                                onChangeSpec(selectedChar.id, spec.id);
+                              }}
+                              className={`px-3 py-2 rounded-lg border text-xs font-bold transition flex items-center justify-between ${
+                                isActive
+                                  ? 'border-amber-400 bg-amber-500/20 text-amber-300'
+                                  : 'border-[#333355] bg-[#121222] text-gray-400 hover:border-gray-500'
+                              }`}
+                            >
+                              <span>{spec.name}</span>
+                              <span className="text-[10px] text-gray-400">
+                                {spec.role === 'TANK' ? '🛡️ 坦' : spec.role === 'HEALER' ? '💚 奶' : '⚔️ DPS'}
+                              </span>
+                            </button>
+                          );
+                        })}
+                      </div>
 
-                  {/* 3x12 Action Bars (Shared Layout with Combat) */}
-                  <div className="bg-[#10101e] p-3 rounded-lg border border-[#25253d] space-y-2">
-                    <div className="flex items-center justify-between text-[11px] text-gray-400 font-semibold border-b border-[#25253d] pb-2">
-                      <div className="flex flex-col space-y-0.5">
-                        <div className="flex items-center space-x-2">
-                          <span className="text-white font-bold">[{selectedChar.lastSpec}] 战斗动作条排布 (三栏36格 · 与战斗完全同步)：</span>
-                          <span className="text-[10px] text-amber-300 font-bold">
-                            {sniffingSlotIdx !== null
-                              ? `⚡ 正在为 槽位 #${sniffingSlotIdx + 1} 录入按键：请在键盘上按下单键 (如 F2) 或组合键 (如 Shift+C)，按 ESC 取消`
-                              : editingKeybinding
-                              ? '👉 单击任意动作条格子即可选择并录入新按键，拖出格子外可移除技能'
-                              : '可直接拖拽调整顺序，拖出格子外移除技能，修改即时自动保存'}
-                          </span>
+                      <div className="bg-[#10101e] p-3 rounded-lg border border-[#25253d] space-y-2">
+                        <div className="flex items-center justify-between text-[11px] text-gray-400 font-semibold border-b border-[#25253d] pb-2 gap-2">
+                          <span className="text-white font-bold">动作条</span>
+                          <div className="flex items-center space-x-2 flex-shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => setIsSkillBookOpen(true)}
+                              className="text-xs px-2.5 py-1 bg-indigo-700 hover:bg-indigo-600 text-white rounded font-bold shadow flex items-center space-x-1"
+                              title="打开法术书，可拖动全部技能填入三栏槽位"
+                            >
+                              <span>📖</span>
+                              <span>法术书</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingKeybinding(!editingKeybinding);
+                                setSniffingSlotIdx(null);
+                              }}
+                              className={`text-xs px-2.5 py-1 rounded font-bold transition border ${
+                                editingKeybinding
+                                  ? 'bg-amber-500 text-black border-amber-400 shadow-md ring-2 ring-amber-400/50'
+                                  : 'bg-black/40 text-gray-300 hover:text-white border-gray-600'
+                              }`}
+                              title="点击后单击任意技能格子，直接按下键盘按键完成绑定"
+                            >
+                              {editingKeybinding ? '✓ 完成改键' : '改键位'}
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                      <div className="flex items-center space-x-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setEditingKeybinding(!editingKeybinding);
-                            setSniffingSlotIdx(null);
-                          }}
-                          className={`text-xs px-2.5 py-1 rounded font-bold transition border ${
-                            editingKeybinding
-                              ? 'bg-amber-500 text-black border-amber-400 shadow-md ring-2 ring-amber-400/50'
-                              : 'bg-black/40 text-gray-300 hover:text-white border-gray-600'
-                          }`}
-                          title="点击后单击任意技能格子，直接按下键盘按键完成绑定"
-                        >
-                          {editingKeybinding ? '✓ 完成按键修改' : '⌨️ 修改按键习惯 (单击录入)'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setIsSkillBookOpen(true)}
-                          className="text-xs px-2.5 py-1 bg-indigo-700 hover:bg-indigo-600 text-white rounded font-bold shadow flex items-center space-x-1"
-                          title="打开法术书，可拖动全部技能填入三栏槽位"
-                        >
-                          <span>📖</span>
-                          <span>法术书与快捷键配置</span>
-                        </button>
-                      </div>
-                    </div>
 
-                    {/* 3 Rows: Bar 3 (24..35), Bar 2 (12..23), Bar 1 (0..11) */}
-                    <div className="flex flex-col space-y-2 pt-1">
-                      {([
-                        { rowName: '动作条 3 (F1~F12)', startIdx: 24 },
-                        { rowName: '动作条 2 (Shift+1~=)', startIdx: 12 },
-                        { rowName: '动作条 1 (主动作栏 1~=)', startIdx: 0 },
-                      ] as const).map(({ rowName, startIdx }) => (
-                        <div key={startIdx} className="flex items-center space-x-2">
-                          <span className="text-[10px] font-mono text-gray-400 w-20 truncate flex-shrink-0 select-none font-bold">
-                            {rowName.split(' ')[0]}
-                          </span>
-                          <div className="grid grid-cols-12 gap-0 flex-1 border border-[#3b3b5c] rounded-lg overflow-hidden bg-[#0c0c18] shadow-md">
+                        {/* 12 square slots fill left column width; height = width */}
+                        <div className="flex flex-col space-y-0.5 pt-1 w-full">
+                      {([24, 12, 0] as const).map((startIdx) => (
+                        <div key={startIdx} className="grid grid-cols-12 gap-0.5 w-full border border-[#3b3b5c] rounded-lg overflow-hidden bg-[#0c0c18] shadow-md">
                             {Array.from({ length: 12 }).map((_, col) => {
                               const idx = startIdx + col;
-                              const currentKey = currentSpecKeybindings[idx] || DEFAULT_KEYBINDINGS[idx] || (idx + 1).toString();
+                              const { key: currentKey, isUnbound } = resolveSlotHotkey(currentSpecKeybindings, idx);
                               const slot = activeSlots.find(s => s.slotIdx === idx);
                               const iconSvg = slot ? SPELL_ICONS[slot.spellId] : null;
+                              const isInspected = !!(slot && inspectedSpellId === slot.spellId);
 
                               return (
                                 <div
@@ -932,29 +960,29 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
                                     (window as any).__cata_dragged_spell = null;
                                     (window as any).__cata_dragged_slot = null;
                                   }}
-                                  onClick={() => {
+                                  onClick={(e) => {
+                                    e.stopPropagation();
                                     if (editingKeybinding) {
                                       setSniffingSlotIdx(idx);
+                                      return;
+                                    }
+                                    if (slot?.spellId) {
+                                      setInspectedSpellId(slot.spellId);
+                                    } else {
+                                      setInspectedSpellId(null);
                                     }
                                   }}
-                                  onMouseEnter={(e) => {
-                                    if (slot) {
-                                      const rect = e.currentTarget.getBoundingClientRect();
-                                      setTooltipPos({ x: rect.left, y: rect.top });
-                                      setHoveredSlot(slot);
-                                    }
-                                  }}
-                                  onMouseLeave={() => setHoveredSlot(null)}
-                                  className={`aspect-square min-w-[44px] max-w-[64px] w-full min-h-[44px] md:min-h-[52px] border-r border-[#28283e] last:border-r-0 flex flex-col items-center justify-between relative overflow-hidden transition cursor-pointer select-none ${
+                                  className={`w-full aspect-square min-w-0 border border-[#28283e] flex flex-col items-center justify-between relative overflow-hidden transition cursor-pointer select-none ${
                                     sniffingSlotIdx === idx
                                       ? 'border-amber-400 ring-2 ring-amber-400 bg-amber-500/20 shadow-[0_0_12px_rgba(251,191,36,0.6)] animate-pulse z-20'
                                       : draggedSlotIdx === idx
                                       ? 'opacity-50 ring-2 ring-amber-400 z-20'
+                                      : isInspected
+                                      ? 'bg-[#1f1f35] ring-2 ring-sky-400/80 z-10'
                                       : slot
                                       ? 'bg-[#141424] hover:bg-[#1f1f35] hover:z-10'
                                       : 'bg-[#0c0c18] hover:bg-[#131322] hover:z-10'
                                   }`}
-                                  title={slot ? `${slot.name} (${currentKey}) - 可拖拽互换位置或拖出格子外移除` : `槽位 #${idx + 1} (${currentKey}) - 空`}
                                 >
                                   {/* Layer 1 (z-10): Authentic Spell Icon filling slot normally */}
                                   {slot ? (
@@ -982,15 +1010,23 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
                                     #{idx + 1}
                                   </span>
 
-                                  {/* Layer 2 (z-20): Hotkey Badge (Top Right) */}
+                                  {/* Layer 2 (z-20): Hotkey Badge (Top Right) — N/A in red when unbound/conflict */}
                                   <span
                                     className={`absolute top-0.5 right-0.5 text-[8.5px] font-mono font-bold drop-shadow-[0_1px_2px_rgba(0,0,0,1)] px-1 rounded z-20 pointer-events-none leading-tight border ${
                                       sniffingSlotIdx === idx
                                         ? 'bg-amber-400 text-black border-amber-300 animate-pulse'
+                                        : isUnbound
+                                        ? 'bg-black/90 text-red-400 border-red-500/70'
                                         : 'bg-black/85 text-amber-300 border-amber-500/50'
                                     }`}
                                   >
-                                    {sniffingSlotIdx === idx ? '按键...' : (currentKey.startsWith('SHIFT+') ? `S${currentKey.replace('SHIFT+', '')}` : currentKey)}
+                                    {sniffingSlotIdx === idx
+                                      ? '按键...'
+                                      : isUnbound
+                                      ? 'N/A'
+                                      : currentKey.startsWith('SHIFT+')
+                                      ? `S${currentKey.replace('SHIFT+', '')}`
+                                      : currentKey}
                                   </span>
 
                                   {/* Layer 2 (z-20): Spell Name Label Banner (Bottom) */}
@@ -1011,9 +1047,135 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
                                 </div>
                               );
                             })}
-                          </div>
                         </div>
                       ))}
+                    </div>
+                      </div>
+                    </div>
+
+                    {/* Right: spell tip when inspecting; otherwise selected spec introduction */}
+                    <div className="min-w-0" onClick={(e) => e.stopPropagation()}>
+                      {(() => {
+                        const tip = inspectedSpellId
+                          ? getSpellTooltipWithFallback(inspectedSpellId, selectedChar.classId)
+                          : null;
+                        if (inspectedSpellId && tip) {
+                          const iconSvg = SPELL_ICONS[inspectedSpellId];
+                          return (
+                            <div className="h-full rounded-lg border border-[#5c4a28] bg-[#121222] p-4 space-y-3">
+                              <div className="flex items-start justify-between gap-2">
+                                <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">
+                                  技能详细说明
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => setInspectedSpellId(null)}
+                                  className="text-[10px] text-slate-400 hover:text-amber-300 transition"
+                                  title="返回专精介绍"
+                                >
+                                  返回专精介绍
+                                </button>
+                              </div>
+                              <div className="bg-[#0b0b18] border border-[#5c4a28] rounded-md p-3 text-gray-200 text-xs space-y-2">
+                                <div className="flex items-center space-x-2 pb-2 border-b border-[#3e341f]">
+                                  {iconSvg ? (
+                                    <div
+                                      className="w-10 h-10 rounded overflow-hidden flex-shrink-0 border border-black/80 p-0.5 flex items-center justify-center [&>svg]:w-full [&>svg]:h-full [&>svg]:block"
+                                      dangerouslySetInnerHTML={{ __html: iconSvg }}
+                                    />
+                                  ) : (
+                                    <div
+                                      className="w-10 h-10 rounded flex-shrink-0 border border-amber-500/50 flex items-center justify-center font-extrabold text-xs"
+                                      style={{
+                                        backgroundColor: '#1a1a32',
+                                        color: CLASS_COLORS[selectedChar.classId],
+                                      }}
+                                    >
+                                      {tip.name.slice(0, 2)}
+                                    </div>
+                                  )}
+                                  <div className="min-w-0">
+                                    <div className="font-extrabold text-amber-300 text-sm tracking-wide truncate">
+                                      {tip.name}
+                                    </div>
+                                    <div className="text-gray-400 text-[11px] font-mono truncate">
+                                      {tip.cost}
+                                    </div>
+                                  </div>
+                                </div>
+                                <div className="flex justify-between text-[11px] text-gray-300">
+                                  <span>{tip.castTime}</span>
+                                  <span>{tip.range}</span>
+                                </div>
+                                <div className="flex justify-between text-[11px] text-gray-300">
+                                  <span>冷却：{tip.cooldown}</span>
+                                  <span className="text-amber-200">{tip.school}系</span>
+                                </div>
+                                <div className="pt-2 border-t border-[#3e341f] text-[#ffd100] text-xs leading-relaxed">
+                                  {tip.description}
+                                </div>
+                              </div>
+                              <p className="text-[10px] text-slate-500">
+                                单击空白格子或本区空白处可返回专精介绍。
+                              </p>
+                            </div>
+                          );
+                        }
+
+                        const activeSpecMeta =
+                          CLASS_SPECS[selectedChar.classId].find(s => s.id === selectedChar.lastSpec) ||
+                          CLASS_SPECS[selectedChar.classId][0];
+                        const intro = getSpecIntro(selectedChar.classId, selectedChar.lastSpec);
+                        const roleLabel =
+                          activeSpecMeta.role === 'TANK'
+                            ? '坦克'
+                            : activeSpecMeta.role === 'HEALER'
+                            ? '治疗'
+                            : '输出';
+                        return (
+                          <div className="h-full rounded-lg border border-[#2e2e4e] bg-[#121222] p-4 space-y-3">
+                            <div className="flex items-start justify-between gap-2">
+                              <div>
+                                <div className="text-[10px] uppercase tracking-wider text-slate-500 font-bold">
+                                  专精介绍
+                                </div>
+                                <h5
+                                  className="text-base font-extrabold mt-0.5"
+                                  style={{ color: CLASS_COLORS[selectedChar.classId] }}
+                                >
+                                  {activeSpecMeta.name}
+                                </h5>
+                              </div>
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded border border-slate-600 text-slate-300 bg-black/40 flex-shrink-0">
+                                {roleLabel}
+                              </span>
+                            </div>
+                            <p className="text-xs text-slate-300 leading-relaxed">{intro.summary}</p>
+                            <div className="text-[11px] text-amber-300/90 font-semibold">
+                              定位：{intro.playstyle}
+                            </div>
+                            {intro.highlights.length > 0 && (
+                              <div className="space-y-1.5 pt-1 border-t border-[#2a2a44]">
+                                <div className="text-[10px] text-slate-500 font-bold">核心方向</div>
+                                <ul className="space-y-1">
+                                  {intro.highlights.map(h => (
+                                    <li
+                                      key={h}
+                                      className="text-[11px] text-slate-300 flex items-center gap-1.5"
+                                    >
+                                      <span className="text-amber-400">•</span>
+                                      <span>{h}</span>
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                            <p className="text-[10px] text-slate-500 pt-1">
+                              每个专精独立记忆动作条与快捷键，切换后自动加载。单击动作条技能可查看说明。
+                            </p>
+                          </div>
+                        );
+                      })()}
                     </div>
                   </div>
                 </div>
@@ -1071,45 +1233,53 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
             )}
           </div>
         </div>
-      </div>
+        )}
 
       {/* Create Character Modal */}
-      {isCreating && (
+      {isCreating && isLoggedIn && (
         <div className="fixed inset-0 bg-black/75 flex items-center justify-center z-50 p-4">
           <div className="bg-[#1a1a30] border border-amber-400/60 rounded-xl p-5 max-w-md w-full space-y-4 shadow-2xl">
             <h3 className="text-base font-bold text-amber-300">创建新冒险者</h3>
             <form onSubmit={handleCreateSubmit} className="space-y-3">
               <div>
-                <label className="text-xs text-gray-300 block mb-1">角色名称</label>
+                <label className="text-xs text-gray-300 block mb-1">角色名称（全服唯一，不可与 AI 重名）</label>
                 <input
                   type="text"
                   required
+                  disabled={createCharBusy}
                   placeholder="例如：阿尔萨斯"
                   value={newCharName}
-                  onChange={(e) => setNewCharName(e.target.value)}
-                  className="w-full bg-[#10101e] border border-[#3b3b5c] rounded p-2 text-sm text-white focus:border-amber-400 outline-none"
+                  onChange={(e) => {
+                    setNewCharName(e.target.value);
+                    if (createCharError) setCreateCharError(null);
+                  }}
+                  className="w-full bg-[#10101e] border border-[#3b3b5c] rounded p-2 text-sm text-white focus:border-amber-400 outline-none disabled:opacity-60"
                 />
+                <p className="mt-1 text-[10px] text-slate-500">将校验服务器全部角色名与 AI 队友名</p>
+                {createCharError && (
+                  <p className="mt-1.5 text-xs text-red-400 font-semibold">{createCharError}</p>
+                )}
               </div>
 
               <div>
                 <label className="text-xs text-gray-300 block mb-1">选择职业</label>
                 <div className="grid grid-cols-2 gap-2">
-                  {(['DK', 'DRUID', 'SHAMAN', 'MAGE', 'ROGUE'] as ClassId[]).map(cls => (
+                  {(['DK', 'DRUID', 'SHAMAN', 'MAGE', 'ROGUE', 'WARRIOR', 'PALADIN', 'HUNTER', 'PRIEST', 'WARLOCK'] as ClassId[]).map(cls => (
                     <button
                       key={cls}
                       type="button"
                       onClick={() => handleClassChange(cls)}
-                      className={`p-2 rounded border text-xs font-bold text-left flex items-center space-x-2 ${
+                      className={`p-2 rounded border text-xs font-bold text-left flex items-center space-x-2 transition ${
                         newCharClass === cls
                           ? 'border-amber-400 bg-amber-500/20 text-white'
-                          : 'border-[#2d2d48] bg-[#121222] text-gray-400'
+                          : 'border-[#2d2d48] bg-[#121222] text-gray-300 hover:border-[#4b4b75]'
                       }`}
                     >
                       <div
                         className="w-5 h-5 rounded overflow-hidden flex-shrink-0"
-                        dangerouslySetInnerHTML={{ __html: CLASS_PIXEL_AVATARS[cls] }}
+                        dangerouslySetInnerHTML={{ __html: CLASS_PIXEL_AVATARS[cls] || '' }}
                       />
-                      <span>{CLASS_NAMES[cls]}</span>
+                      <span style={{ color: newCharClass === cls ? '#FFFFFF' : CLASS_COLORS[cls] }}>{CLASS_NAMES[cls]}</span>
                     </button>
                   ))}
                 </div>
@@ -1133,16 +1303,18 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
               <div className="flex justify-end space-x-2 pt-2">
                 <button
                   type="button"
+                  disabled={createCharBusy}
                   onClick={() => setIsCreating(false)}
-                  className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 rounded text-gray-300"
+                  className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 rounded text-gray-300 disabled:opacity-50"
                 >
                   取消
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-1.5 text-xs bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded shadow"
+                  disabled={createCharBusy}
+                  className="px-4 py-1.5 text-xs bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded shadow disabled:opacity-60"
                 >
-                  确认创建
+                  {createCharBusy ? '校验中…' : '确认创建'}
                 </button>
               </div>
             </form>
@@ -1150,43 +1322,240 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
         </div>
       )}
 
-      {/* Switch Account / Login Modal */}
-      {showLoginModal && (
-        <div className="fixed inset-0 bg-black/75 flex items-center justify-center z-50 p-4">
-          <div className="bg-[#1a1a30] border border-blue-400/60 rounded-xl p-5 max-w-sm w-full space-y-4 shadow-2xl">
-            <h3 className="text-base font-bold text-blue-300">用户登录 / 切换账号</h3>
+      {/* Delete / cancel account confirm */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[70] p-4">
+          <div className="bg-[#1a1218] border border-red-600/50 rounded-2xl p-5 max-w-sm w-full space-y-3 shadow-2xl">
+            <h3 className="text-base font-extrabold text-red-300">删除账号</h3>
+            <p className="text-xs text-slate-300 leading-relaxed">
+              将从<strong className="text-amber-300">服务器永久删除</strong>账号「{currentAccountName}」及全部角色、键位与通关记录，且不可恢复。
+            </p>
             <div>
-              <label className="text-xs text-gray-300 block mb-1">账号用户名</label>
+              <label className="text-[11px] text-slate-300 font-semibold block mb-1.5">输入密码确认</label>
               <input
-                type="text"
-                placeholder="输入用户名（如：PlayerOne）"
-                value={loginInput}
-                onChange={(e) => setLoginInput(e.target.value)}
-                className="w-full bg-[#10101e] border border-[#3b3b5c] rounded p-2 text-sm text-white focus:border-blue-400 outline-none"
+                type="password"
+                value={deletePassword}
+                onChange={(e) => setDeletePassword(e.target.value)}
+                placeholder="当前账号密码"
+                className="w-full bg-[#0c1220] border border-red-900/50 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-red-400"
               />
             </div>
-            <div className="flex justify-end space-x-2">
+            {deleteError && (
+              <div className="text-xs text-red-300 bg-red-950/50 border border-red-700/50 rounded-lg px-3 py-2">
+                {deleteError}
+              </div>
+            )}
+            <div className="flex justify-end space-x-2 pt-1">
               <button
                 type="button"
-                onClick={() => setShowLoginModal(false)}
-                className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 rounded text-gray-300"
+                onClick={() => {
+                  setShowDeleteConfirm(false);
+                  setDeletePassword('');
+                  setDeleteError(null);
+                }}
+                className="px-3 py-2 text-xs bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-300 border border-slate-600"
               >
                 取消
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  if (loginInput.trim()) {
-                    onLogin(loginInput.trim());
-                    setShowLoginModal(false);
-                    setLoginInput('');
-                  }
-                }}
-                className="px-4 py-1.5 text-xs bg-blue-600 hover:bg-blue-500 text-white font-bold rounded shadow"
+                disabled={deleteBusy}
+                onClick={handleDeleteAccount}
+                className="px-4 py-2 text-xs font-extrabold bg-red-700 hover:bg-red-600 rounded-lg text-white border border-red-400/40 disabled:opacity-60"
               >
-                登录 / 注册
+                {deleteBusy ? '删除中…' : '确认删除'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* Login / Register Modal */}
+      {showLoginModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[60] p-4">
+          <div className="relative bg-gradient-to-b from-[#1a2238] to-[#12182a] border border-sky-500/40 rounded-2xl p-0 max-w-md w-full shadow-2xl overflow-hidden">
+            <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-sky-500 via-amber-400 to-emerald-500" />
+            <div className="px-6 pt-6 pb-2">
+              <div className="flex items-center space-x-3 mb-1">
+                <span className="text-2xl">{authMode === 'login' ? '🔐' : '✨'}</span>
+                <div>
+                  <h3 className="text-lg font-extrabold text-amber-200 tracking-wide">
+                    {authMode === 'login' ? '账号登录' : '注册新账号'}
+                  </h3>
+                  <p className="text-[11px] text-slate-400">
+                    {authMode === 'login'
+                      ? '使用用户名与密码登录，跨端同步角色与键位'
+                      : '创建账号后可保存角色、键位与通关证书'}
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-4 grid grid-cols-2 gap-1 p-1 rounded-xl bg-black/35 border border-white/5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthMode('login');
+                    setAuthError(null);
+                    setAuthPasswordConfirm('');
+                  }}
+                  className={`py-2 text-xs font-bold rounded-lg transition ${
+                    authMode === 'login'
+                      ? 'bg-sky-600 text-white shadow'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  登录
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthMode('register');
+                    setAuthError(null);
+                  }}
+                  className={`py-2 text-xs font-bold rounded-lg transition ${
+                    authMode === 'register'
+                      ? 'bg-emerald-600 text-white shadow'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  注册
+                </button>
+              </div>
+            </div>
+
+            <form onSubmit={handleAuthSubmit} className="px-6 pb-6 pt-3 space-y-3.5">
+              <div>
+                <label className="text-[11px] text-slate-300 font-semibold block mb-1.5">用户名</label>
+                <input
+                  type="text"
+                  autoComplete="username"
+                  autoFocus
+                  placeholder="例如：Champion"
+                  value={authUsername}
+                  onChange={(e) => setAuthUsername(e.target.value)}
+                  className="w-full bg-[#0c1220] border border-[#3a4560] rounded-lg px-3 py-2.5 text-sm text-white placeholder:text-slate-600 focus:border-sky-400 focus:ring-1 focus:ring-sky-400/40 outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="text-[11px] text-slate-300 font-semibold block mb-1.5">密码</label>
+                <div className="relative">
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    autoComplete={authMode === 'login' ? 'current-password' : 'new-password'}
+                    placeholder={authMode === 'register' ? '至少 4 位' : '输入密码'}
+                    value={authPassword}
+                    onChange={(e) => setAuthPassword(e.target.value)}
+                    className="w-full bg-[#0c1220] border border-[#3a4560] rounded-lg px-3 py-2.5 pr-16 text-sm text-white placeholder:text-slate-600 focus:border-sky-400 focus:ring-1 focus:ring-sky-400/40 outline-none"
+                  />
+                  <button
+                    type="button"
+                    tabIndex={-1}
+                    onClick={() => setShowPassword((v) => !v)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] text-slate-400 hover:text-sky-300 px-2 py-1"
+                  >
+                    {showPassword ? '隐藏' : '显示'}
+                  </button>
+                </div>
+              </div>
+
+              {authMode === 'register' && (
+                <div>
+                  <label className="text-[11px] text-slate-300 font-semibold block mb-1.5">确认密码</label>
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    autoComplete="new-password"
+                    placeholder="再次输入密码"
+                    value={authPasswordConfirm}
+                    onChange={(e) => setAuthPasswordConfirm(e.target.value)}
+                    className="w-full bg-[#0c1220] border border-[#3a4560] rounded-lg px-3 py-2.5 text-sm text-white placeholder:text-slate-600 focus:border-emerald-400 focus:ring-1 focus:ring-emerald-400/40 outline-none"
+                  />
+                </div>
+              )}
+
+              {authError && (
+                <div className="text-xs text-red-300 bg-red-950/50 border border-red-700/50 rounded-lg px-3 py-2">
+                  {authError}
+                </div>
+              )}
+
+              <label className="flex items-center space-x-2 cursor-pointer select-none py-0.5">
+                <input
+                  type="checkbox"
+                  checked={rememberAuth}
+                  onChange={(e) => setRememberAuth(e.target.checked)}
+                  className="rounded border-slate-500 bg-[#0c1220] text-sky-500 focus:ring-sky-400/40"
+                />
+                <span className="text-[11px] text-slate-300">记住账号密码（仅保存在本机，方便下次自动填入）</span>
+              </label>
+
+              <p className="text-[10px] text-slate-500 leading-relaxed">
+                {authMode === 'login'
+                  ? '登录将与服务器校验；同账号其他未断开的客户端会被踢下线。'
+                  : '注册由服务器校验用户名唯一性，已被占用则无法创建。'}
+              </p>
+
+              <div className="flex items-center justify-between pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowLoginModal(false);
+                    resetAuthForm(true);
+                  }}
+                  className="px-3 py-2 text-xs bg-slate-800 hover:bg-slate-700 rounded-lg text-slate-300 border border-slate-600"
+                >
+                  取消
+                </button>
+                <button
+                  type="submit"
+                  disabled={authBusy}
+                  className={`px-5 py-2 text-xs font-extrabold rounded-lg shadow border disabled:opacity-60 ${
+                    authMode === 'login'
+                      ? 'bg-sky-600 hover:bg-sky-500 border-sky-400/40 text-white'
+                      : 'bg-emerald-600 hover:bg-emerald-500 border-emerald-400/40 text-white'
+                  }`}
+                >
+                  {authBusy
+                    ? '连接中…'
+                    : authMode === 'login'
+                    ? '登录'
+                    : '创建账号'}
+                </button>
+              </div>
+
+              <p className="text-[10px] text-slate-500 text-center pt-1">
+                {authMode === 'login' ? (
+                  <>
+                    还没有账号？
+                    <button
+                      type="button"
+                      className="text-emerald-400 hover:underline ml-1"
+                      onClick={() => {
+                        setAuthMode('register');
+                        setAuthError(null);
+                      }}
+                    >
+                      去注册
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    已有账号？
+                    <button
+                      type="button"
+                      className="text-sky-400 hover:underline ml-1"
+                      onClick={() => {
+                        setAuthMode('login');
+                        setAuthError(null);
+                        setAuthPasswordConfirm('');
+                      }}
+                    >
+                      去登录
+                    </button>
+                  </>
+                )}
+              </p>
+            </form>
           </div>
         </div>
       )}
@@ -1215,49 +1584,6 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
         />
       )}
 
-      {/* Authentic WoW Cataclysm 4.3 Spell Tooltip on Hover */}
-      {hoveredSlot && SPELL_TOOLTIPS[hoveredSlot.spellId] && (
-        <div
-          className="fixed z-[9999] pointer-events-none w-72 bg-[#0d0d1e]/98 border-2 border-[#5c4a28] rounded-md p-3 shadow-2xl backdrop-blur font-sans text-xs text-gray-200"
-          style={{
-            left: `${Math.min(window.innerWidth - 300, Math.max(10, tooltipPos.x - 100))}px`,
-            bottom: tooltipPos.y > 220 ? `${window.innerHeight - tooltipPos.y + 12}px` : undefined,
-            top: tooltipPos.y <= 220 ? `${tooltipPos.y + 48}px` : undefined,
-          }}
-        >
-          {(() => {
-            const tip = SPELL_TOOLTIPS[hoveredSlot.spellId];
-            return (
-              <div className="space-y-1.5">
-                {/* Header: Name and Cost */}
-                <div className="flex justify-between items-start border-b border-[#3e341f] pb-1">
-                  <span className="font-extrabold text-amber-300 text-sm tracking-wide">
-                    {tip.name}
-                  </span>
-                  <span className="text-gray-300 font-mono text-[11px]">{tip.cost}</span>
-                </div>
-
-                {/* Cast Time & Range */}
-                <div className="flex justify-between text-[11px] text-gray-300">
-                  <span>{tip.castTime}</span>
-                  <span>{tip.range}</span>
-                </div>
-
-                {/* Cooldown & School */}
-                <div className="flex justify-between text-[11px] text-gray-300">
-                  <span>冷却时间：{tip.cooldown}</span>
-                  <span className="text-amber-200">{tip.school}法术</span>
-                </div>
-
-                {/* Description in Golden Cream Text */}
-                <div className="pt-1.5 border-t border-[#3e341f] text-[#ffd100] text-[11px] leading-relaxed">
-                  {tip.description}
-                </div>
-              </div>
-            );
-          })()}
-        </div>
-      )}
     </div>
   );
 };

@@ -31,20 +31,24 @@ export const CLASS_COLORS_CATA: Record<string, string> = {
  */
 export function getPlayerDispelCapabilities(classId?: string, specId?: string): DispelType[] {
   if (!classId) return [];
+  const sp = (specId || '').toUpperCase();
   if (classId === 'DRUID') {
-    if (specId === 'RESTORATION') {
-      return ['MAGIC', 'CURSE', 'POISON'];
-    }
-    return ['CURSE', 'POISON'];
+    return sp === 'RESTORATION' ? ['MAGIC', 'CURSE', 'POISON'] : ['CURSE', 'POISON'];
   }
   if (classId === 'SHAMAN') {
-    if (specId === 'RESTORATION') {
-      return ['MAGIC', 'CURSE'];
-    }
-    return ['CURSE'];
+    return sp === 'RESTORATION' ? ['MAGIC', 'CURSE'] : ['CURSE'];
+  }
+  if (classId === 'PALADIN') {
+    return sp === 'HOLY' ? ['MAGIC', 'POISON', 'DISEASE'] : ['POISON', 'DISEASE'];
+  }
+  if (classId === 'PRIEST') {
+    return ['MAGIC', 'DISEASE'];
   }
   if (classId === 'MAGE') {
     return ['CURSE'];
+  }
+  if (classId === 'WARLOCK') {
+    return ['MAGIC'];
   }
   return [];
 }
@@ -88,11 +92,21 @@ const BUFF_ICONS_CONFIG: Record<string, { label: string; color: string; border: 
   tranquility: { label: '宁', color: '#90EE90', border: 'border-emerald-400' },
   druid_tranquility: { label: '宁', color: '#90EE90', border: 'border-emerald-400' },
   natures_swiftness: { label: '捷', color: '#10B981', border: 'border-emerald-400' },
+  power_word_shield: { label: '盾', color: '#FDE047', border: 'border-yellow-300' },
+  beacon_of_light: { label: '道', color: '#F58CBA', border: 'border-pink-400' },
+  blessing_of_kings: { label: '王', color: '#FACC15', border: 'border-amber-400' },
+  power_word_fortitude: { label: '韧', color: '#E2E8F0', border: 'border-slate-300' },
+  battle_shout: { label: '吼', color: '#C79C6E', border: 'border-amber-600' },
+  avenging_wrath: { label: '翅', color: '#FDE047', border: 'border-yellow-400' },
+  shield_wall: { label: '墙', color: '#94A3B8', border: 'border-slate-400' },
+  pain_suppression: { label: '压', color: '#F8FAFC', border: 'border-white' },
+  guardian_spirit: { label: '灵', color: '#FEF08A', border: 'border-yellow-200' },
+  divine_shield: { label: '无', color: '#FDE047', border: 'border-yellow-300' },
 };
 
 export const RAID_TARGET_MARKS = ['⭐', '🟡', '🔷', '🔺', '🌙', '🟩', '❌', '💀'];
 
-export const ROLE_ICONS: Record<string, JSX.Element> = {
+export const ROLE_ICONS: Record<string, React.JSX.Element> = {
   TANK: (
     <svg viewBox="0 0 24 24" className="w-full h-full fill-current text-sky-400 drop-shadow">
       <path d="M12 2L4 5v6.09c0 5.05 3.41 9.76 8 10.91 4.59-1.15 8-5.86 8-10.91V5l-8-3z" />

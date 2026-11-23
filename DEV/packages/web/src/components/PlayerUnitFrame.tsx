@@ -97,34 +97,49 @@ export const PlayerUnitFrame: React.FC<PlayerUnitFrameProps> = ({
   const classColor = CLASS_COLORS_CATA[player.classId] || '#69CCF0';
 
   // Absorb shield calculation
-  let absorbAmount = 0;
+  let absorbAmount = player.absorb || 0;
   const boneShieldBuff = player.buffs?.find(b => b.spellId === 'bone_shield');
-  if (boneShieldBuff) {
-    absorbAmount += (boneShieldBuff.stacks || 1) * 8000;
+  if (boneShieldBuff && absorbAmount === 0) {
+    absorbAmount += (boneShieldBuff.stacks || 1) * 4000;
   }
   const absorbPct = player.maxHp > 0 ? Math.min(100 - hpPct, (absorbAmount / player.maxHp) * 100) : 0;
 
-  // Power bar adaptation
-  const isCasterHealer = player.classId === 'DRUID' || player.classId === 'SHAMAN' || player.classId === 'MAGE';
+  // Power bar adaptation (all 10 Cataclysm classes)
   const isRogue = player.classId === 'ROGUE';
   const isDK = player.classId === 'DK';
+  const isWarrior = player.classId === 'WARRIOR';
+  const isHunter = player.classId === 'HUNTER';
 
   let powerBarColor = '#0070DE'; // Blue Mana
   let powerCurrent = player.mp || 0;
-  let powerMax = player.maxMp || 100000;
-  let powerText = `${powerCurrent.toLocaleString()} / ${powerMax.toLocaleString()}`;
+  let powerMax = player.maxMp || 45000;
+  let powerText = `${Math.round(powerCurrent).toLocaleString()} / ${Math.round(powerMax).toLocaleString()}`;
   let powerPct = powerMax > 0 ? Math.max(0, Math.min(100, (powerCurrent / powerMax) * 100)) : 0;
 
   if (isRogue) {
     powerBarColor = '#FFF569'; // Yellow Energy
-    powerCurrent = player.energy ?? 100;
+    powerCurrent = Math.round(player.energy ?? 100);
     powerMax = 100;
     powerText = `${powerCurrent} / 100`;
     powerPct = Math.max(0, Math.min(100, powerCurrent));
+  } else if (isWarrior) {
+    const rageRes = player.resources?.find(r => r.kind === 'RAGE');
+    powerBarColor = '#DC2626'; // Crimson Rage
+    powerCurrent = Math.round(rageRes?.current ?? player.rage ?? 0);
+    powerMax = rageRes?.max ?? 100;
+    powerText = `${powerCurrent} / ${powerMax}`;
+    powerPct = powerMax > 0 ? Math.max(0, Math.min(100, (powerCurrent / powerMax) * 100)) : 0;
+  } else if (isHunter) {
+    const focusRes = player.resources?.find(r => r.kind === 'FOCUS');
+    powerBarColor = '#F97316'; // Orange Focus
+    powerCurrent = Math.round(focusRes?.current ?? player.focus ?? 100);
+    powerMax = focusRes?.max ?? 100;
+    powerText = `${powerCurrent} / ${powerMax}`;
+    powerPct = powerMax > 0 ? Math.max(0, Math.min(100, (powerCurrent / powerMax) * 100)) : 0;
   } else if (isDK) {
     const rpRes = player.resources?.find(r => r.kind === 'RUNIC_POWER');
     powerBarColor = '#00D8FF'; // Cyan Runic Power
-    powerCurrent = rpRes?.current ?? (player as any).runicPower ?? 0;
+    powerCurrent = Math.round(rpRes?.current ?? player.runicPower ?? 0);
     powerMax = rpRes?.max ?? 100;
     powerText = `${powerCurrent} / ${powerMax}`;
     powerPct = powerMax > 0 ? Math.max(0, Math.min(100, (powerCurrent / powerMax) * 100)) : 0;
@@ -187,7 +202,7 @@ export const PlayerUnitFrame: React.FC<PlayerUnitFrameProps> = ({
               {player.name}
             </span>
             <span className="text-[9px] px-1 py-0.2 rounded font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
-              Lv.85
+              Lv.80
             </span>
           </div>
 
@@ -204,7 +219,7 @@ export const PlayerUnitFrame: React.FC<PlayerUnitFrameProps> = ({
 
         {/* Main Body: Circular Medallion Avatar on Left + Bars on Right */}
         <div className="flex items-center space-x-2.5">
-          {/* Avatar Medallion with Level 85 circular badge & Combat indicator */}
+          {/* Avatar Medallion with Level 80 circular badge & Combat indicator */}
           <div className="relative flex-shrink-0">
             <div
               onClick={() => onSelect && onSelect()}
@@ -214,12 +229,12 @@ export const PlayerUnitFrame: React.FC<PlayerUnitFrameProps> = ({
               dangerouslySetInnerHTML={{ __html: CLASS_PIXEL_AVATARS[player.classId] || '' }}
             />
 
-            {/* Level 85 circular badge at bottom-left */}
+            {/* Level 80 circular badge at bottom-left */}
             <div
               className="absolute -bottom-1 -left-1 w-5 h-5 rounded-full bg-[#1b1b32] border-2 border-[#d4af37] flex items-center justify-center text-[9px] font-black text-amber-300 shadow-[0_2px_4px_rgba(0,0,0,0.9)] z-20 pointer-events-none"
-              title="等级 85 (Cataclysm 满级)"
+              title="等级 80 (80级满级满急速)"
             >
-              85
+              80
             </div>
 
             {/* In-combat crossed swords indicator (⚔️) */}

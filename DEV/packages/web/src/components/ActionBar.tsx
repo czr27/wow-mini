@@ -1,6 +1,15 @@
 import React, { useEffect, useState, useCallback, useRef } from 'react';
-import type { KeybindingMap, ClassId } from '@cata-raid-sim/engine';
+import {
+  isOffGcdSpellId,
+  getSpellByAnyId,
+  getHastedCastTimeMs,
+  LEVEL_80_MAX_HASTE,
+  type KeybindingMap,
+  type ClassId,
+  type SpellResourceCostBundle,
+} from '@cata-raid-sim/engine';
 import { SPELL_ICONS, SPELL_TOOLTIPS } from '../assets/pixelIcons.js';
+import { sanitizeSavedActionBarPos, clampHudPosToViewport } from '../utils/hudLayout.js';
 export { PlayerCastBar } from './PlayerCastBar.js';
 export type { PlayerCastBarProps } from './PlayerCastBar.js';
 
@@ -26,6 +35,8 @@ export interface PlayerCastState {
   isHarmful?: boolean;
   maxAllowedRange?: number;
   totalCdMs?: number;
+  /** 读条技能延迟至施法成功结束时再扣除的资源（引导技能起手已扣除，不填此项） */
+  deferredCosts?: SpellResourceCostBundle;
 }
 
 /**
@@ -33,19 +44,29 @@ export interface PlayerCastState {
  */
 export const OFF_GCD_SPELLS = new Set<string>([
   // Druid
-  'natures_swiftness', 'barkskin',
+  'natures_swiftness', 'barkskin', 'skull_bash', 'berserk',
   // Death Knight
-  'mind_freeze', 'dark_command', 'pillar_of_frost', 'rune_strike',
+  'mind_freeze', 'dark_command', 'pillar_of_frost', 'rune_strike', 'vampiric_blood', 'icebound_fortitude', 'anti_magic_shell',
   // Shaman
-  'wind_shear', 'bloodlust', 'heroism',
+  'wind_shear', 'bloodlust', 'heroism', 'shamanistic_rage', 'thunderstorm',
   // Mage
   'counterspell', 'arcane_power', 'time_warp', 'ice_block',
   // Rogue
-  'kick', 'feint', 'adrenaline_rush', 'vendetta', 'evasion', 'cloak_of_shadows',
+  'kick', 'feint', 'adrenaline_rush', 'vendetta', 'evasion', 'cloak_of_shadows', 'shadow_dance',
+  // Warrior
+  'pummel', 'taunt', 'shield_wall', 'last_stand', 'berserker_rage',
+  // Paladin
+  'rebuke', 'hand_of_reckoning', 'divine_protection', 'ardent_defender', 'avenging_wrath',
+  // Hunter
+  'silencing_shot', 'bestial_wrath', 'rapid_fire', 'deterrence',
+  // Priest
+  'silence', 'pain_suppression', 'guardian_spirit', 'dispersion',
+  // Warlock
+  'fel_hunter_spell_lock', 'spell_lock', 'metamorphosis',
 ]);
 
 export function isOffGcdSpell(spellId: string): boolean {
-  return OFF_GCD_SPELLS.has(spellId);
+  return OFF_GCD_SPELLS.has(spellId) || isOffGcdSpellId(spellId);
 }
 
 interface Props {
@@ -63,6 +84,7 @@ interface Props {
   onCancelCast?: () => void;
   dkRunes?: Array<{ type: 'BLOOD' | 'FROST' | 'UNHOLY'; cdMs: number }>;
   comboPoints?: number;
+  holyPower?: number;
   isInCombat?: boolean;
   outOfRangeSpells?: Record<string, boolean>;
   isPlayerDead?: boolean;
@@ -70,7 +92,7 @@ interface Props {
   insufficientResourceSpells?: Record<string, boolean>;
   spellResourceErrors?: Record<string, string>;
   initialPos?: { x: number; y: number } | null;
-  onSavePos?: (pos: { x: number; y: number }) => void;
+  onSavePos?: (pos: { x: number; y: number } | null) => void;
 }
 
 export function formatSimplifiedHotkey(hotkey: string): string {
@@ -81,6 +103,24 @@ export function formatSimplifiedHotkey(hotkey: string): string {
   s = s.replace(/control\+/g, 'c+');
   s = s.replace(/alt\+/g, 'a+');
   return s;
+}
+
+/**
+ * Resolve a slot hotkey for display.
+ * - missing/undefined → default binding
+ * - explicit '' → unbound / conflict cleared → show N/A
+ */
+export function resolveSlotHotkey(
+  keybindings: Record<number, string> | KeybindingMap | undefined,
+  slotIdx: number
+): { key: string; isUnbound: boolean } {
+  const raw = keybindings?.[slotIdx];
+  if (raw === '') return { key: 'N/A', isUnbound: true };
+  if (raw != null && String(raw).trim() !== '') {
+    return { key: String(raw), isUnbound: false };
+  }
+  const fallback = DEFAULT_KEYBINDINGS[slotIdx];
+  return { key: fallback || '?', isUnbound: false };
 }
 
 export const DEFAULT_KEYBINDINGS: Record<number, string> = {
@@ -100,7 +140,7 @@ export const ActionBar: React.FC<Props> = ({
   keybindings,
   slots,
   gcdRemainingMs,
-  gcdTotalMs = 750,
+  gcdTotalMs = 1000,
   onCastSlot,
   onSwapSlots,
   onAssignSlot,
@@ -109,6 +149,7 @@ export const ActionBar: React.FC<Props> = ({
   onCancelCast,
   dkRunes,
   comboPoints = 0,
+  holyPower = 0,
   isInCombat = false,
   outOfRangeSpells = {},
   isPlayerDead = false,
@@ -118,15 +159,18 @@ export const ActionBar: React.FC<Props> = ({
   initialPos = null,
   onSavePos,
 }) => {
-  const [pos, setPos] = useState<{ x: number; y: number } | null>(initialPos);
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(() => sanitizeSavedActionBarPos(initialPos));
   const [isDraggingBar, setIsDraggingBar] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
   const barDragRef = useRef<{ startX: number; startY: number; origX: number; origY: number; latestX?: number; latestY?: number } | null>(null);
   const barContainerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
-    if (initialPos && (initialPos.x !== pos?.x || initialPos.y !== pos?.y)) {
-      setPos(initialPos);
+    const clean = sanitizeSavedActionBarPos(initialPos);
+    if (clean === null) {
+      if (pos !== null) setPos(null);
+    } else if (clean.x !== pos?.x || clean.y !== pos?.y) {
+      setPos(clean);
     }
   }, [initialPos]);
 
@@ -138,13 +182,16 @@ export const ActionBar: React.FC<Props> = ({
       const dx = e.clientX - barDragRef.current.startX;
       const dy = e.clientY - barDragRef.current.startY;
       const rect = barContainerRef.current.getBoundingClientRect();
-      const maxX = Math.max(0, window.innerWidth - rect.width);
-      const maxY = Math.max(0, window.innerHeight - rect.height);
-      const newX = Math.max(0, Math.min(maxX, barDragRef.current.origX + dx));
-      const newY = Math.max(0, Math.min(maxY, barDragRef.current.origY + dy));
-      barDragRef.current.latestX = newX;
-      barDragRef.current.latestY = newY;
-      setPos({ x: newX, y: newY });
+      const clamped = clampHudPosToViewport(
+        { x: barDragRef.current.origX + dx, y: barDragRef.current.origY + dy },
+        window.innerWidth,
+        window.innerHeight,
+        rect.width,
+        rect.height
+      );
+      barDragRef.current.latestX = clamped.x;
+      barDragRef.current.latestY = clamped.y;
+      setPos(clamped);
     };
 
     const handleMouseUp = () => {
@@ -194,7 +241,7 @@ export const ActionBar: React.FC<Props> = ({
 
   // ── 技能栏上方弹出红色小字报错 (UIErrorsFrame: 法力值不足 / 能量不足 / 怒气不足 / 目标太远了) ──
   const [uiErrorMessage, setUiErrorMessage] = useState<{ text: string; id: number } | null>(null);
-  const uiErrorTimerRef = useRef<NodeJS.Timeout>();
+  const uiErrorTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   const triggerUIError = useCallback((text: string) => {
     if (uiErrorTimerRef.current) clearTimeout(uiErrorTimerRef.current);
@@ -301,18 +348,20 @@ export const ActionBar: React.FC<Props> = ({
         keySig = (e.shiftKey ? 'SHIFT+' : '') + e.key.toUpperCase();
       }
 
-      // 匹配当前专精配置或默认的 36 槽位
+      // 匹配当前专精配置或默认的 36 槽位（空串 = 冲突清除后的 N/A，不响应）
       for (let idx = 0; idx < 36; idx++) {
-        const boundKey = (keybindings[idx] || DEFAULT_KEYBINDINGS[idx] || '').toUpperCase();
-        if (boundKey && boundKey === keySig) {
+        const { key: boundKey, isUnbound } = resolveSlotHotkey(keybindings, idx);
+        if (isUnbound) continue;
+        const normalized = boundKey.toUpperCase();
+        if (normalized && normalized === keySig) {
           e.preventDefault();
 
           // 保持键盘按下状态：记录按下的键码和对应的槽位，持续保持按下效果，一旦弹起再恢复
           activeKeySlotsRef.current.set(e.code, {
             slotIdx: idx,
-            requiresShift: boundKey.includes('SHIFT'),
-            requiresCtrl: boundKey.includes('CTRL'),
-            requiresAlt: boundKey.includes('ALT'),
+            requiresShift: normalized.includes('SHIFT'),
+            requiresCtrl: normalized.includes('CTRL'),
+            requiresAlt: normalized.includes('ALT'),
           });
           setPressedSlots((prev) => (prev[idx] ? prev : { ...prev, [idx]: true }));
 
@@ -430,12 +479,14 @@ export const ActionBar: React.FC<Props> = ({
   return (
     <div
       ref={barContainerRef}
+      data-testid="action-bar-container"
       className={`flex flex-col items-center select-none space-y-1.5 ${pos ? 'fixed z-30' : 'relative'}`}
       style={pos ? { left: `${pos.x}px`, top: `${pos.y}px` } : undefined}
     >
       {/* Top Draggable Gripper Bar */}
       <div
         onMouseDown={handleBarDragStart}
+        data-testid="action-bar-drag-handle"
         className={`w-full flex items-center justify-between px-2.5 py-0.5 rounded-lg select-none text-[9.5px] font-mono transition border ${
           isLocked
             ? 'bg-[#10101e]/80 text-gray-500 border-transparent cursor-default'
@@ -445,7 +496,6 @@ export const ActionBar: React.FC<Props> = ({
       >
         <div className="flex items-center space-x-1.5 pointer-events-none">
           <span className="text-gray-400 font-bold">⠿</span>
-          <span className="font-bold tracking-wider">动作条</span>
         </div>
         <div className="flex items-center space-x-2">
           <button
@@ -461,15 +511,16 @@ export const ActionBar: React.FC<Props> = ({
           {pos && (
             <button
               type="button"
+              aria-label="重置动作条位置"
               onClick={(e) => {
                 e.stopPropagation();
                 setPos(null);
                 if (onSavePos) {
-                  onSavePos({ x: 0, y: 0 });
+                  onSavePos(null);
                 }
               }}
               className="text-[9px] text-gray-400 hover:text-red-400 px-1 rounded transition"
-              title="重置回默认居中"
+              title="重置回窗体下方中部默认位置"
             >
               重置
             </button>
@@ -531,6 +582,24 @@ export const ActionBar: React.FC<Props> = ({
         </div>
       )}
 
+      {classId === 'PALADIN' && (
+        <div className="flex items-center space-x-1.5 bg-[#121220]/90 border border-amber-500/40 px-3 py-1 rounded-lg backdrop-blur">
+          <span className="text-[10px] text-amber-300 font-bold uppercase">神圣能量:</span>
+          <div className="flex space-x-1.5">
+            {[1, 2, 3].map(pt => (
+              <div
+                key={pt}
+                className={`w-4 h-4 rounded-sm rotate-45 border border-black/80 transition-all ${
+                  pt <= holyPower
+                    ? 'bg-yellow-300 shadow-md shadow-yellow-400/60 scale-110'
+                    : 'bg-[#222]'
+                }`}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* 技能栏上方弹出红色小字报错 (UIErrorsFrame: 法力值不足 / 能量不足 / 怒气不足 / 目标太远了) */}
       {uiErrorMessage && (
         <div
@@ -558,10 +627,7 @@ export const ActionBar: React.FC<Props> = ({
             {Array.from({ length: 12 }).map((_, col) => {
               const idx = startIdx + col;
               const slot = slots.find(s => s.slotIdx === idx);
-              const hotkeyRaw = keybindings[idx] || DEFAULT_KEYBINDINGS[idx] || (idx + 1).toString();
-              const hotkeyDisplay = hotkeyRaw.startsWith('SHIFT+')
-                ? `S${hotkeyRaw.replace('SHIFT+', '')}`
-                : hotkeyRaw;
+              const { key: hotkeyRaw, isUnbound } = resolveSlotHotkey(keybindings, idx);
 
               const isOffGcd = slot ? isOffGcdSpell(slot.spellId) : false;
               const rawSpellCd = slot ? slot.cdRemainingMs : 0;
@@ -573,16 +639,16 @@ export const ActionBar: React.FC<Props> = ({
                 : Math.max(rawSpellCd, gcdRemainingMs);
 
               const effectiveTotalCdMs = isOffGcd
-                ? (rawSpellTotalCd || 750)
+                ? (rawSpellTotalCd || 1000)
                 : (rawSpellCd >= gcdRemainingMs
-                    ? (rawSpellTotalCd || rawSpellCd || 750)
-                    : (gcdTotalMs || 750));
+                    ? (rawSpellTotalCd || rawSpellCd || 1000)
+                    : (gcdTotalMs || 1000));
 
               const isOnCd = effectiveCdRemainingMs > 0;
               const iconSvg = slot ? SPELL_ICONS[slot.spellId] : null;
 
               const isOutOfCombatOnly = slot
-                ? slot.spellId === 'revive' || slot.spellId === 'ancestral_spirit' || slot.spellId === 'druid_revive' || slot.spellId === 'shaman_ancestral_spirit'
+                ? ['revive', 'ancestral_spirit', 'druid_revive', 'shaman_ancestral_spirit', 'redemption', 'paladin_redemption', 'resurrection', 'priest_resurrection'].includes(slot.spellId)
                 : false;
               const isCombatDisabled = isInCombat && isOutOfCombatOnly;
               const isOutOfRange = slot ? !!outOfRangeSpells[slot.spellId] : false;
@@ -748,10 +814,14 @@ export const ActionBar: React.FC<Props> = ({
                     <div className="absolute inset-0 bg-black/55 z-20 pointer-events-none rounded-lg" />
                   )}
 
-                  {/* 技能按键始终显示在右上角 (无需按Alt，始终常驻) */}
+                  {/* 技能按键始终显示在右上角；冲突清除后显示红色 N/A */}
                   {hotkeyRaw && (
-                    <span className="absolute top-0.5 right-0.5 text-[8.5px] font-mono font-black text-gray-200/90 drop-shadow-[0_1px_2px_rgba(0,0,0,1)] z-30 pointer-events-none select-none leading-none">
-                      {formatSimplifiedHotkey(hotkeyRaw)}
+                    <span
+                      className={`absolute top-0.5 right-0.5 text-[8.5px] font-mono font-black drop-shadow-[0_1px_2px_rgba(0,0,0,1)] z-30 pointer-events-none select-none leading-none ${
+                        isUnbound ? 'text-red-400' : 'text-gray-200/90'
+                      }`}
+                    >
+                      {isUnbound ? 'N/A' : formatSimplifiedHotkey(hotkeyRaw)}
                     </span>
                   )}
 
@@ -837,48 +907,52 @@ export const ActionBar: React.FC<Props> = ({
         </button>
       </div>
 
-      {/* Authentic WoW Cataclysm 4.3 Spell Tooltip */}
-      {hoveredSlot && SPELL_TOOLTIPS[hoveredSlot.spellId] && (
-        <div
-          className="fixed z-50 pointer-events-none w-72 bg-[#0d0d1e]/98 border-2 border-[#5c4a28] rounded-md p-3 shadow-2xl backdrop-blur font-sans text-xs text-gray-200"
-          style={{
-            left: `${Math.min(window.innerWidth - 300, Math.max(10, tooltipPos.x - 100))}px`,
-            bottom: `${Math.max(80, window.innerHeight - tooltipPos.y + 12)}px`,
-          }}
-        >
-          {(() => {
-            const tip = SPELL_TOOLTIPS[hoveredSlot.spellId];
-            return (
-              <div className="space-y-1.5">
-                {/* Header: Name and Cost */}
-                <div className="flex justify-between items-start border-b border-[#3e341f] pb-1">
-                  <span className="font-extrabold text-amber-300 text-sm tracking-wide">
-                    {tip.name}
-                  </span>
-                  <span className="text-gray-300 font-mono text-[11px]">{tip.cost}</span>
-                </div>
-
-                {/* Cast Time & Range */}
-                <div className="flex justify-between text-[11px] text-gray-300">
-                  <span>{tip.castTime}</span>
-                  <span>{tip.range}</span>
-                </div>
-
-                {/* Cooldown & School */}
-                <div className="flex justify-between text-[11px] text-gray-300">
-                  <span>冷却时间：{tip.cooldown}</span>
-                  <span className="text-amber-200">{tip.school}法术</span>
-                </div>
-
-                {/* Description in Golden Cream Text */}
-                <div className="pt-1.5 border-t border-[#3e341f] text-[#ffd100] text-[11px] leading-relaxed">
-                  {tip.description}
-                </div>
+      {/* Authentic WoW Cataclysm Spell Tooltip (with ClassRegistry fallback for all 10 classes) */}
+      {hoveredSlot && (() => {
+        const directTip = SPELL_TOOLTIPS[hoveredSlot.spellId];
+        const norm = !directTip ? getSpellByAnyId(hoveredSlot.spellId, classId) : null;
+        const tip = directTip || (norm ? {
+          name: norm.name,
+          cost: norm.resourceCostAmount > 0 ? `${norm.resourceCostAmount} ${norm.resourceKind}` : '无消耗',
+          castTime: norm.castTimeMs <= 0
+            ? (norm.gcdCategory === 'OFF_GCD' ? '瞬发（不占GCD）' : '瞬发')
+            : `${(getHastedCastTimeMs(norm.castTimeMs, LEVEL_80_MAX_HASTE) / 1000).toFixed(2)} 秒施法`,
+          cooldown: norm.cooldownMs > 0 ? `${(norm.cooldownMs / 1000).toFixed(0)} 秒` : '无冷却',
+          range: norm.school === 'PHYSICAL' && norm.classId !== 'HUNTER' ? '近战范围' : '40 码',
+          school: norm.school,
+          description: norm.description,
+        } : null);
+        if (!tip) return null;
+        return (
+          <div
+            className="fixed z-50 pointer-events-none w-72 bg-[#0d0d1e]/98 border-2 border-[#5c4a28] rounded-md p-3 shadow-2xl backdrop-blur font-sans text-xs text-gray-200"
+            style={{
+              left: `${Math.min(window.innerWidth - 300, Math.max(10, tooltipPos.x - 100))}px`,
+              bottom: `${Math.max(80, window.innerHeight - tooltipPos.y + 12)}px`,
+            }}
+          >
+            <div className="space-y-1.5">
+              <div className="flex justify-between items-start border-b border-[#3e341f] pb-1">
+                <span className="font-extrabold text-amber-300 text-sm tracking-wide">
+                  {tip.name}
+                </span>
+                <span className="text-gray-300 font-mono text-[11px]">{tip.cost}</span>
               </div>
-            );
-          })()}
-        </div>
-      )}
+              <div className="flex justify-between text-[11px] text-gray-300">
+                <span>{tip.castTime}</span>
+                <span>{tip.range}</span>
+              </div>
+              <div className="flex justify-between text-[11px] text-gray-300">
+                <span>冷却时间：{tip.cooldown}</span>
+                <span className="text-amber-200">{tip.school}法术</span>
+              </div>
+              <div className="pt-1.5 border-t border-[#3e341f] text-[#ffd100] text-[11px] leading-relaxed">
+                {tip.description}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 };

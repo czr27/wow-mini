@@ -115,6 +115,11 @@ export const LeaderboardModal: React.FC<Props> = ({ isOpen, onClose, entries }) 
               <option value="SHAMAN">萨满祭司</option>
               <option value="MAGE">法师</option>
               <option value="ROGUE">潜行者</option>
+              <option value="WARRIOR">战士</option>
+              <option value="PALADIN">圣骑士</option>
+              <option value="HUNTER">猎人</option>
+              <option value="PRIEST">牧师</option>
+              <option value="WARLOCK">术士</option>
             </select>
           </div>
         </div>

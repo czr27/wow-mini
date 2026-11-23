@@ -1,0 +1,6 @@
+{
+  "name": "Cata Raid Sim",
+  "description": "大地的裂变 4.3 魔兽世界经典副本模拟器（5人影牙城堡 / 20人巨龙之魂）",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

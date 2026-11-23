@@ -65,6 +65,11 @@ export interface NetworkCombatSnapshot {
   /** Host wall-clock at snapshot send */
   timeMs: number;
   runPhase: string;
+  /** Host dungeon progress — guests must follow (maze / boss index) */
+  travelRemainingMs?: number;
+  totalTravelMs?: number;
+  currentBossIndex?: number;
+  isCleared?: boolean;
   bossTargetId?: string | null;
   units: NetworkUnitSnapshot[];
   casts?: NetworkCastTimeline[];
@@ -111,6 +116,7 @@ export type NetMessageType =
   | 'AUTH'
   | 'AUTH_OK'
   | 'AUTH_FAIL'
+  | 'SESSION_KICKED'
   | 'PRESENCE'
   | 'ROOM_LIST'
   | 'ROOM_LIST_SYNC'
@@ -118,6 +124,7 @@ export type NetMessageType =
   | 'ROOM_JOIN'
   | 'ROOM_LEAVE'
   | 'ROOM_UPDATE'
+  | 'ROOM_CLOSED'
   | 'ROOM_START'
   | 'ROOM_ACTION'
   | 'PLAYER_INPUT'

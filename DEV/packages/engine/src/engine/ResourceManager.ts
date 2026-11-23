@@ -113,25 +113,32 @@ export class ResourceManager {
     });
   }
 
-  // ── Rage out-of-combat decay (-1/s) ──────────────────────────
+  // ── Rage: passive in-combat melee/damage gen (+6/s) & out-of-combat decay (-1/s) ──
   private tickRage(unit: Unit, res: { current: number; max: number }, deltaMs: number): void {
-    if (res.current <= 0) return;
     const inCombat = Boolean(this.engine.bossUnit?.isAlive);
-    if (!inCombat) {
-      const decayPerMs = 1 / 1_000; // -1/s out of combat
-      const amount = decayPerMs * deltaMs;
-      res.current = Math.max(0, res.current - amount);
+    if (inCombat) {
+      if (res.current >= res.max) return;
+      const haste = unit.stats.haste ?? 0;
+      const genPerMs = (6 * (1 + haste * 0.5)) / 1_000;
+      const amount = genPerMs * deltaMs;
+      res.current = Math.min(res.max, res.current + amount);
       unit.rage = res.current;
-
-      this.engine.emitEvent({
-        kind: 'RESOURCE_CHANGE',
-        sourceId: unit.id,
-        targetId: unit.id,
-        value: -amount,
-        resourceKind: 'RAGE',
-        timestamp: this.engine.elapsed,
-      });
+      return;
     }
+    if (res.current <= 0) return;
+    const decayPerMs = 1 / 1_000; // -1/s out of combat
+    const amount = decayPerMs * deltaMs;
+    res.current = Math.max(0, res.current - amount);
+    unit.rage = res.current;
+
+    this.engine.emitEvent({
+      kind: 'RESOURCE_CHANGE',
+      sourceId: unit.id,
+      targetId: unit.id,
+      value: -amount,
+      resourceKind: 'RAGE',
+      timestamp: this.engine.elapsed,
+    });
   }
 
   // ── Runic Power out-of-combat decay (-2/s) ───────────────────
@@ -155,12 +162,14 @@ export class ResourceManager {
     }
   }
 
-  // ── DK Rune cooldowns (6 runes, 10s each) ────────────────────
+  // ── DK Rune cooldowns (6 runes, 10s base modified by haste) ───
   private tickRunes(unit: Unit, deltaMs: number): void {
     if (!unit.runes) return;
+    const haste = Math.max(0, unit.stats?.haste ?? 0);
+    const effectiveDelta = deltaMs * (1 + haste);
     for (const rune of unit.runes) {
       if (rune.cooldownMs > 0) {
-        rune.cooldownMs = Math.max(0, rune.cooldownMs - deltaMs);
+        rune.cooldownMs = Math.max(0, rune.cooldownMs - effectiveDelta);
       }
     }
   }

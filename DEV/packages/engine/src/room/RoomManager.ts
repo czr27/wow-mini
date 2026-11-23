@@ -142,6 +142,42 @@ const CLASS_LORE_NAMES: Record<ClassId, { default: string[]; bySpec?: Record<str
   },
 };
 
+/** Extra AI display names used in combat setup that are not already in the lore pools. */
+const EXTRA_RESERVED_AI_NAMES = ['布罗尔·熊皮', '古尔丹'];
+
+let _reservedAiNameKeysCache: Set<string> | null = null;
+
+/** All reserved AI / lore names (normalized keys) that player characters may not use. */
+export function collectReservedAiNameKeys(): Set<string> {
+  if (_reservedAiNameKeysCache) return _reservedAiNameKeysCache;
+  const keys = new Set<string>();
+  const add = (raw: string) => {
+    const k = (raw || '').trim().toLowerCase();
+    if (k) keys.add(k);
+  };
+  for (const role of Object.keys(AI_ROSTER_POOL) as Array<keyof typeof AI_ROSTER_POOL>) {
+    for (const c of AI_ROSTER_POOL[role]) add(c.name);
+  }
+  for (const classId of Object.keys(CLASS_LORE_NAMES) as ClassId[]) {
+    const entry = CLASS_LORE_NAMES[classId];
+    for (const n of entry.default || []) add(n);
+    if (entry.bySpec) {
+      for (const list of Object.values(entry.bySpec)) {
+        for (const n of list) add(n);
+      }
+    }
+  }
+  for (const n of EXTRA_RESERVED_AI_NAMES) add(n);
+  _reservedAiNameKeysCache = keys;
+  return keys;
+}
+
+export function isReservedAiName(name: string): boolean {
+  const key = (name || '').trim().toLowerCase();
+  if (!key) return false;
+  return collectReservedAiNameKeys().has(key);
+}
+
 export function pickLoreNameForClassSpec(
   classId: ClassId,
   spec: string,
@@ -451,12 +487,121 @@ export class RoomManager {
     return { ok: true, aiMemberId, newHostId, room };
   }
 
+  /** Count human (non-AI) players in a room. */
+  public countHumanPlayers(roomId: string): number {
+    const room = this.getRoom(roomId);
+    if (!room) return 0;
+    return room.members.filter((m) => m.isPlayer && !m.isAi).length;
+  }
+
+  public countAiMembers(roomId: string): number {
+    const room = this.getRoom(roomId);
+    if (!room) return 0;
+    return room.members.filter((m) => m.isAi).length;
+  }
+
+  /**
+   * Join a human into the room:
+   * - empty matching slot, or
+   * - replace same-role AI when human count < capacity (lobby or mid-combat hot-join).
+   */
+  public joinOrHotSwapPlayer(
+    roomId: string,
+    player: PlayerInfo
+  ): {
+    ok: boolean;
+    reason?: string;
+    room?: LobbyRoom;
+    replacedAiId?: string;
+    member?: RoomMember;
+  } {
+    const room = this.getRoom(roomId);
+    if (!room) return { ok: false, reason: '房间不存在' };
+
+    if (room.members.some((m) => m.id === player.id)) {
+      return { ok: true, room, member: room.members.find((m) => m.id === player.id) };
+    }
+
+    const quota = this.getQuota(room.dungeonId);
+    const humans = room.members.filter((m) => m.isPlayer && !m.isAi).length;
+    if (humans >= quota.capacity) {
+      return { ok: false, reason: '玩家人数已满' };
+    }
+
+    const role = player.role || getRoleBySpec(player.classId, player.spec);
+
+    // Prefer empty slot matching role
+    let slot = room.slots.find((s) => !s.occupied && s.role === role);
+    if (!slot) slot = room.slots.find((s) => !s.occupied);
+
+    if (slot) {
+      const member: RoomMember = {
+        id: player.id,
+        name: player.name,
+        classId: player.classId,
+        spec: player.spec,
+        role: slot.role || role,
+        isPlayer: true,
+        isAi: false,
+        isHost: false,
+        isReady: room.status === 'LOBBY' ? false : true,
+        slotIndex: slot.index,
+      };
+      slot.occupied = true;
+      slot.role = member.role;
+      slot.member = member;
+      room.members.push(member);
+      return { ok: true, room, member };
+    }
+
+    // No empty slot: replace same-role AI (hot-join / fill)
+    const matchingAis = room.members.filter((m) => m.isAi && m.role === role);
+    const anyAi = room.members.filter((m) => m.isAi);
+    const replacedAi = matchingAis[0] || anyAi[0];
+    if (!replacedAi) {
+      return { ok: false, reason: '没有可加入的空位或可顶替的 AI' };
+    }
+
+    const newMember: RoomMember = {
+      id: player.id,
+      name: player.name,
+      classId: player.classId,
+      spec: player.spec,
+      role: replacedAi.role,
+      isPlayer: true,
+      isAi: false,
+      isHost: false,
+      isReady: true,
+      slotIndex: replacedAi.slotIndex,
+    };
+    const memIdx = room.members.findIndex((m) => m.id === replacedAi.id);
+    if (memIdx !== -1) room.members[memIdx] = newMember;
+    const s = room.slots.find((x) => x.index === replacedAi.slotIndex);
+    if (s) {
+      s.member = newMember;
+      s.role = newMember.role;
+    }
+    return { ok: true, room, replacedAiId: replacedAi.id, member: newMember };
+  }
+
+  /** Force-destroy a room (wipe finish / host leave). */
+  public destroyRoom(roomId: string): boolean {
+    return this.rooms.delete(roomId);
+  }
+
   public leaveRoom(
     roomId: string,
     memberId: string
-  ): { removed: boolean; roomDeleted: boolean; newHostId?: string } {
+  ): { removed: boolean; roomDeleted: boolean; newHostId?: string; destroyedByHost?: boolean } {
     const room = this.getRoom(roomId);
     if (!room) return { removed: false, roomDeleted: false };
+
+    // Host leave → destroy entire room
+    if (room.hostId === memberId) {
+      this.leaveWaitingQueue(roomId, memberId);
+      this.rooms.delete(roomId);
+      return { removed: true, roomDeleted: true, destroyedByHost: true };
+    }
 
     // Remove from waiting queue if present
     this.leaveWaitingQueue(roomId, memberId);
@@ -478,16 +623,7 @@ export class RoomManager {
       return { removed: idx !== -1, roomDeleted: true };
     }
 
-    let newHostId: string | undefined;
-    if (room.hostId === memberId) {
-      const nextHost = remainingHumans[0];
-      nextHost.isHost = true;
-      nextHost.isReady = true;
-      room.hostId = nextHost.id;
-      newHostId = nextHost.id;
-    }
-
-    return { removed: idx !== -1, roomDeleted: false, newHostId };
+    return { removed: idx !== -1, roomDeleted: false };
   }
 
   /**
@@ -1028,6 +1164,60 @@ export class RoomManager {
     room.inCombatBossHp = hp;
     room.inCombatBossMaxHp = maxHp;
     if (bossId) room.inCombatBossId = bossId;
+  }
+
+  /**
+   * Apply host-authored combat snapshot onto this room only (isolated; no cross-room writes).
+   * Server tracks membership / queue / settlement; dungeon tick stays on the host client.
+   */
+  public applyHostCombatSnapshot(
+    roomId: string,
+    snap: {
+      runPhase?: string;
+      travelRemainingMs?: number;
+      currentBossIndex?: number;
+      isCleared?: boolean;
+      units?: Array<{
+        id: string;
+        name?: string;
+        hp?: number;
+        maxHp?: number;
+        isBoss?: boolean;
+        role?: string;
+      }>;
+    }
+  ): LobbyRoom | undefined {
+    const room = this.getRoom(roomId);
+    if (!room) return undefined;
+
+    if (snap.runPhase) room.runPhase = snap.runPhase;
+    if (typeof snap.travelRemainingMs === 'number') room.travelRemainingMs = snap.travelRemainingMs;
+    if (typeof snap.currentBossIndex === 'number') room.currentBossIndex = snap.currentBossIndex;
+
+    const boss =
+      (snap.units || []).find((u) => u.isBoss) ||
+      (snap.units || []).find((u) => u.role === 'ENEMY' || u.role === 'BOSS');
+    if (boss && typeof boss.hp === 'number' && typeof boss.maxHp === 'number') {
+      room.inCombatBossId = boss.id;
+      room.inCombatBossName = boss.name || room.inCombatBossName;
+      room.inCombatBossHp = boss.hp;
+      room.inCombatBossMaxHp = boss.maxHp;
+    }
+
+    if (snap.runPhase === 'TRAVEL_RECOVERY') {
+      room.status = 'OUT_OF_COMBAT';
+    } else if (snap.runPhase === 'BOSS_COMBAT' || snap.runPhase === 'WIPE_VOTE') {
+      room.status = 'IN_COMBAT';
+    } else if (snap.runPhase === 'SUMMARY') {
+      room.status = snap.isCleared ? 'CLEARED' : 'CLOSED';
+      room.lastSettlement = {
+        cleared: !!snap.isCleared,
+        currentBossIndex: snap.currentBossIndex ?? room.currentBossIndex ?? 0,
+        settledAtMs: Date.now(),
+      };
+    }
+
+    return room;
   }
 
   /**

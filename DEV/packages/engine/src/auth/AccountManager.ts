@@ -9,7 +9,13 @@ import {
   DEFAULT_CUSTOM_DIFFICULTY,
   CharacterUiLayout,
 } from '../types.js';
-import { bumpUpdatedAt, mergeAccountLists, mergeAccounts } from './accountMerge.js';
+import {
+  bumpUpdatedAt,
+  mergeAccountLists,
+  mergeAccounts,
+  normalizeCharacterNameKey,
+} from './accountMerge.js';
+import { isReservedAiName } from '../room/RoomManager.js';
 
 // Default default keybinding habits for each class and spec
 export function getDefaultSpecKeybindings(classId: ClassId, spec: string): KeybindingMap {
@@ -196,8 +202,9 @@ export class AccountManager {
     const key = username.trim().toLowerCase();
     const account = this.accounts.get(key);
     if (!account) return null;
-    // In prototype, simple password check
-    if (passwordHash && account.passwordHash !== passwordHash && account.passwordHash !== 'wow123') {
+    const provided = passwordHash || '';
+    const stored = account.passwordHash || '';
+    if (!provided || stored !== provided) {
       return null;
     }
     this.currentUsername = key;
@@ -215,6 +222,196 @@ export class AccountManager {
       }
     }
     return account;
+  }
+
+  /** Login result with reason for UI messaging (local-only; prefer authWithServer). */
+  public tryLogin(username: string, password: string): { ok: true; account: UserAccount } | { ok: false; error: string } {
+    const key = username.trim().toLowerCase();
+    if (!key) return { ok: false, error: '请输入用户名' };
+    if (!password) return { ok: false, error: '请输入密码' };
+    if (!this.accounts.has(key)) return { ok: false, error: '账号不存在，请先注册' };
+    const account = this.login(username, password);
+    if (!account) return { ok: false, error: '密码错误' };
+    return { ok: true, account };
+  }
+
+  /** Register result with reason for UI messaging (local-only; prefer authWithServer). */
+  public tryRegister(username: string, password: string): { ok: true; account: UserAccount } | { ok: false; error: string } {
+    const key = username.trim().toLowerCase();
+    if (!key) return { ok: false, error: '请输入用户名' };
+    if (key.length < 2) return { ok: false, error: '用户名至少 2 个字符' };
+    if (!password) return { ok: false, error: '请输入密码' };
+    if (password.length < 4) return { ok: false, error: '密码至少 4 个字符' };
+    if (this.accounts.has(key)) return { ok: false, error: '用户名已被占用' };
+    const account = this.register(username.trim(), password);
+    if (!account) return { ok: false, error: '注册失败，请重试' };
+    return { ok: true, account };
+  }
+
+  /**
+   * Default API origin from the browser access URL (local / LAN / WAN).
+   * Mirrors web/src/net/apiBase.ts — keep host as typed; only normalize "localhost".
+   */
+  private static defaultApiBase(): string {
+    if (typeof window === 'undefined') return 'http://127.0.0.1:3001';
+    const { protocol, hostname, port } = window.location;
+    const host = hostname === 'localhost' ? '127.0.0.1' : hostname || '127.0.0.1';
+    if (!port) return ''; // 80/443 → same-origin reverse proxy
+    if (port === '3000' || port === '5173') return `${protocol}//${host}:3001`;
+    const pagePort = Number(port);
+    const gamePort =
+      Number.isFinite(pagePort) && pagePort > 0 ? Math.min(pagePort + 1, 65535) : 3001;
+    return `${protocol}//${host}:${gamePort}`;
+  }
+
+  private async fetchJson(
+    url: string,
+    init: RequestInit,
+    timeoutMs = 8000
+  ): Promise<{ res: Response; body: any }> {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetch(url, { ...init, signal: ctrl.signal });
+      const body = await res.json().catch(() => ({}));
+      return { res, body };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /**
+   * Server-authoritative login / register.
+   * Register: server rejects duplicate usernames (409).
+   * Login: server validates password; account is merged into local store.
+   * If the server is unreachable within timeout, falls back to local auth
+   * so the UI never hangs on "连接服务器…".
+   */
+  public async authWithServer(
+    username: string,
+    password: string,
+    mode: 'login' | 'register',
+    serverUrl = AccountManager.defaultApiBase()
+  ): Promise<{ ok: true; account: UserAccount; offline?: boolean } | { ok: false; error: string }> {
+    const key = username.trim().toLowerCase();
+    if (!key) return { ok: false, error: '请输入用户名' };
+    if (key.length < 2) return { ok: false, error: '用户名至少 2 个字符' };
+    if (!password) return { ok: false, error: '请输入密码' };
+    if (mode === 'register' && password.length < 4) return { ok: false, error: '密码至少 4 个字符' };
+    if (typeof fetch === 'undefined') return { ok: false, error: '当前环境无法连接服务器' };
+
+    const base = (serverUrl || '').replace(/\/$/, '');
+
+    try {
+      if (mode === 'register') {
+        const { res, body } = await this.fetchJson(`${base}/api/auth/register`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: username.trim(), passwordHash: password }),
+        });
+        if (res.status === 409) return { ok: false, error: body.error || '用户名已被占用' };
+        if (!res.ok) return { ok: false, error: body.error || '注册失败，请检查服务器是否启动' };
+        const remote = body as UserAccount;
+        if (!remote?.username) return { ok: false, error: '服务器返回无效账号数据' };
+        remote.passwordHash = remote.passwordHash || password;
+        this.accounts.set(key, remote);
+        this.currentUsername = key;
+        this.currentCharacterId = remote.characters?.[0]?.id || null;
+        if (typeof localStorage !== 'undefined') {
+          try {
+            localStorage.setItem(this.activeUserKey, key);
+            if (this.currentCharacterId) localStorage.setItem(this.activeCharKey, this.currentCharacterId);
+          } catch {}
+        }
+        this.saveToStorage();
+        return { ok: true, account: remote };
+      }
+
+      // login
+      const { res, body } = await this.fetchJson(`${base}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: username.trim(), passwordHash: password }),
+      });
+      if (res.status === 404) return { ok: false, error: body.error || '账号不存在，请先注册' };
+      if (res.status === 401) return { ok: false, error: body.error || '密码错误' };
+      if (!res.ok) return { ok: false, error: body.error || '登录失败，请检查服务器是否启动' };
+      const remote = body as UserAccount;
+      if (!remote?.username) return { ok: false, error: '服务器返回无效账号数据' };
+      // Ensure password field present for local re-login offline cache
+      if (!remote.passwordHash) remote.passwordHash = password;
+      const merged = this.mergeRemoteAccount(remote);
+      this.currentUsername = key;
+      if (merged.characters.length > 0) {
+        const lastChar =
+          (typeof localStorage !== 'undefined' ? localStorage.getItem(this.activeCharKey) : null) ||
+          merged.characters[0].id;
+        this.currentCharacterId = merged.characters.some((c) => c.id === lastChar)
+          ? lastChar
+          : merged.characters[0].id;
+      } else {
+        this.currentCharacterId = null;
+      }
+      if (typeof localStorage !== 'undefined') {
+        try {
+          localStorage.setItem(this.activeUserKey, key);
+          if (this.currentCharacterId) localStorage.setItem(this.activeCharKey, this.currentCharacterId);
+        } catch {}
+      }
+      this.saveToStorage();
+      return { ok: true, account: merged };
+    } catch (err: any) {
+      const aborted = err?.name === 'AbortError';
+      // Offline / timeout fallback — keep single-player usable
+      if (mode === 'login') {
+        const local = this.tryLogin(username, password);
+        if (local.ok) return { ok: true, account: local.account, offline: true };
+        if (local.error === '密码错误' || local.error === '账号不存在，请先注册') {
+          return local;
+        }
+      } else {
+        const local = this.tryRegister(username, password);
+        if (local.ok) return { ok: true, account: local.account, offline: true };
+        if (local.error === '用户名已被占用') return local;
+      }
+      return {
+        ok: false,
+        error: aborted
+          ? '连接服务器超时（请确认已启动联机服务 :3001），或检查账号密码后重试'
+          : '无法连接服务器，请确认联机服务已启动（端口 3001）',
+      };
+    }
+  }
+
+  /** Delete account on server + local (注销账号). Requires password. */
+  public async deleteAccountOnServer(
+    password: string,
+    serverUrl = AccountManager.defaultApiBase()
+  ): Promise<{ ok: true } | { ok: false; error: string }> {
+    const acc = this.getCurrentAccount();
+    if (!acc) return { ok: false, error: '当前未登录' };
+    if (!password) return { ok: false, error: '请输入密码以确认注销' };
+    if (typeof fetch === 'undefined') return { ok: false, error: '当前环境无法连接服务器' };
+    const base = (serverUrl || '').replace(/\/$/, '');
+    try {
+      const { res, body } = await this.fetchJson(`${base}/api/auth/delete`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: acc.username, passwordHash: password }),
+      });
+      if (!res.ok) return { ok: false, error: body.error || '注销失败' };
+      const key = acc.username.toLowerCase();
+      this.accounts.delete(key);
+      this.logout();
+      this.saveToStorage();
+      return { ok: true };
+    } catch (err: any) {
+      const aborted = err?.name === 'AbortError';
+      return {
+        ok: false,
+        error: aborted ? '连接服务器超时，注销失败' : '无法连接服务器，注销失败',
+      };
+    }
   }
 
   public logout() {
@@ -260,15 +457,80 @@ export class AccountManager {
     return false;
   }
 
+  /**
+   * True if name is reserved for AI / lore NPCs, or any local account already owns it.
+   * Does not hit the network — use checkCharacterNameAvailable for server-wide check.
+   */
+  public isCharacterNameTaken(name: string, excludeCharId?: string): boolean {
+    const key = normalizeCharacterNameKey(name);
+    if (!key) return false;
+    if (isReservedAiName(name)) return true;
+    for (const acc of this.accounts.values()) {
+      for (const char of acc.characters || []) {
+        if (excludeCharId && char.id === excludeCharId) continue;
+        if (normalizeCharacterNameKey(char.name) === key) return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Ask the game server whether a character name is free (all accounts + reserved AI names).
+   * On network failure returns { ok: true, offline: true } so local checks still apply.
+   */
+  public async checkCharacterNameAvailable(
+    name: string,
+    serverUrl = AccountManager.defaultApiBase()
+  ): Promise<{ ok: true; available: boolean; offline?: boolean; reason?: string } | { ok: false; error: string }> {
+    const trimmed = name.trim();
+    if (!trimmed) return { ok: false, error: '请输入角色名称' };
+    if (isReservedAiName(trimmed)) {
+      return { ok: true, available: false, reason: 'ai' };
+    }
+    if (this.isCharacterNameTaken(trimmed)) {
+      return { ok: true, available: false, reason: 'local' };
+    }
+    if (typeof fetch === 'undefined') {
+      return { ok: true, available: true, offline: true };
+    }
+    const base = (serverUrl || '').replace(/\/$/, '');
+    try {
+      const { res, body } = await this.fetchJson(
+        `${base}/api/characters/check-name?name=${encodeURIComponent(trimmed)}`,
+        { method: 'GET' },
+        6000
+      );
+      if (!res.ok) {
+        return { ok: true, available: !this.isCharacterNameTaken(trimmed), offline: true };
+      }
+      const available = body?.available !== false;
+      return {
+        ok: true,
+        available,
+        reason: available ? undefined : body?.reason || 'taken',
+      };
+    } catch {
+      return { ok: true, available: !this.isCharacterNameTaken(trimmed), offline: true };
+    }
+  }
+
+  /**
+   * Create a character. Name must be unique across the entire server (all accounts) and not an AI name.
+   * Returns null if not logged in or the name is already taken.
+   */
   public createCharacter(name: string, classId: ClassId, spec?: string): CharacterRecord | null {
     const acc = this.getCurrentAccount();
     if (!acc) return null;
+
+    const trimmed = name.trim();
+    if (!trimmed) return null;
+    if (this.isCharacterNameTaken(trimmed)) return null;
 
     const chosenSpec = spec || getDefaultSpecForClass(classId);
     const now = Date.now();
     const newChar: CharacterRecord = {
       id: `char_${now}_${Math.random().toString(36).substring(2, 7)}`,
-      name: name.trim(),
+      name: trimmed,
       classId,
       lastSpec: chosenSpec,
       specKeybindings: {
@@ -287,7 +549,64 @@ export class AccountManager {
     bumpUpdatedAt(acc, now);
     this.currentCharacterId = newChar.id;
     this.saveToStorage();
+    this.triggerServerSync();
     return newChar;
+  }
+
+  /** Same as createCharacter but with an explicit error string for UI. */
+  public tryCreateCharacter(
+    name: string,
+    classId: ClassId,
+    spec?: string
+  ): { ok: true; character: CharacterRecord } | { ok: false; error: string } {
+    if (!this.getCurrentAccount()) {
+      return { ok: false, error: '请先登录账号' };
+    }
+    const trimmed = name.trim();
+    if (!trimmed) {
+      return { ok: false, error: '请输入角色名称' };
+    }
+    if (isReservedAiName(trimmed)) {
+      return { ok: false, error: '该名称与 AI 队友重名，请换一个' };
+    }
+    if (this.isCharacterNameTaken(trimmed)) {
+      return { ok: false, error: '该角色名已被占用，请换一个（全服不可重复）' };
+    }
+    const character = this.createCharacter(trimmed, classId, spec);
+    if (!character) {
+      return { ok: false, error: '创建角色失败' };
+    }
+    return { ok: true, character };
+  }
+
+  /**
+   * Server-aware create: checks remote name registry (all accounts + AI) then creates locally and syncs.
+   */
+  public async tryCreateCharacterWithServer(
+    name: string,
+    classId: ClassId,
+    spec?: string,
+    serverUrl = AccountManager.defaultApiBase()
+  ): Promise<{ ok: true; character: CharacterRecord } | { ok: false; error: string }> {
+    if (!this.getCurrentAccount()) {
+      return { ok: false, error: '请先登录账号' };
+    }
+    const trimmed = name.trim();
+    if (!trimmed) {
+      return { ok: false, error: '请输入角色名称' };
+    }
+    if (isReservedAiName(trimmed)) {
+      return { ok: false, error: '该名称与 AI 队友重名，请换一个' };
+    }
+    const check = await this.checkCharacterNameAvailable(trimmed, serverUrl);
+    if (!check.ok) return check;
+    if (!check.available) {
+      if (check.reason === 'ai') {
+        return { ok: false, error: '该名称与 AI 队友重名，请换一个' };
+      }
+      return { ok: false, error: '该角色名已被占用，请换一个（全服不可重复）' };
+    }
+    return this.tryCreateCharacter(trimmed, classId, spec);
   }
 
   public deleteCharacter(charId: string): boolean {
@@ -340,7 +659,20 @@ export class AccountManager {
     if (!char.specKeybindings[spec]) {
       char.specKeybindings[spec] = getDefaultSpecKeybindings(char.classId, spec);
     }
-    char.specKeybindings[spec][slotIndex] = hotkey;
+    const map = char.specKeybindings[spec];
+    const normalized = (hotkey || '').trim().toUpperCase();
+    // Duplicate key → clear older conflicting slots to empty (UI shows N/A in red)
+    if (normalized) {
+      for (const key of Object.keys(map)) {
+        const idx = Number(key);
+        if (Number.isNaN(idx) || idx === slotIndex) continue;
+        const existing = String(map[idx] ?? '').trim().toUpperCase();
+        if (existing && existing === normalized) {
+          map[idx] = '';
+        }
+      }
+    }
+    map[slotIndex] = normalized;
     this.touchCharacter(char, acc);
     this.saveToStorage();
     return true;
@@ -493,7 +825,7 @@ export class AccountManager {
   /**
    * 触发向服务器端同步所有账号与角色数据 (防抖落地)
    */
-  public triggerServerSync(serverUrl = typeof window !== 'undefined' ? '' : 'http://localhost:3001') {
+  public triggerServerSync(serverUrl = AccountManager.defaultApiBase()) {
     if (typeof fetch === 'undefined') return;
     if (this.serverSyncTimer) clearTimeout(this.serverSyncTimer);
     this.serverSyncTimer = setTimeout(async () => {
@@ -513,7 +845,7 @@ export class AccountManager {
   /**
    * 从服务器端加载账号与角色数据，与本地按时间戳 LWW 合并后再写回服务器。
    */
-  public async loadFromServer(serverUrl = typeof window !== 'undefined' ? '' : 'http://localhost:3001'): Promise<boolean> {
+  public async loadFromServer(serverUrl = AccountManager.defaultApiBase()): Promise<boolean> {
     if (typeof fetch === 'undefined') return false;
     try {
       const res = await fetch(`${serverUrl}/api/accounts`);

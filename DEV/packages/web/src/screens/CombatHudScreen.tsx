@@ -1,0 +1,406 @@
+import React from 'react';
+import type {
+  CharacterRecord,
+  GroundEffect,
+  GroundTargetState,
+  FloatingCombatText,
+  NetworkVoteState,
+  Unit,
+  UserAccount,
+} from '@cata-raid-sim/engine';
+import { CombatCanvas } from '../canvas/CombatCanvas.js';
+import { ActionBar, ActionSlot, PlayerCastState, PlayerCastBar } from '../components/ActionBar.js';
+import { FocusUnitFrame } from '../components/FocusUnitFrame.js';
+import { PlayerUnitFrame } from '../components/PlayerUnitFrame.js';
+import { RaidFrames, IncomingHealCast } from '../components/RaidFrames.js';
+import { StatsPanel } from '../components/StatsPanel.js';
+import { TargetUnitFrame } from '../components/TargetUnitFrame.js';
+import { TravelRecovery } from '../components/TravelRecovery.js';
+
+export type CombatHudRunPhase =
+  | 'LOBBY'
+  | 'TRAVEL_RECOVERY'
+  | 'BOSS_COMBAT'
+  | 'WIPE_VOTE'
+  | 'SUMMARY';
+
+export type BossCastingInfo = {
+  spellName: string;
+  elapsedMs: number;
+  castTimeMs: number;
+  interruptible: boolean;
+};
+
+export type CombatHudScreenProps = {
+  friendlyUnits: Unit[];
+  bossUnit?: Unit;
+  bossTargetId: string | null;
+  groundEffects: GroundEffect[];
+  floatingTexts: FloatingCombatText[];
+  runPhase: CombatHudRunPhase;
+  isApproaching: boolean;
+  screenShake: boolean;
+  selectedTargetId: string | null;
+  focusTargetId: string | null;
+  dungeonTier: '5man' | '20man';
+  targetBossName: string;
+  currentBossIndex: number;
+  travelRemainingMs: number;
+  totalTravelMs: number;
+  isCorpseRunning: boolean;
+  corpseRunTimerMs: number;
+  revivingUnitId: string | null;
+  reviveProgress: number;
+  autoApproachTarget: {
+    targetX: number;
+    targetY: number;
+    desiredDist: number;
+    pendingSlotIdx: number;
+  } | null;
+  groundTargetState: GroundTargetState | null;
+  playerCast: PlayerCastState | null;
+  companionCasts: Record<string, { spellName: string; progress: number }>;
+  bossCasting: BossCastingInfo | null;
+  deadUnits: Unit[];
+  totalDurationSec: number;
+  playerGcdRemainingMs: number;
+  playerGcdTotalMs: number;
+  outOfRangeSpells: Record<string, boolean>;
+  insufficientResourceSpells: Record<string, boolean>;
+  spellResourceErrors: Record<string, string>;
+  incomingHeals: Record<string, number>;
+  incomingCasts: Record<string, IncomingHealCast[]>;
+  savedRaidMarks: Record<string, string>;
+  skipTravelVote: NetworkVoteState | null;
+  mySkipVote: 'YES' | 'NO' | null;
+  currentChar: CharacterRecord | null;
+  account: UserAccount | null;
+  playerSlots: ActionSlot[];
+  onSelectUnit: (id: string) => void;
+  onHoverUnit: (id: string | null) => void;
+  onSetFocus: (id: string) => void;
+  onClearTarget: () => void;
+  onClearFocus: () => void;
+  onPlayerMove: () => void;
+  onCancelCast: () => void;
+  onApproachComplete: () => void;
+  onFastForwardTravel: () => void;
+  onApproachTargetReached: () => void;
+  onConfirmGroundTarget: (slotIdx: number, spellId: string, x: number, y: number) => void;
+  onCancelGroundTarget: () => void;
+  onPlayerRevive: () => void;
+  onSkipTravelVote: (choice: 'YES' | 'NO') => void;
+  onDispelUnit: (targetUnitId?: string | null) => void;
+  onSetRaidMark: (targetUnitName: string, mark: string | null) => void;
+  onCastSlot: (slotIdx: number) => void;
+  onSwapSlots: (src: number, dest: number) => void;
+  onAssignSlot: (slotIdx: number, spellId: string) => void;
+  onClearSlot: (slotIdx: number) => void;
+  onSaveUiLayout: (
+    patch: Partial<NonNullable<CharacterRecord['uiLayout']>>
+  ) => void;
+  onAccountRefresh: () => void;
+  isPlayerHealer: boolean;
+};
+
+function resolveUnitCastState(
+  unit: Unit,
+  bossUnit: Unit | undefined,
+  bossCasting: BossCastingInfo | null,
+  companionCasts: Record<string, { spellName: string; progress: number }>
+): { spellName: string; progress: number; interruptible: boolean } | null {
+  if (unit.id === bossUnit?.id && bossCasting) {
+    return {
+      spellName: bossCasting.spellName,
+      progress:
+        bossCasting.castTimeMs > 0
+          ? Math.min(1, bossCasting.elapsedMs / bossCasting.castTimeMs)
+          : 1,
+      interruptible: bossCasting.interruptible,
+    };
+  }
+  if (companionCasts[unit.id]) {
+    return {
+      spellName: companionCasts[unit.id].spellName,
+      progress: companionCasts[unit.id].progress,
+      interruptible: true,
+    };
+  }
+  return null;
+}
+
+/** Combat viewport shell: canvas + floating HUD (no App business logic). */
+export function CombatHudScreen(props: CombatHudScreenProps) {
+  const {
+    friendlyUnits,
+    bossUnit,
+    bossTargetId,
+    groundEffects,
+    floatingTexts,
+    runPhase,
+    isApproaching,
+    screenShake,
+    selectedTargetId,
+    focusTargetId,
+    dungeonTier,
+    targetBossName,
+    currentBossIndex,
+    travelRemainingMs,
+    totalTravelMs,
+    isCorpseRunning,
+    corpseRunTimerMs,
+    revivingUnitId,
+    reviveProgress,
+    autoApproachTarget,
+    groundTargetState,
+    playerCast,
+    companionCasts,
+    bossCasting,
+    deadUnits,
+    totalDurationSec,
+    playerGcdRemainingMs,
+    playerGcdTotalMs,
+    outOfRangeSpells,
+    insufficientResourceSpells,
+    spellResourceErrors,
+    incomingHeals,
+    incomingCasts,
+    savedRaidMarks,
+    skipTravelVote,
+    mySkipVote,
+    currentChar,
+    account,
+    playerSlots,
+    onSelectUnit,
+    onHoverUnit,
+    onSetFocus,
+    onClearTarget,
+    onClearFocus,
+    onPlayerMove,
+    onCancelCast,
+    onApproachComplete,
+    onFastForwardTravel,
+    onApproachTargetReached,
+    onConfirmGroundTarget,
+    onCancelGroundTarget,
+    onPlayerRevive,
+    onSkipTravelVote,
+    onDispelUnit,
+    onSetRaidMark,
+    onCastSlot,
+    onSwapSlots,
+    onAssignSlot,
+    onClearSlot,
+    onSaveUiLayout,
+    onAccountRefresh,
+    isPlayerHealer,
+  } = props;
+
+  const allUnits = [...friendlyUnits, ...(bossUnit ? [bossUnit] : [])];
+  const playerUnit = friendlyUnits.find(u => u.isPlayer);
+
+  const targetUnit =
+    bossUnit && (selectedTargetId === bossUnit.id || selectedTargetId === 'boss')
+      ? bossUnit
+      : friendlyUnits.find(u => u.id === selectedTargetId);
+
+  const focusUnit = !focusTargetId
+    ? null
+    : bossUnit && (focusTargetId === bossUnit.id || focusTargetId === 'boss')
+      ? bossUnit
+      : friendlyUnits.find(u => u.id === focusTargetId) || null;
+
+  return (
+    <div className="w-full flex-1 relative min-h-[640px] h-[calc(100vh-3.5rem)] overflow-hidden select-none bg-[#0a0a14]">
+      <div className="absolute inset-0 z-0">
+        <CombatCanvas
+          units={friendlyUnits}
+          bossUnit={bossUnit}
+          bossTargetId={bossTargetId}
+          groundEffects={groundEffects}
+          floatingTexts={floatingTexts}
+          runPhase={isApproaching ? 'PULL_APPROACH' : runPhase}
+          screenShake={screenShake}
+          selectedUnitId={selectedTargetId}
+          dungeonTier={dungeonTier}
+          targetBossName={targetBossName}
+          currentBossIndex={currentBossIndex}
+          travelRemainingMs={travelRemainingMs}
+          totalTravelMs={totalTravelMs}
+          isCorpseRunning={isCorpseRunning}
+          corpseRunRemainingMs={corpseRunTimerMs}
+          onSelectUnit={onSelectUnit}
+          onSetFocus={onSetFocus}
+          onPlayerMove={onPlayerMove}
+          onCancelCast={onCancelCast}
+          onApproachComplete={onApproachComplete}
+          onFastForwardTravel={onFastForwardTravel}
+          revivingUnitId={revivingUnitId}
+          reviveProgress={reviveProgress}
+          autoApproachTarget={autoApproachTarget}
+          onApproachTargetReached={onApproachTargetReached}
+          groundTargetState={groundTargetState}
+          onConfirmGroundTarget={onConfirmGroundTarget}
+          onCancelGroundTarget={onCancelGroundTarget}
+        />
+      </div>
+
+      <div className="absolute inset-0 pointer-events-none z-10">
+        <div className="absolute top-3 left-4 flex flex-col space-y-2 pointer-events-auto">
+          {playerUnit ? (
+            <PlayerUnitFrame
+              player={playerUnit}
+              allUnits={allUnits}
+              isInCombat={runPhase === 'BOSS_COMBAT'}
+              dkRunes={
+                currentChar?.classId === 'DK'
+                  ? [
+                      { type: 'BLOOD', cdMs: 0 },
+                      { type: 'BLOOD', cdMs: 0 },
+                      { type: 'FROST', cdMs: 0 },
+                      { type: 'FROST', cdMs: 0 },
+                      { type: 'UNHOLY', cdMs: 0 },
+                      { type: 'UNHOLY', cdMs: 0 },
+                    ]
+                  : undefined
+              }
+              onSelect={() => onSelectUnit(playerUnit.id)}
+              onSetFocus={() => onSetFocus(playerUnit.id)}
+            />
+          ) : null}
+
+          {targetUnit ? (
+            <TargetUnitFrame
+              unit={targetUnit}
+              allUnits={allUnits}
+              castState={resolveUnitCastState(targetUnit, bossUnit, bossCasting, companionCasts)}
+              onClearTarget={onClearTarget}
+              onSelectTarget={onSelectUnit}
+              onSetFocus={onSetFocus}
+            />
+          ) : null}
+
+          {focusUnit ? (
+            <FocusUnitFrame
+              unit={focusUnit}
+              allUnits={allUnits}
+              castState={resolveUnitCastState(focusUnit, bossUnit, bossCasting, companionCasts)}
+              onClearFocus={onClearFocus}
+              onSelectTarget={onSelectUnit}
+              onSetFocus={onSetFocus}
+            />
+          ) : null}
+        </div>
+
+        {runPhase === 'TRAVEL_RECOVERY' ? (
+          <div className="absolute top-3 left-1/2 transform -translate-x-1/2 pointer-events-auto">
+            <TravelRecovery
+              targetBossName={targetBossName}
+              remainingMs={travelRemainingMs}
+              totalMs={totalTravelMs}
+              deadUnits={deadUnits}
+              isReviving={!!revivingUnitId}
+              revivingTargetName={friendlyUnits.find(u => u.id === revivingUnitId)?.name || ''}
+              isPlayerHealer={isPlayerHealer}
+              onPlayerRevive={onPlayerRevive}
+              onFastForward={onFastForwardTravel}
+              isCorpseRunning={isCorpseRunning}
+              corpseRunRemainingMs={corpseRunTimerMs}
+              skipTravelVote={skipTravelVote}
+              mySkipVote={mySkipVote}
+              onSkipTravelVote={onSkipTravelVote}
+            />
+          </div>
+        ) : null}
+
+        <div className="pointer-events-auto">
+          <PlayerCastBar playerCast={playerCast} onCancelCast={onCancelCast} />
+        </div>
+
+        <div className="pointer-events-auto">
+          <RaidFrames
+            units={friendlyUnits}
+            selectedUnitId={selectedTargetId}
+            onSelectUnit={onSelectUnit}
+            onHoverUnit={onHoverUnit}
+            onQuickDispel={onDispelUnit}
+            onSetFocus={onSetFocus}
+            bossTargetId={bossTargetId}
+            revivingUnitId={revivingUnitId}
+            reviveProgress={reviveProgress}
+            is20Man={friendlyUnits.length > 5}
+            unitCasts={companionCasts}
+            playerClassId={currentChar?.classId}
+            playerSpecId={currentChar?.lastSpec}
+            playerPos={friendlyUnits.find(u => u.isPlayer)?.position}
+            incomingHeals={incomingHeals}
+            incomingCasts={incomingCasts}
+            accountId={account?.id || account?.username || 'default'}
+            raidMarks={savedRaidMarks}
+            onSetRaidMark={onSetRaidMark}
+            initialPos={currentChar?.uiLayout?.raidFrames}
+            onSavePos={(pos) => onSaveUiLayout({ raidFrames: pos })}
+          />
+        </div>
+
+        <div className="pointer-events-auto">
+          <StatsPanel
+            units={friendlyUnits}
+            durationSec={totalDurationSec}
+            initialPos={currentChar?.uiLayout?.statsPanel}
+            onSavePos={(pos) => onSaveUiLayout({ statsPanel: pos })}
+          />
+        </div>
+
+        <div className="pointer-events-auto flex justify-center w-full absolute bottom-4 left-0">
+          <ActionBar
+            classId={currentChar ? currentChar.classId : 'DK'}
+            specId={currentChar ? currentChar.lastSpec : 'BLOOD'}
+            keybindings={currentChar?.specKeybindings?.[currentChar.lastSpec] || {}}
+            slots={playerSlots}
+            gcdRemainingMs={playerGcdRemainingMs}
+            gcdTotalMs={playerGcdTotalMs}
+            activeGroundSpellId={groundTargetState?.spellId}
+            onCastSlot={onCastSlot}
+            onSwapSlots={onSwapSlots}
+            onAssignSlot={onAssignSlot}
+            onClearSlot={onClearSlot}
+            playerCast={playerCast}
+            onCancelCast={onCancelCast}
+            isInCombat={runPhase === 'BOSS_COMBAT'}
+            outOfRangeSpells={outOfRangeSpells}
+            insufficientResourceSpells={insufficientResourceSpells}
+            spellResourceErrors={spellResourceErrors}
+            dkRunes={
+              currentChar?.classId === 'DK'
+                ? [
+                    { type: 'BLOOD', cdMs: 0 },
+                    { type: 'BLOOD', cdMs: 2500 },
+                    { type: 'FROST', cdMs: 0 },
+                    { type: 'FROST', cdMs: 0 },
+                    { type: 'UNHOLY', cdMs: 0 },
+                    { type: 'UNHOLY', cdMs: 6000 },
+                  ]
+                : undefined
+            }
+            comboPoints={currentChar?.classId === 'ROGUE' ? 4 : 0}
+            holyPower={
+              currentChar?.classId === 'PALADIN'
+                ? (friendlyUnits.find(u => u.isPlayer)?.holyPower ?? 0)
+                : undefined
+            }
+            isPlayerDead={(() => {
+              const p = friendlyUnits.find(u => u.isPlayer);
+              return !p || (!p.isAlive && !p.alive) || (p.hp !== undefined && p.hp <= 0);
+            })()}
+            initialPos={currentChar?.uiLayout?.actionBar ?? null}
+            onSavePos={(pos) => {
+              onSaveUiLayout({ actionBar: pos });
+              onAccountRefresh();
+            }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}

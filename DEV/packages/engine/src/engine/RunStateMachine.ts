@@ -22,34 +22,34 @@ export interface DungeonConfig {
 
 export const SHADOWFANG_KEEP_CONFIG: DungeonConfig = {
   id: 'shadowfang_keep',
-  name: '影牙城堡（英雄模式）',
+  name: '影牙城堡（英雄模式 · Lv.80）',
   tier: '5man',
   bosses: [
-    // 5-man minor bosses: tuned for 2~3 minutes (avg 150s at ~42k group DPS)
-    { id: 'ashbury', name: '亚什布里男爵', hp: 5800000, timelineId: 'ashbury' },
-    { id: 'silverlaine', name: '席瓦莱恩男爵', hp: 6200000, timelineId: 'silverlaine' },
-    { id: 'springvale', name: '指挥官斯普林瓦尔', hp: 6500000, timelineId: 'springvale' },
-    { id: 'walden', name: '沃登勋爵', hp: 6800000, timelineId: 'walden' },
-    // 5-man major boss: tuned for 5 minutes (300s at ~42k group DPS = 12.5M HP)
-    { id: 'godfrey', name: '高弗雷勋爵', hp: 12500000, timelineId: 'godfrey' },
+    // 5-man minor bosses: tuned for Lv.80 max-haste (~45k group DPS -> 2~2.5 min)
+    { id: 'ashbury', name: '亚什布里男爵', hp: 3200000, timelineId: 'ashbury' },
+    { id: 'silverlaine', name: '席瓦莱恩男爵', hp: 3500000, timelineId: 'silverlaine' },
+    { id: 'springvale', name: '指挥官斯普林瓦尔', hp: 3800000, timelineId: 'springvale' },
+    { id: 'walden', name: '沃登勋爵', hp: 4000000, timelineId: 'walden' },
+    // 5-man major boss: tuned for ~4 min at Lv.80 max-haste
+    { id: 'godfrey', name: '高弗雷勋爵', hp: 6200000, timelineId: 'godfrey' },
   ],
 };
 
 export const DRAGON_SOUL_CONFIG: DungeonConfig = {
   id: 'dragon_soul',
-  name: '巨龙之魂（英雄模式 20人）',
+  name: '巨龙之魂（英雄模式 20人 · Lv.80）',
   tier: '20man',
   bosses: [
-    // 20-man minor bosses: tuned for 5 minutes (300s at ~250k group DPS = 75M HP)
-    { id: 'morchok', name: '莫卓克', hp: 75000000, timelineId: 'morchok' },
-    { id: 'zonozz', name: '督军佐诺兹', hp: 75000000, timelineId: 'zonozz' },
-    { id: 'yorsahj', name: '不眠的约萨希', hp: 75000000, timelineId: 'yorsahj' },
-    { id: 'hagara', name: '缚风者哈甲拉', hp: 75000000, timelineId: 'hagara' },
-    { id: 'ultraxion', name: '奥卓克希昂', hp: 78000000, timelineId: 'ultraxion' },
-    { id: 'blackhorn', name: '战争领主黑角', hp: 80000000, timelineId: 'blackhorn' },
-    { id: 'spine', name: '死亡之翼的背脊', hp: 85000000, timelineId: 'spine' },
-    // 20-man major boss: tuned for 8 minutes (480s at ~250k group DPS = 120M HP)
-    { id: 'madness', name: '死亡之翼的疯狂', hp: 120000000, timelineId: 'madness' },
+    // 20-man minor bosses: tuned for Lv.80 max-haste (~200k group DPS -> 3.5~4 min)
+    { id: 'morchok', name: '莫卓克', hp: 42000000, timelineId: 'morchok' },
+    { id: 'zonozz', name: '督军佐诺兹', hp: 44000000, timelineId: 'zonozz' },
+    { id: 'yorsahj', name: '不眠的约萨希', hp: 44000000, timelineId: 'yorsahj' },
+    { id: 'hagara', name: '缚风者哈甲拉', hp: 45000000, timelineId: 'hagara' },
+    { id: 'ultraxion', name: '奥卓克希昂', hp: 48000000, timelineId: 'ultraxion' },
+    { id: 'blackhorn', name: '战争领主黑角', hp: 50000000, timelineId: 'blackhorn' },
+    { id: 'spine', name: '死亡之翼的背脊', hp: 52000000, timelineId: 'spine' },
+    // 20-man major boss
+    { id: 'madness', name: '死亡之翼的疯狂', hp: 68000000, timelineId: 'madness' },
   ],
 };
 
@@ -92,7 +92,14 @@ export class RunStateMachine {
 
   public hasLivingRevivers(): boolean {
     return this.combatEngine.friendlyUnits.some(
-      u => (u.isAlive ?? u.alive) && u.hp > 0 && (u.role === 'HEALER' || u.classId === 'SHAMAN' || u.classId === 'DRUID')
+      u =>
+        (u.isAlive ?? u.alive) &&
+        u.hp > 0 &&
+        (u.role === 'HEALER' ||
+          u.classId === 'SHAMAN' ||
+          u.classId === 'DRUID' ||
+          u.classId === 'PALADIN' ||
+          u.classId === 'PRIEST')
     );
   }
 
@@ -110,7 +117,10 @@ export class RunStateMachine {
       unit.alive = true;
       unit.hp = unit.maxHp;
       unit.mp = unit.maxMp;
-      unit.energy = 100;
+      unit.energy = unit.classId === 'ROGUE' ? 100 : (unit.energy ?? 0);
+      unit.focus = unit.classId === 'HUNTER' ? 100 : (unit.focus ?? 0);
+      unit.rage = unit.classId === 'WARRIOR' ? 25 : (unit.rage ?? 0);
+      unit.holyPower = 0;
       unit.absorb = 0;
       unit.buffs = unit.buffs.filter(b => b.kind === 'BUFF');
       unit.threatTable = [];
@@ -220,7 +230,10 @@ export class RunStateMachine {
         unit.alive = true;
         unit.hp = unit.maxHp;
         unit.mp = unit.maxMp;
-        unit.energy = 100;
+        unit.energy = unit.classId === 'ROGUE' ? 100 : (unit.energy ?? 0);
+        unit.focus = unit.classId === 'HUNTER' ? 100 : (unit.focus ?? 0);
+        unit.rage = unit.classId === 'WARRIOR' ? 25 : (unit.rage ?? 0);
+        unit.holyPower = 0;
         unit.absorb = 0;
         unit.buffs = unit.buffs.filter(b => b.kind === 'BUFF'); // clear harmful debuffs
         unit.threatTable = [];

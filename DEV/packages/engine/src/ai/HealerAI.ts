@@ -1,196 +1,93 @@
 // ============================================================
-// Cata Raid Sim — Healer AI  [AI-03]
-// Druid: Lifebloom(3) + Rejuv, emergency: Swiftmend / Tranquility
-// Shaman: Riptide + Healing Rain, emergency: Healing Wave
+// Cata Raid Sim — Universal Rule-Driven Healer AI  [AI-03]
+// Supports ALL healing classes/specs dynamically via ClassRegistry
+// + SkillMetricEvaluator (Druid, Shaman, Paladin, Priest).
 // ============================================================
 
-import { Unit } from '../types.js';
+import { ClassId, Unit } from '../types.js';
 import {
-  Action, GameState, Priority, PrioritisedAction, RoleAI,
-  getMainTank, hpFraction, hasAura, auraStacks,
+  GameState,
+  Priority,
+  PrioritisedAction,
+  RoleAI,
+  getMainTank,
+  hpFraction,
 } from './AIController.js';
+import { getSpellsForClassSpec } from '../classes/ClassRegistry.js';
+import {
+  buildUsableCandidatesForUnit,
+  createAIPersonality,
+  evaluateUniversalAIDecision,
+  getUnitResourceAmount,
+  getUnitResourceMax,
+} from './SkillMetricEvaluator.js';
 
-// ── HP thresholds ─────────────────────────────────────────────
-const TANK_PRIORITY_HP   = 0.40; // < 40% → prioritise tank heal
-const EMERGENCY_HP       = 0.50; // < 50% → big fast heal
-const SLOW_HEAL_HP       = 0.80; // < 80% → HoT / slow heal
-
-// ── Druid spell IDs ───────────────────────────────────────────
-const DRUID = {
-  LIFEBLOOM:    'druid_lifebloom',
-  REJUVENATION: 'druid_rejuvenation',
-  REGROWTH:     'druid_regrowth',       // 1.5s fast + HoT
-  NOURISH:      'druid_nourish',         // efficient slow heal
-  SWIFTMEND:    'druid_swiftmend',       // instant big heal (off-GCD proc)
-  WILD_GROWTH:  'druid_wild_growth',     // smart 5-target HoT
-  TRANQUILITY:  'druid_tranquility',     // 8s channelled raid heal (long CD)
-  INNERVATE:    'druid_innervate',       // mana restore
-  BARKSKIN:     'druid_barkskin',        // personal 20% DR
-  REBIRTH:      'druid_rebirth',         // battle rez (travel phase only)
-} as const;
-
-// ── Shaman spell IDs ──────────────────────────────────────────
-const SHAMAN = {
-  RIPTIDE:         'shaman_riptide',
-  HEALING_WAVE:    'shaman_healing_wave',
-  GREATER_HEALING: 'shaman_greater_healing_wave',
-  HEALING_SURGE:   'shaman_healing_surge',    // fast nuke heal
-  CHAIN_HEAL:      'shaman_chain_heal',
-  HEALING_RAIN:    'shaman_healing_rain',
-  SPIRIT_LINK:     'shaman_spirit_link_totem',
-  MANA_TIDE:       'shaman_mana_tide_totem',
-  ANCESTRAL_SPIRIT:'shaman_ancestral_spirit', // rez (travel phase only)
-} as const;
-
-// ──────────────────────────────────────────────────────────────
 export class HealerAI implements RoleAI {
   decide(unit: Unit, gs: GameState): PrioritisedAction[] {
-    switch (unit.classId) {
-      case 'DRUID':  return this.decideDruid(unit, gs);
-      case 'SHAMAN': return this.decideShaman(unit, gs);
-      default:       return [];
-    }
-  }
-
-  // ── Restoration Druid ────────────────────────────────────────
-  private decideDruid(unit: Unit, gs: GameState): PrioritisedAction[] {
     const actions: PrioritisedAction[] = [];
+    if (unit.classId === 'BOSS' || unit.classId === 'NPC') return actions;
+
+    const allies = gs.units.filter(u => u.role !== 'ENEMY' && u.isAlive && u.hp > 0);
+    const enemies = gs.units.filter(u => u.role === 'ENEMY' && u.isAlive && u.hp > 0);
+    const specId = (unit as any).spec as string | undefined;
+    const ownedSpells = getSpellsForClassSpec(unit.classId as ClassId, specId);
+
+    // 1. 通用回蓝技能判定（只要拥有回蓝技能且蓝量低于30%）
+    const curMana = getUnitResourceAmount(unit, 'MANA');
+    const maxMana = getUnitResourceMax(unit, 'MANA');
+    if (maxMana > 0 && curMana / maxMana < 0.30) {
+      const manaRestoreSpell = ownedSpells.find(s => s.isResourceRestore && !s.isDamage);
+      if (manaRestoreSpell) {
+        actions.push(act(manaRestoreSpell.id, unit.id, Priority.DEFENSIVE, true));
+      }
+    }
+
+    // 2. 通用规则决策（优先判断 AOE -> 紧急单抬 -> 性价比/输出平衡）
+    const personality = createAIPersonality(unit.name, unit.id);
+    const candidates = buildUsableCandidatesForUnit(unit, specId, () => true, {
+      roleFilter: 'HEAL',
+      useShortId: false,
+    });
+
+    const decision = evaluateUniversalAIDecision({
+      caster: unit,
+      personality,
+      allies,
+      enemies,
+      usableSkills: candidates,
+      tickCount: Math.floor((gs.elapsedMs || 0) / 100),
+    });
+
+    if (decision.chosenCandidate && decision.targetUnit) {
+      const sp = decision.chosenCandidate.normalizedSpell;
+      if (sp?.targetType === 'GROUND') {
+        const bestPos = findOptimalGroundAuraCentroid(unit, allies, 55, 360);
+        actions.push({
+          priority: Priority.HEAL,
+          action: {
+            spellId: decision.chosenCandidate.spellId,
+            targetId: decision.targetUnit.id,
+            immediate: decision.chosenCandidate.castMs === 0,
+            targetX: bestPos.x,
+            targetY: bestPos.y,
+          },
+        });
+      } else {
+        actions.push(
+          act(
+            decision.chosenCandidate.spellId,
+            decision.targetUnit.id,
+            Priority.HEAL,
+            decision.chosenCandidate.castMs === 0 || decision.decisionType === 'EMERGENCY_ST'
+          )
+        );
+      }
+    }
+
+    // 3. 兜底：若坦克血线未满且仍有可用单抬技能，补充最低优先级维护
     const tank = getMainTank(gs.units);
-    const allies = gs.units.filter(u => u.role !== 'ENEMY' && u.isAlive);
-
-    // Mana management
-    const manaRes = unit.resources.find(r => r.kind === 'MANA');
-    if (manaRes && manaRes.current / manaRes.max < 0.25) {
-      actions.push(act(DRUID.INNERVATE, unit.id, Priority.DEFENSIVE, true));
-    }
-    const currentMana = manaRes?.current ?? unit.mp ?? 0;
-    if (currentMana < 1400) return actions; // OOM, cannot cast heals
-
-    // ── 1. Tank emergency ────────────────────────────────────
-    if (tank && hpFraction(tank) < TANK_PRIORITY_HP) {
-      actions.push(act(DRUID.SWIFTMEND, tank.id, Priority.HEAL, true));
-      actions.push(act(DRUID.REGROWTH, tank.id, Priority.HEAL));
-    }
-
-    // ── 2. Full-raid emergency ────────────────────────────────
-    const injured = allies.filter(u => hpFraction(u) < EMERGENCY_HP);
-    if (injured.length >= 3) {
-      // Pop Tranquility if on CD-free; Wild Growth for <=3 injured
-      actions.push(act(DRUID.TRANQUILITY, unit.id, Priority.HEAL, true));
-    }
-    if (injured.length >= 2) {
-      actions.push(act(DRUID.WILD_GROWTH, unit.id, Priority.HEAL, true));
-    }
-    for (const target of injured) {
-      actions.push(act(DRUID.SWIFTMEND, target.id, Priority.HEAL, true));
-    }
-
-    // ── 3. HoT maintenance on tank ────────────────────────────
-    if (tank) {
-      // Keep 3 stacks of Lifebloom on tank
-      const lbStacks = auraStacks(tank, DRUID.LIFEBLOOM);
-      if (lbStacks < 3) {
-        actions.push(act(DRUID.LIFEBLOOM, tank.id, Priority.HEAL));
-      }
-      // Keep Rejuvenation on tank
-      if (!hasAura(tank, DRUID.REJUVENATION)) {
-        actions.push(act(DRUID.REJUVENATION, tank.id, Priority.HEAL));
-      }
-    }
-
-    // ── 4. HoT spread on other injured allies ─────────────────
-    for (const target of allies) {
-      if (target.role === 'TANK') continue;
-      if (hpFraction(target) < SLOW_HEAL_HP && !hasAura(target, DRUID.REJUVENATION)) {
-        actions.push(act(DRUID.REJUVENATION, target.id, Priority.HEAL));
-      }
-      if (hpFraction(target) < EMERGENCY_HP && !hasAura(target, DRUID.REGROWTH)) {
-        actions.push(act(DRUID.REGROWTH, target.id, Priority.HEAL));
-      }
-    }
-
-    // ── 5. Filler: Nourish to refresh Lifebloom ───────────────
-    if (tank && auraStacks(tank, DRUID.LIFEBLOOM) > 0) {
-      actions.push(act(DRUID.NOURISH, tank.id, Priority.DPS)); // "DPS" = lowest priority filler
-    }
-
-    return actions;
-  }
-
-  // ── Restoration Shaman ───────────────────────────────────────
-  private decideShaman(unit: Unit, gs: GameState): PrioritisedAction[] {
-    const actions: PrioritisedAction[] = [];
-    const tank = getMainTank(gs.units);
-    const allies = gs.units.filter(u => u.role !== 'ENEMY' && u.isAlive);
-
-    // Mana management
-    const manaRes = unit.resources.find(r => r.kind === 'MANA');
-    if (manaRes && manaRes.current / manaRes.max < 0.25) {
-      actions.push(act(SHAMAN.MANA_TIDE, unit.id, Priority.DEFENSIVE, true));
-    }
-    const currentMana = manaRes?.current ?? unit.mp ?? 0;
-    if (currentMana < 1800) return actions; // OOM, cannot cast heals
-
-    const injured = allies.filter(u => hpFraction(u) < EMERGENCY_HP);
-
-    // ── 1. Tank emergency ────────────────────────────────────
-    if (tank && hpFraction(tank) < TANK_PRIORITY_HP) {
-      actions.push(act(SHAMAN.GREATER_HEALING, tank.id, Priority.HEAL, true));
-    }
-
-    // ── 2. Raid emergency: Spirit Link Totem ─────────────────
-    if (injured.length >= 3) {
-      actions.push(act(SHAMAN.SPIRIT_LINK, unit.id, Priority.HEAL, true));
-    }
-
-    // ── 3. Healing Rain uptime with smart placement ───────────
-    if (!hasAura(unit, SHAMAN.HEALING_RAIN)) {
-      const bestPos = findOptimalGroundAuraCentroid(unit, allies, 55, 360);
-      actions.push({
-        priority: Priority.HEAL,
-        action: {
-          spellId: SHAMAN.HEALING_RAIN,
-          targetId: unit.id,
-          immediate: false,
-          targetX: bestPos.x,
-          targetY: bestPos.y,
-        },
-      });
-    }
-
-    // ── 4. Riptide maintenance ────────────────────────────────
-    if (tank && !hasAura(tank, SHAMAN.RIPTIDE)) {
-      actions.push(act(SHAMAN.RIPTIDE, tank.id, Priority.HEAL, true));
-    }
-    // Spread Riptide to injured non-tanks
-    for (const target of allies) {
-      if (target.role === 'TANK') continue;
-      if (hpFraction(target) < SLOW_HEAL_HP && !hasAura(target, SHAMAN.RIPTIDE)) {
-        actions.push(act(SHAMAN.RIPTIDE, target.id, Priority.HEAL, true));
-        break; // one per decision cycle
-      }
-    }
-
-    // ── 5. Single-target heals for injured ───────────────────
-    for (const target of injured) {
-      if (hpFraction(target) < EMERGENCY_HP) {
-        actions.push(act(SHAMAN.HEALING_SURGE, target.id, Priority.HEAL));
-      }
-    }
-
-    // ── 6. Chain Heal for multi-injured ──────────────────────
-    if (injured.length >= 2 && tank) {
-      actions.push(act(SHAMAN.CHAIN_HEAL, tank.id, Priority.HEAL));
-    }
-
-    // ── 7. Mana Tide when low mana ────────────────────────────
-    if (manaRes && manaRes.current / manaRes.max < 0.30) {
-      actions.push(act(SHAMAN.MANA_TIDE, unit.id, Priority.DEFENSIVE, true));
-    }
-
-    // ── 8. Filler: standard Healing Wave ─────────────────────
-    if (tank && hpFraction(tank) < SLOW_HEAL_HP) {
-      actions.push(act(SHAMAN.HEALING_WAVE, tank.id, Priority.DPS));
+    if (actions.length === 0 && tank && hpFraction(tank) < 0.90 && candidates.length > 0) {
+      actions.push(act(candidates[0].spellId, tank.id, Priority.DPS));
     }
 
     return actions;

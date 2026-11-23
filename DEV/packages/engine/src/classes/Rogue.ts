@@ -87,20 +87,20 @@ export const ROGUE: ClassSpec = {
     },
 
     {
-      id: 'rogue_kidney_shot',
+      id: 'rogue_kick',
       name: '脚踢',
       castTimeMs: 0,
       gcdType: 'off',            // 打断脱离GCD
       gcdCategory: 'OFF_GCD',
       cooldownMs: 10_000,
       resourceCost: 'ENERGY',
-      resourceCostAmount: 25,
+      resourceCostAmount: 15,
       targetType: 'SINGLE_ENEMY',
       school: 'PHYSICAL',
       effects: [
         {
           type: 'INTERRUPT',
-          description: '打断施法，消耗25能量，CD 10s',
+          description: '打断目标施法并封锁法术系5s，消耗15能量，CD 10s（不进GCD）',
         },
       ],
     },
@@ -149,12 +149,32 @@ export const ROGUE: ClassSpec = {
     },
 
     {
-      id: 'rogue_evasion',
+      id: 'rogue_fan_of_knives',
+      name: '刀扇',
+      castTimeMs: 0,
+      gcdType: 'rogue',
+      gcdCategory: 'ROGUE',
+      cooldownMs: 0,
+      resourceCost: 'ENERGY',
+      resourceCostAmount: 35,
+      targetType: 'AOE_ENEMY',
+      school: 'PHYSICAL',
+      effects: [
+        {
+          type: 'PHYSICAL_DAMAGE',
+          baseValue: 7400,
+          description: '向四周投掷飞刀并附带毒药伤害，盗贼三系通用核心AOE（固定1.0s GCD）',
+        },
+      ],
+    },
+
+    {
+      id: 'rogue_feint',
       name: '佯攻',
       castTimeMs: 0,
       gcdType: 'off',
       gcdCategory: 'OFF_GCD',
-      cooldownMs: 0,
+      cooldownMs: 10_000,
       resourceCost: 'ENERGY',
       resourceCostAmount: 20,
       targetType: 'SELF',
@@ -162,9 +182,30 @@ export const ROGUE: ClassSpec = {
       effects: [
         {
           type: 'BUFF',
-          auraId: 'evasion',
+          auraId: 'feint',
           durationMs: 5_000,
-          description: '自身AOE减伤50%，持续5s，消耗20能量，无冷却（应对首领高额AOE核心减伤）',
+          description: '自身受到AOE伤害降低50%，持续5s，消耗20能量，CD 10s',
+        },
+      ],
+    },
+
+    {
+      id: 'rogue_evasion',
+      name: '闪避',
+      castTimeMs: 0,
+      gcdType: 'off',
+      gcdCategory: 'OFF_GCD',
+      cooldownMs: 180_000,
+      resourceCost: 'NONE',
+      resourceCostAmount: 0,
+      targetType: 'SELF',
+      school: 'PHYSICAL',
+      effects: [
+        {
+          type: 'BUFF',
+          auraId: 'evasion',
+          durationMs: 15_000,
+          description: '闪避几率提高50%，持续15s，CD 3min（不进GCD）',
         },
       ],
     },

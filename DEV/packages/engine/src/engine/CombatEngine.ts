@@ -1825,6 +1825,7 @@ export class CombatEngine {
     spec?: string;
     role: string;
     isPlayer: boolean;
+    isBoss?: boolean;
     isAlive: boolean;
     hp: number;
     maxHp: number;
@@ -1839,6 +1840,7 @@ export class CombatEngine {
     buffs: Buff[];
     combatStats?: Unit['combatStats'];
   }> {
+    const bossId = this.bossUnit?.id;
     return this.getAllUnits().map((u) => ({
       id: u.id,
       name: u.name,
@@ -1846,6 +1848,7 @@ export class CombatEngine {
       spec: u.spec,
       role: u.role,
       isPlayer: u.isPlayer,
+      isBoss: !!bossId && u.id === bossId,
       isAlive: u.isAlive,
       hp: u.hp,
       maxHp: u.maxHp,

@@ -1,5 +1,32 @@
 # 📜 变更历史（Changelog）
 
+## [0.3.1] — 2026-11-23
+
+### 架构（App 瘦身 Phase-1〜8）
+- **抽出前端消耗表**：`DEV/packages/web/src/combat/spellCosts.ts`（`SPELL_*_COSTS`），`App.tsx` 改为 import，无行为变更。
+- **抽出单位资源工具**：`DEV/packages/web/src/combat/unitResources.ts`（`syncUnitResources`、`deductAiResource`）。
+- **抽出房间大厅动作**：`DEV/packages/web/src/hooks/useRoomLobby.ts`（leave/create/join/queue/quickJoin/start；WS subscribe 仍在 App）。
+- **抽出开本阵容装配**：`DEV/packages/web/src/combat/setupRaidUnits.ts`（5/20 人 roster + 房间成员 + 难度系数）。
+- **抽出画面壳**：`screens/LobbyScreen.tsx`（房间列表/详情 + Auth 注入）、`screens/CombatHudScreen.tsx`（Canvas + HUD）。
+- **抽出施法闸门（P6a）**：`sharedCooldowns.ts` / `playerGcd.ts` / `castResourceGates.ts`。
+- **抽出读条结算（P6b）**：`combat/resolvePlayerCast.ts`。
+- **抽出瞬发效果表（P6c）**：`combat/executePlayerInstantEffects.ts`。
+- **抽出读条启动分支（P6d）**：`combat/startPlayerCastBranches.ts` + `hooks/usePlayerCastActions.ts` 组合入口。
+- **抽出起手闸门编排（P6e）**：`combat/handlePlayerCastSlot.ts`（网络 guest/GCD/准星/选目标）；`App.handleCastSlot` 仅装配 deps-bag。
+- **抽出 AI 战斗执行（P7）**：`combat/aiCombatExecutor.ts`（`executeAiNormalizedSpell` + `runFriendlyAiCombatTick`）。
+- **抽出 20Hz 战斗帧（P8）**：`combat/runCombatTick.ts` + `hooks/useCombatTick.ts`；App 仅装配 deps-bag。
+- **抽出房间 WS 同步（P3b）**：`hooks/useNetworkRoomSync.ts`；tick deps 分组为 `refs` / `setters` / `callbacks`；施法管线经 `usePlayerCastActions` barrel 导入。
+- **文档对齐**：`MASTER_INDEX.md` 分层图增加 `combat/` / `screens/`；`UI_AND_ROOMS.md` §4；`MODIFY_UI_AND_HUD.md` / `DEV_README.md` 同步。
+
+## [0.3.0] — 2026-11-22
+
+### 架构改造（AI 开发提效）
+- **L0→L1→L2 渐进式文档体系**：`MASTER_INDEX.md` 改为意图路由总纲；新增 3 份域指南与 6 份 SOP（见 `DOCS/`）。
+- **施法三态契约单一事实源**：新增 `CastLifecycle.ts`；引擎与玩家侧统一瞬发/读条/引导的资源与 CD 时机。
+- **HUD 布局 SSOT**：新增 `hudLayout.ts`；动作条重置改为持久化 `null`，自动清洗历史 `{0,0}` 脏坐标。
+- **首页瘦身**：移除角色首页副本模式/挑战难度前置面板及无用透传 props；难度配置唯一归属房间流。
+- **基准验收单测**：`cast_lifecycle_and_hud_reset.test.ts` 覆盖引导打断保 CD、读条打断零消耗、HUD 底部居中重置。
+
 ## [0.2.0] — 2026-11-21
 
 ### 新增功能

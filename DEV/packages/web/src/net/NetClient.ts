@@ -11,17 +11,12 @@ import {
   type RoomCreatePayload,
 } from '@cata-raid-sim/engine';
 
+import { resolveGameWsUrl } from './apiBase.js';
+
 export type NetListener = (msg: NetEnvelope) => void;
 
 function defaultWsUrl(): string {
-  if (typeof window === 'undefined') return 'ws://localhost:3001';
-  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const host = window.location.hostname;
-  // Vite dev (3000): talk to game server WS on 3001 directly
-  if (window.location.port === '3000' || window.location.port === '') {
-    return `${proto}//${host}:3001`;
-  }
-  return `${proto}//${host}${window.location.port ? `:${window.location.port}` : ''}`;
+  return resolveGameWsUrl();
 }
 
 export class NetClient {
@@ -88,6 +83,11 @@ export class NetClient {
     this.ws.onmessage = (ev) => {
       const msg = decodeNetMessage(String(ev.data));
       if (!msg) return;
+      if (msg.type === 'SESSION_KICKED') {
+        // Prevent auto-reconnect after being kicked by a newer login
+        this.intentionalClose = true;
+        this.auth = null;
+      }
       if (msg.type === 'ROOM_LIST_SYNC' && Array.isArray(msg.payload)) {
         this._rooms = msg.payload as LobbyRoom[];
       }
@@ -96,6 +96,10 @@ export class NetClient {
         const idx = this._rooms.findIndex((r) => r.id === room.id);
         if (idx >= 0) this._rooms[idx] = room;
         else this._rooms = [...this._rooms, room];
+      }
+      if (msg.type === 'ROOM_CLOSED' && msg.payload) {
+        const closedId = (msg.payload as { roomId?: string }).roomId || msg.roomId;
+        if (closedId) this._rooms = this._rooms.filter((r) => r.id !== closedId);
       }
       if (msg.type === 'PRESENCE' && msg.payload && Array.isArray((msg.payload as any).onlinePlayerIds)) {
         this._onlinePlayerIds = (msg.payload as any).onlinePlayerIds;
@@ -153,6 +157,11 @@ export class NetClient {
 
   leaveRoom(roomId?: string) {
     this.send({ type: 'ROOM_LEAVE', roomId });
+  }
+
+  /** Host destroys room for everyone (wipe finish / explicit close). */
+  closeRoom(roomId: string, reason = 'destroyed') {
+    this.send({ type: 'ROOM_CLOSED', roomId, payload: { roomId, reason } });
   }
 
   roomAction(roomId: string, action: RoomActionPayload) {

@@ -1,0 +1,97 @@
+@import "tailwindcss";
+
+@theme {
+  --color-wow-bg: #1A1A2E;
+  --color-wow-panel: #16213E;
+  --color-wow-border: #0F3460;
+  --color-wow-gold: #FFD700;
+  --color-wow-red: #C41F3B;
+  --color-class-dk: #C41F3B;
+  --color-class-druid: #FF7D0A;
+  --color-class-shaman: #0070DE;
+  --color-class-mage: #69CCF0;
+  --color-class-rogue: #FFF569;
+
+  --animate-pulse-red: pulse-red 1s ease-in-out infinite;
+  --animate-bounce-sct: bounce-sct 0.3s ease-out;
+
+  @keyframes pulse-red {
+    0%, 100% {
+      box-shadow: 0 0 0 0 rgba(196, 31, 59, 0);
+    }
+    50% {
+      box-shadow: 0 0 0 3px rgba(196, 31, 59, 0.9);
+    }
+  }
+
+  @keyframes bounce-sct {
+    0% {
+      transform: scale(1.5);
+    }
+    60% {
+      transform: scale(0.9);
+    }
+    100% {
+      transform: scale(1);
+    }
+  }
+}
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  body {
+    background-color: #1A1A2E;
+    color: #fff;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    overflow: hidden;
+  }
+}
+
+/* Pixel font for WoW feel */
+.wow-font {
+  font-family: 'Courier New', Courier, monospace;
+  font-weight: bold;
+}
+
+/* HP bar animation */
+.hp-bar-transition {
+  transition: width 0.15s ease-out;
+}
+
+/* Class color utilities */
+.text-class-dk     { color: #C41F3B; }
+.text-class-druid  { color: #FF7D0A; }
+.text-class-shaman { color: #0070DE; }
+.text-class-mage   { color: #69CCF0; }
+.text-class-rogue  { color: #FFF569; }
+.text-class-boss   { color: #FF4444; }
+
+.bg-class-dk     { background-color: #C41F3B; }
+.bg-class-druid  { background-color: #FF7D0A; }
+.bg-class-shaman { background-color: #0070DE; }
+.bg-class-mage   { background-color: #69CCF0; }
+.bg-class-rogue  { background-color: #FFF569; }
+
+.border-class-dk     { border-color: #C41F3B; }
+.border-class-druid  { border-color: #FF7D0A; }
+.border-class-shaman { border-color: #0070DE; }
+.border-class-mage   { border-color: #69CCF0; }
+.border-class-rogue  { border-color: #FFF569; }
+
+/* Red flicker for threat leader */
+@keyframes threat-flicker {
+  0%, 100% { box-shadow: 0 0 0 2px #C41F3B; }
+  50%       { box-shadow: 0 0 8px 3px #FF0000; }
+}
+
+.threat-leader {
+  animation: threat-flicker 0.6s ease-in-out infinite;
+}
+
+/* Wipe overlay */
+.wipe-overlay {
+  backdrop-filter: blur(4px);
+}

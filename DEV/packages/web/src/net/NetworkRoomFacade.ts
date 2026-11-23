@@ -17,7 +17,25 @@ import { netClient } from './NetClient.js';
  * Offline: mutations run on the local RoomManager (single-player).
  */
 export class NetworkRoomFacade {
-  constructor(private readonly local: RoomManager) {}
+  createRoomLocal: RoomManager['createRoom'];
+  startGameLocal: RoomManager['startGame'];
+  joinWaitingQueue: RoomManager['joinWaitingQueue'];
+  leaveWaitingQueue: RoomManager['leaveWaitingQueue'];
+  updateCombatBossState: RoomManager['updateCombatBossState'];
+  substituteOutOfCombat: RoomManager['substituteOutOfCombat'];
+  getWaitingQueueStatus: RoomManager['getWaitingQueueStatus'];
+
+  constructor(private readonly local: RoomManager) {
+    // Bound in constructor body: with useDefineForClassFields, field
+    // initializers run before parameter properties are assigned.
+    this.createRoomLocal = this.local.createRoom.bind(this.local);
+    this.startGameLocal = this.local.startGame.bind(this.local);
+    this.joinWaitingQueue = this.local.joinWaitingQueue.bind(this.local);
+    this.leaveWaitingQueue = this.local.leaveWaitingQueue.bind(this.local);
+    this.updateCombatBossState = this.local.updateCombatBossState.bind(this.local);
+    this.substituteOutOfCombat = this.local.substituteOutOfCombat.bind(this.local);
+    this.getWaitingQueueStatus = this.local.getWaitingQueueStatus.bind(this.local);
+  }
 
   get connected() {
     return netClient.connected;
@@ -138,6 +156,16 @@ export class NetworkRoomFacade {
     return this.local.leaveRoom(roomId, memberId);
   }
 
+  /** Host destroys room for all clients (wipe FINISH / explicit close). */
+  closeRoom(roomId: string, reason = 'destroyed') {
+    if (this.connected) {
+      netClient.closeRoom(roomId, reason);
+      this.local.destroyRoom(roomId);
+      return true;
+    }
+    return this.local.destroyRoom(roomId);
+  }
+
   deleteRoom(roomId: string) {
     return this.local.deleteRoom(roomId);
   }
@@ -145,12 +173,4 @@ export class NetworkRoomFacade {
   cleanupAiOnlyRooms() {
     return this.local.cleanupAiOnlyRooms();
   }
-
-  createRoomLocal = this.local.createRoom.bind(this.local);
-  startGameLocal = this.local.startGame.bind(this.local);
-  joinWaitingQueue = this.local.joinWaitingQueue.bind(this.local);
-  leaveWaitingQueue = this.local.leaveWaitingQueue.bind(this.local);
-  updateCombatBossState = this.local.updateCombatBossState.bind(this.local);
-  substituteOutOfCombat = this.local.substituteOutOfCombat.bind(this.local);
-  getWaitingQueueStatus = this.local.getWaitingQueueStatus.bind(this.local);
 }

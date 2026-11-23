@@ -107,29 +107,45 @@ export const FocusUnitFrame: React.FC<FocusUnitFrameProps> = ({
   // ── Adaptive Power Bar (matches PlayerUnitFrame) ───────────────────────────
   const isRogue = unit.classId === 'ROGUE';
   const isDK = unit.classId === 'DK';
+  const isWarrior = unit.classId === 'WARRIOR';
+  const isHunter = unit.classId === 'HUNTER';
 
-  let powerBarColor = '#0070DE'; // Blue Mana
+  let powerBarColor = '#0070DE';
   let powerCurrent = unit.mp || 0;
-  let powerMax = unit.maxMp || (isFriendly ? 100000 : 100);
-  let powerText = `${powerCurrent.toLocaleString()} / ${powerMax.toLocaleString()}`;
+  let powerMax = unit.maxMp || (isFriendly ? 45000 : 100);
+  let powerText = `${Math.round(powerCurrent).toLocaleString()} / ${Math.round(powerMax).toLocaleString()}`;
   let powerPct = powerMax > 0 ? Math.max(0, Math.min(100, (powerCurrent / powerMax) * 100)) : 0;
 
   if (isRogue) {
-    powerBarColor = '#FFF569'; // Yellow Energy
-    powerCurrent = unit.energy ?? 100;
+    powerBarColor = '#FFF569';
+    powerCurrent = Math.round(unit.energy ?? 100);
     powerMax = 100;
     powerText = `${powerCurrent} / 100`;
     powerPct = Math.max(0, Math.min(100, powerCurrent));
+  } else if (isWarrior) {
+    const rageRes = unit.resources?.find(r => r.kind === 'RAGE');
+    powerBarColor = '#DC2626';
+    powerCurrent = Math.round(rageRes?.current ?? unit.rage ?? 0);
+    powerMax = rageRes?.max ?? 100;
+    powerText = `${powerCurrent} / ${powerMax}`;
+    powerPct = powerMax > 0 ? Math.max(0, Math.min(100, (powerCurrent / powerMax) * 100)) : 0;
+  } else if (isHunter) {
+    const focusRes = unit.resources?.find(r => r.kind === 'FOCUS');
+    powerBarColor = '#F97316';
+    powerCurrent = Math.round(focusRes?.current ?? unit.focus ?? 100);
+    powerMax = focusRes?.max ?? 100;
+    powerText = `${powerCurrent} / ${powerMax}`;
+    powerPct = powerMax > 0 ? Math.max(0, Math.min(100, (powerCurrent / powerMax) * 100)) : 0;
   } else if (isDK) {
     const rpRes = unit.resources?.find(r => r.kind === 'RUNIC_POWER');
-    powerBarColor = '#00D8FF'; // Cyan Runic Power
-    powerCurrent = rpRes?.current ?? (unit as any).runicPower ?? 0;
+    powerBarColor = '#00D8FF';
+    powerCurrent = Math.round(rpRes?.current ?? unit.runicPower ?? 0);
     powerMax = rpRes?.max ?? 100;
     powerText = `${powerCurrent} / ${powerMax}`;
     powerPct = powerMax > 0 ? Math.max(0, Math.min(100, (powerCurrent / powerMax) * 100)) : 0;
   } else if (isBoss) {
     powerBarColor = unit.maxMp ? '#0070DE' : '#C41E3A';
-    powerCurrent = unit.mp ?? 0;
+    powerCurrent = Math.round(unit.mp ?? 0);
     powerMax = unit.maxMp || 100;
     powerText = `${powerCurrent} / ${powerMax}`;
     powerPct = powerMax > 0 ? Math.max(0, Math.min(100, (powerCurrent / powerMax) * 100)) : 0;
@@ -233,7 +249,7 @@ export const FocusUnitFrame: React.FC<FocusUnitFrameProps> = ({
               )}
             </div>
 
-            {/* Level indicator: 85 for players, ?? 💀 for bosses */}
+            {/* Level indicator: 80 for players, ?? 💀 for bosses */}
             <div
               className={`absolute -bottom-1 -left-1 px-1 py-0.2 rounded-full border flex items-center justify-center text-[7.5px] font-black shadow z-20 pointer-events-none ${
                 isBoss
@@ -241,7 +257,7 @@ export const FocusUnitFrame: React.FC<FocusUnitFrameProps> = ({
                   : 'bg-[#1b1b32] border-[#d4af37] text-amber-300'
               }`}
             >
-              {isBoss ? '?? 💀' : '85'}
+              {isBoss ? '?? 💀' : '80'}
             </div>
           </div>
 

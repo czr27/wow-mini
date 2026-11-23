@@ -6,6 +6,8 @@ import {
   RunPhase,
   evaluateGroundFormationPosition,
   GroundTargetState,
+  createAIPersonality,
+  resolveFidgetIdleThresholdMs,
 } from '@cata-raid-sim/engine';
 import { CLASS_COLORS } from '../components/AuthAndCharacterModal.js';
 
@@ -90,11 +92,16 @@ export interface TrashMob {
   distAlongMaze: number;
   x: number;
   y: number;
+  /** Idle stand offset from pack anchor — used for mild combat bob. */
+  baseX: number;
+  baseY: number;
   hp: number;
   visualHp: number; // for smooth health bar lagging chip
   maxHp: number;
   isDead: boolean;
-  dissipateAlpha: number; // 1.0 -> 0.0
+  /** Dead mobs become persistent tombstones (no auto-despawn). */
+  isTombstone: boolean;
+  dissipateAlpha: number; // kept for legacy FX; tombstones stay at 1
 }
 
 interface EncounterSCTItem {
@@ -837,7 +844,12 @@ function drawClassCharacter(
     ctx.stroke();
   }
 
-  const isMelee = u.role === 'TANK' || u.classId === 'ROGUE' || (u.classId === 'DK' && u.role !== 'DPS');
+  const isMelee =
+    u.role === 'TANK' ||
+    u.classId === 'ROGUE' ||
+    u.classId === 'WARRIOR' ||
+    u.classId === 'DK' ||
+    (u.classId === 'PALADIN' && u.role !== 'HEALER');
   const sway = isMelee ? Math.sin(tickCount * 0.12 + idx) * 2.2 : Math.sin(tickCount * 0.06 + idx) * 1.0;
   const classColor = CLASS_COLORS[u.classId as any] || '#888';
 
@@ -1007,6 +1019,136 @@ function drawClassCharacter(
       ctx.fillRect(-12 + sway, -16, 5, 3);
       break;
     }
+    case 'WARRIOR': {
+      // Heavy Steel Plate Armor & Shoulder Pauldrons
+      ctx.fillStyle = '#3f2e21';
+      ctx.fillRect(-10 + sway, -13, 20, 23);
+      ctx.fillStyle = '#C79C6E'; // Warrior bronze/steel trim
+      ctx.fillRect(-11 + sway, -13, 22, 6);
+      // Horned Gladiator Helm
+      ctx.fillStyle = '#64748b';
+      ctx.beginPath();
+      ctx.arc(0 + sway, -18, 7.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#ef4444'; // Crimson visor plume
+      ctx.fillRect(-2 + sway, -27, 4, 5);
+      ctx.fillStyle = '#f8fafc';
+      ctx.fillRect(-4 + sway, -19, 8, 2);
+      // Greatsword / Tower Shield
+      if (u.role === 'TANK') {
+        ctx.fillStyle = '#78350f';
+        ctx.fillRect(10 + sway, -9, 6, 20);
+        ctx.fillStyle = '#facc15';
+        ctx.fillRect(12 + sway, -5, 2, 12);
+      } else {
+        ctx.fillStyle = '#cbd5e1';
+        ctx.fillRect(10 + sway, -24, 3.5, 28);
+        ctx.fillStyle = '#b45309';
+        ctx.fillRect(8 + sway, -4, 7.5, 3);
+      }
+      break;
+    }
+    case 'PALADIN': {
+      // Radiant Golden/Silver Plate Armor
+      ctx.fillStyle = '#1e293b';
+      ctx.fillRect(-10 + sway, -13, 20, 23);
+      ctx.fillStyle = '#F58CBA'; // Paladin class trim
+      ctx.fillRect(-8 + sway, -11, 16, 7);
+      ctx.fillStyle = '#FACC15'; // Golden Holy Tabard Cross
+      ctx.fillRect(-1.5 + sway, -10, 3, 14);
+      ctx.fillRect(-5 + sway, -6, 10, 3);
+      // Golden Crowned Helm
+      ctx.fillStyle = '#eab308';
+      ctx.beginPath();
+      ctx.arc(0 + sway, -18, 7.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#fef08a';
+      ctx.fillRect(-4 + sway, -20, 2.5, 2);
+      ctx.fillRect(2 + sway, -20, 2.5, 2);
+      // Radiant Hammer or Shield
+      ctx.fillStyle = '#94a3b8';
+      ctx.fillRect(10 + sway, -18, 3, 24);
+      ctx.fillStyle = '#fde047';
+      ctx.fillRect(7 + sway, -21, 9, 6);
+      break;
+    }
+    case 'HUNTER': {
+      // Emerald Mail & Ranger Cloak
+      ctx.fillStyle = '#1a2e05';
+      ctx.fillRect(-8 + sway, -12, 16, 22);
+      ctx.fillStyle = '#ABD473';
+      ctx.fillRect(-7 + sway, -10, 14, 7);
+      // Ranger Hood
+      ctx.fillStyle = '#365314';
+      ctx.beginPath();
+      ctx.arc(0 + sway, -17, 7, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#bef264';
+      ctx.fillRect(-3.5 + sway, -18, 2, 2);
+      ctx.fillRect(1.5 + sway, -18, 2, 2);
+      // Longbow
+      ctx.strokeStyle = '#d97706';
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      ctx.arc(9 + sway, -6, 12, -Math.PI / 2.2, Math.PI / 2.2);
+      ctx.stroke();
+      ctx.strokeStyle = '#e2e8f0';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(10 + sway, -17);
+      ctx.lineTo(10 + sway, 5);
+      ctx.stroke();
+      break;
+    }
+    case 'PRIEST': {
+      // White/Gold Vestments (or Shadowform Violet for Shadow DPS)
+      const isShadow = u.role === 'DPS';
+      ctx.fillStyle = isShadow ? '#2e1065' : '#e2e8f0';
+      ctx.fillRect(-8 + sway, -12, 16, 24);
+      ctx.fillStyle = isShadow ? '#9333ea' : '#facc15';
+      ctx.fillRect(-6 + sway, -10, 12, 6);
+      // Head + Halo
+      ctx.fillStyle = isShadow ? '#4c1d95' : '#f8fafc';
+      ctx.beginPath();
+      ctx.arc(0 + sway, -17, 7, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = isShadow ? '#c084fc' : '#fde047';
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.ellipse(0 + sway, -26, 6, 2.2, 0, 0, Math.PI * 2);
+      ctx.stroke();
+      // Benediction Staff
+      ctx.fillStyle = isShadow ? '#7e22ce' : '#eab308';
+      ctx.fillRect(9 + sway, -20, 2.5, 28);
+      ctx.fillStyle = isShadow ? '#e879f9' : '#fef08a';
+      ctx.beginPath();
+      ctx.arc(10.2 + sway, -22, 4, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
+    case 'WARLOCK': {
+      // Fel-trimmed Dark Demonologist Robes
+      ctx.fillStyle = '#1e1033';
+      ctx.fillRect(-8 + sway, -12, 16, 24);
+      ctx.fillStyle = '#9482C9';
+      ctx.fillRect(-6 + sway, -10, 12, 6);
+      // Horned Fel Cowl
+      ctx.fillStyle = '#3b0764';
+      ctx.beginPath();
+      ctx.arc(0 + sway, -17, 7, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#a3e635'; // Fel green eyes
+      ctx.fillRect(-3.5 + sway, -18, 2.2, 2);
+      ctx.fillRect(1.5 + sway, -18, 2.2, 2);
+      // Fel Staff & Soul Shard Orb
+      ctx.fillStyle = '#581c87';
+      ctx.fillRect(9 + sway, -19, 2.5, 26);
+      ctx.fillStyle = '#84cc16';
+      ctx.beginPath();
+      ctx.arc(10.2 + sway, -21, 4.2, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
     default: {
       ctx.fillStyle = classColor;
       ctx.fillRect(-8 + sway, -12, 16, 22);
@@ -1061,6 +1203,51 @@ const DRAGON_SOUL_WAYPOINTS = [
   { x: 720, y: 200 },  // 10. Exit: Twilight Gateway
 ];
 
+/** Melee DPS that stand on the boss flanks in combat formation. */
+function isMeleeDpsUnit(u: Unit): boolean {
+  return (
+    u.classId === 'ROGUE' ||
+    u.classId === 'WARRIOR' ||
+    ((u.classId === 'DK' || u.classId === 'PALADIN') && u.role === 'DPS')
+  );
+}
+
+/**
+ * Predicted combat standing position — shared by PULL_APPROACH march and
+ * BOSS_COMBAT AI so the tank (and party) never teleport on pull.
+ * Boss is expected at ~ (500, 180); tank holds left so boss faces away from raid.
+ */
+function getCombatFormationPos(
+  u: Unit,
+  idx: number,
+  bossPos: { x: number; y: number },
+  hpPct = 1
+): { x: number; y: number } {
+  if (u.role === 'TANK') {
+    const tankOffset = idx % 2 === 0 ? -12 : 16;
+    return hpPct >= 0.6
+      ? { x: 445, y: 180 + tankOffset }
+      : { x: 400, y: 180 + tankOffset };
+  }
+  if (isMeleeDpsUnit(u)) {
+    const meleeAngle = Math.PI - 0.45 + (idx % 4) * 0.32;
+    const meleeDist = 48 + ((idx * 6) % 12);
+    return {
+      x: bossPos.x + Math.cos(meleeAngle) * meleeDist,
+      y: bossPos.y + Math.sin(meleeAngle) * meleeDist,
+    };
+  }
+  const col = idx % 3;
+  const row = Math.floor(idx / 3);
+  const nameCode = u.name ? u.name.charCodeAt(0) : 65;
+  const hashX = ((idx * 31 + nameCode) % 17) - 8;
+  const hashY = ((idx * 43 + nameCode) % 21) - 10;
+  return {
+    x: 210 + col * 50 + hashX,
+    y: 105 + (row % 5) * 36 + hashY,
+  };
+}
+
 function computePathGeometry(waypoints: Array<{ x: number; y: number }>) {
   const segLens: number[] = [];
   let totalLen = 0;
@@ -1086,6 +1273,23 @@ function computePathGeometry(waypoints: Array<{ x: number; y: number }>) {
   return { segLens, totalLen, getPoint };
 }
 
+function makeTrashMob(
+  partial: Omit<TrashMob, 'baseX' | 'baseY' | 'visualHp' | 'isDead' | 'isTombstone' | 'dissipateAlpha' | 'hp'> & {
+    maxHp: number;
+  }
+): TrashMob {
+  return {
+    ...partial,
+    baseX: partial.x,
+    baseY: partial.y,
+    hp: partial.maxHp,
+    visualHp: partial.maxHp,
+    isDead: false,
+    isTombstone: false,
+    dissipateAlpha: 1.0,
+  };
+}
+
 function createDungeonTrashMobs(
   tier: '5man' | '20man',
   getPoint: (dist: number) => { x: number; y: number },
@@ -1098,131 +1302,148 @@ function createDungeonTrashMobs(
 
   if (tier === '20man') {
     return [
-      {
+      makeTrashMob({
         id: 'ds_mob_1',
         name: '暮光狂热龙人',
         mobModel: 'TWILIGHT_DRAKONID',
         packIndex: 1,
         distAlongMaze: p1Dist,
-        x: pt1.x - 10,
-        y: pt1.y - 12,
-        hp: 85000,
-        visualHp: 85000,
-        maxHp: 85000,
-        isDead: false,
-        dissipateAlpha: 1.0,
-      },
-      {
+        x: pt1.x - 14,
+        y: pt1.y - 16,
+        maxHp: 52000,
+      }),
+      makeTrashMob({
         id: 'ds_mob_2',
         name: '炽热熔岩幼龙',
         mobModel: 'LAVA_DRAKE',
         packIndex: 1,
-        distAlongMaze: p1Dist + 15,
-        x: pt1.x + 16,
-        y: pt1.y + 14,
-        hp: 75000,
-        visualHp: 75000,
-        maxHp: 75000,
-        isDead: false,
-        dissipateAlpha: 1.0,
-      },
-      {
+        distAlongMaze: p1Dist + 18,
+        x: pt1.x + 18,
+        y: pt1.y + 12,
+        maxHp: 46000,
+      }),
+      makeTrashMob({
         id: 'ds_mob_3',
         name: '暮光腐化织法者',
         mobModel: 'TWILIGHT_VOIDWEAVER',
         packIndex: 2,
         distAlongMaze: p2Dist,
-        x: pt2.x - 10,
-        y: pt2.y - 12,
-        hp: 88000,
-        visualHp: 88000,
-        maxHp: 88000,
-        isDead: false,
-        dissipateAlpha: 1.0,
-      },
-      {
+        x: pt2.x - 12,
+        y: pt2.y - 14,
+        maxHp: 54000,
+      }),
+      makeTrashMob({
         id: 'ds_mob_4',
         name: '巨龙之魂毁灭者',
         mobModel: 'DRAGON_ANNIHILATOR',
         packIndex: 2,
-        distAlongMaze: p2Dist + 15,
-        x: pt2.x + 18,
-        y: pt2.y + 14,
-        hp: 110000,
-        visualHp: 110000,
-        maxHp: 110000,
-        isDead: false,
-        dissipateAlpha: 1.0,
-      },
+        distAlongMaze: p2Dist + 18,
+        x: pt2.x + 20,
+        y: pt2.y + 10,
+        maxHp: 62000,
+      }),
     ];
   }
 
-  // 5-man: Shadowfang Keep
+  // 5-man: Shadowfang Keep — lighter pools so discrete hits chip them down visibly
   return [
-    {
+    makeTrashMob({
       id: 'sfk_mob_1',
       name: '影牙巡逻狼人',
       mobModel: 'WORGEN_PATROL',
       packIndex: 1,
       distAlongMaze: p1Dist,
-      x: pt1.x - 10,
-      y: pt1.y - 10,
-      hp: 38000,
-      visualHp: 38000,
-      maxHp: 38000,
-      isDead: false,
-      dissipateAlpha: 1.0,
-    },
-    {
+      x: pt1.x - 12,
+      y: pt1.y - 12,
+      maxHp: 22000,
+    }),
+    makeTrashMob({
       id: 'sfk_mob_2',
       name: '狂暴黑狼守卫',
       mobModel: 'DARK_WOLF',
       packIndex: 1,
-      distAlongMaze: p1Dist + 15,
-      x: pt1.x + 16,
-      y: pt1.y + 14,
-      hp: 32000,
-      visualHp: 32000,
-      maxHp: 32000,
-      isDead: false,
-      dissipateAlpha: 1.0,
-    },
-    {
+      distAlongMaze: p1Dist + 16,
+      x: pt1.x + 18,
+      y: pt1.y + 12,
+      maxHp: 18000,
+    }),
+    makeTrashMob({
       id: 'sfk_mob_3',
       name: '影牙暗影导魔师',
-      mobModel: 'SHADOW_CHANNELER',
       packIndex: 2,
+      mobModel: 'SHADOW_CHANNELER',
       distAlongMaze: p2Dist,
-      x: pt2.x - 10,
+      x: pt2.x - 12,
       y: pt2.y - 10,
-      hp: 36000,
-      visualHp: 36000,
-      maxHp: 36000,
-      isDead: false,
-      dissipateAlpha: 1.0,
-    },
-    {
+      maxHp: 20000,
+    }),
+    makeTrashMob({
       id: 'sfk_mob_4',
       name: '影牙重装盾卫',
       mobModel: 'SHADOW_SHIELDGUARD',
       packIndex: 2,
-      distAlongMaze: p2Dist + 15,
+      distAlongMaze: p2Dist + 16,
       x: pt2.x + 18,
-      y: pt2.y + 14,
-      hp: 44000,
-      visualHp: 44000,
-      maxHp: 44000,
-      isDead: false,
-      dissipateAlpha: 1.0,
-    },
+      y: pt2.y + 12,
+      maxHp: 26000,
+    }),
   ];
 }
 
+function killTrashMobAsTombstone(mob: TrashMob) {
+  mob.hp = 0;
+  mob.isDead = true;
+  mob.isTombstone = true;
+  mob.dissipateAlpha = 1.0;
+  mob.x = mob.baseX;
+  mob.y = mob.baseY;
+}
+
+function drawTrashTombstone(ctx: CanvasRenderingContext2D, mob: TrashMob) {
+  // Weathered grave marker left on the corridor after the fight
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+  ctx.beginPath();
+  ctx.ellipse(0, 12, 14, 5, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = '#4b5563';
+  ctx.beginPath();
+  ctx.moveTo(-10, 8);
+  ctx.lineTo(-10, -10);
+  ctx.quadraticCurveTo(-10, -22, 0, -22);
+  ctx.quadraticCurveTo(10, -22, 10, -10);
+  ctx.lineTo(10, 8);
+  ctx.closePath();
+  ctx.fill();
+
+  ctx.strokeStyle = '#1f2937';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  ctx.fillStyle = '#6b7280';
+  ctx.fillRect(-7, -6, 14, 10);
+
+  ctx.fillStyle = '#9ca3af';
+  ctx.font = 'bold 10px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('✝', 0, 2);
+
+  ctx.fillStyle = '#94a3b8';
+  ctx.font = 'bold 8px sans-serif';
+  ctx.fillText(mob.name.length > 6 ? `${mob.name.slice(0, 5)}…` : mob.name, 0, 22);
+}
+
 function drawTrashMob(ctx: CanvasRenderingContext2D, mob: TrashMob, tickCount: number, is20Man: boolean) {
-  if (mob.isDead && mob.dissipateAlpha <= 0) return;
+  if (mob.isDead && !mob.isTombstone && mob.dissipateAlpha <= 0) return;
   ctx.save();
-  ctx.globalAlpha = Math.max(0, Math.min(1, mob.dissipateAlpha));
+  ctx.globalAlpha = Math.max(0, Math.min(1, mob.isTombstone ? 1 : mob.dissipateAlpha));
   ctx.translate(mob.x, mob.y);
+
+  if (mob.isTombstone || (mob.isDead && mob.hp <= 0)) {
+    drawTrashTombstone(ctx, mob);
+    ctx.restore();
+    return;
+  }
 
   // 1. Ground Shadow
   ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
@@ -1457,117 +1678,62 @@ function drawTrashMob(ctx: CanvasRenderingContext2D, mob: TrashMob, tickCount: n
   ctx.font = '8px sans-serif';
   ctx.fillText(`${Math.ceil(mob.hp)}`, 0, -30);
 
-  // 4. Soul Embers Particle Scattering (at HP 0 dissipation)
-  if (mob.dissipateAlpha < 1.0) {
-    const particleColor = is20Man ? '#f97316' : '#a855f7';
-    ctx.fillStyle = particleColor;
-    for (let p = 0; p < 8; p++) {
-      const px = Math.sin(tickCount * 0.25 + p) * 22;
-      const py = -10 - ((tickCount * 2.5 + p * 12) % 40);
-      ctx.beginPath();
-      ctx.arc(px, py, 2.4, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  }
-
   ctx.restore();
 }
 
 /**
- * 绘制缩减 40% 的核心战斗场地与广阔外圈大殿背景
- * - 核心战斗区域集中在中间 60% 矩形 (width*0.6 x height*0.6)，拥有明亮石质地砖、战术网格与符文边框；
- * - 外圈 40% 留白区域作为宽广的大殿背景（深色石板地砖、殿堂石柱壁火与暗角阴影），外圈不硬性设阻，只是视野更广阔。
+ * 全屏石质大殿地面：战术网格铺满整张画布，无中间矩形框/区域约束。
  */
 function drawArenaBackground(ctx: CanvasRenderingContext2D, width: number, height: number) {
-  // 1. 广阔的外圈大殿底色 (深邃石室地面)
-  ctx.fillStyle = '#06060f';
+  // 1. Full-screen stone floor with soft center highlight
+  const floorGrad = ctx.createRadialGradient(
+    width / 2,
+    height / 2,
+    40,
+    width / 2,
+    height / 2,
+    Math.max(width, height) * 0.72
+  );
+  floorGrad.addColorStop(0, '#15152a');
+  floorGrad.addColorStop(0.55, '#111122');
+  floorGrad.addColorStop(1, '#080812');
+  ctx.fillStyle = floorGrad;
   ctx.fillRect(0, 0, width, height);
 
-  // 外圈稀疏石板地砖缝隙 (50px 宽网格)
-  ctx.strokeStyle = '#10101f';
+  // 2. Fine tactical grid across the entire viewport (30px)
+  ctx.strokeStyle = '#1c1c38';
   ctx.lineWidth = 1;
-  for (let x = 0; x < width; x += 50) {
+  for (let x = 0; x <= width; x += 30) {
     ctx.beginPath();
     ctx.moveTo(x, 0);
     ctx.lineTo(x, height);
     ctx.stroke();
   }
-  for (let y = 0; y < height; y += 50) {
+  for (let y = 0; y <= height; y += 30) {
     ctx.beginPath();
     ctx.moveTo(0, y);
     ctx.lineTo(width, y);
     ctx.stroke();
   }
 
-  // 2. 中间 60% 核心战斗矩形区域 (中央战斗擂台)
-  const arenaW = width * 0.6;          // 780 * 0.6 = 468
-  const arenaH = height * 0.6;         // 360 * 0.6 = 216
-  const arenaX = (width - arenaW) / 2; // 156
-  const arenaY = (height - arenaH) / 2;// 72
-
-  // 核心战斗区域地砖：更明亮饱满的石质擂台地面与中央径向高光
-  const arenaFloorGrad = ctx.createRadialGradient(
-    width / 2, height / 2, 35,
-    width / 2, height / 2, arenaW * 0.55
-  );
-  arenaFloorGrad.addColorStop(0, '#15152a');
-  arenaFloorGrad.addColorStop(0.65, '#111122');
-  arenaFloorGrad.addColorStop(1, '#0c0c18');
-  ctx.fillStyle = arenaFloorGrad;
-  ctx.fillRect(arenaX, arenaY, arenaW, arenaH);
-
-  // 核心区域精细战术网格 (30px 网格)
-  ctx.strokeStyle = '#1c1c38';
-  ctx.lineWidth = 1;
-  for (let x = arenaX; x <= arenaX + arenaW; x += 30) {
+  // 3. Subtle major tile seams every 90px
+  ctx.strokeStyle = '#141428';
+  ctx.lineWidth = 1.25;
+  for (let x = 0; x <= width; x += 90) {
     ctx.beginPath();
-    ctx.moveTo(x, arenaY);
-    ctx.lineTo(x, arenaY + arenaH);
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, height);
     ctx.stroke();
   }
-  for (let y = arenaY; y <= arenaY + arenaH; y += 30) {
+  for (let y = 0; y <= height; y += 90) {
     ctx.beginPath();
-    ctx.moveTo(arenaX, y);
-    ctx.lineTo(arenaX + arenaW, y);
+    ctx.moveTo(0, y);
+    ctx.lineTo(width, y);
     ctx.stroke();
   }
 
-  // 核心 60% 区域符文边界线
-  ctx.strokeStyle = '#2d2d52';
-  ctx.lineWidth = 2;
-  ctx.strokeRect(arenaX, arenaY, arenaW, arenaH);
-
-  // 四角符文包角装饰 (魔兽风格斜角护角)
-  const cornerLen = 16;
-  ctx.strokeStyle = '#434375';
-  ctx.lineWidth = 2.5;
-  // 左上角
-  ctx.beginPath();
-  ctx.moveTo(arenaX, arenaY + cornerLen);
-  ctx.lineTo(arenaX, arenaY);
-  ctx.lineTo(arenaX + cornerLen, arenaY);
-  ctx.stroke();
-  // 右上角
-  ctx.beginPath();
-  ctx.moveTo(arenaX + arenaW - cornerLen, arenaY);
-  ctx.lineTo(arenaX + arenaW, arenaY);
-  ctx.lineTo(arenaX + arenaW, arenaY + cornerLen);
-  ctx.stroke();
-  // 左下角
-  ctx.beginPath();
-  ctx.moveTo(arenaX, arenaY + arenaH - cornerLen);
-  ctx.lineTo(arenaX, arenaY + arenaH);
-  ctx.lineTo(arenaX + cornerLen, arenaY + arenaH);
-  ctx.stroke();
-  // 右下角
-  ctx.beginPath();
-  ctx.moveTo(arenaX + arenaW - cornerLen, arenaY + arenaH);
-  ctx.lineTo(arenaX + arenaW, arenaY + arenaH);
-  ctx.lineTo(arenaX + arenaW, arenaY + arenaH - cornerLen);
-  ctx.stroke();
-
-  // 核心区域中央地面淡色符文环
-  ctx.strokeStyle = 'rgba(99, 102, 241, 0.18)';
+  // 4. Soft center rune rings (decorative only, no bounding box)
+  ctx.strokeStyle = 'rgba(99, 102, 241, 0.16)';
   ctx.lineWidth = 1.5;
   ctx.beginPath();
   ctx.arc(width / 2, height / 2, 68, 0, Math.PI * 2);
@@ -1576,7 +1742,7 @@ function drawArenaBackground(ctx: CanvasRenderingContext2D, width: number, heigh
   ctx.arc(width / 2, height / 2, 74, 0, Math.PI * 2);
   ctx.stroke();
 
-  // 3. 外圈四角大殿石柱与火把微光，增强纵深感与广阔感
+  // 5. Corner pillars + torch glow
   const pillars = [
     { x: 50, y: 38 },
     { x: width - 50, y: 38 },
@@ -1584,7 +1750,6 @@ function drawArenaBackground(ctx: CanvasRenderingContext2D, width: number, heigh
     { x: width - 50, y: height - 38 },
   ];
   for (const p of pillars) {
-    // 火把漫反射微光
     const torchGrad = ctx.createRadialGradient(p.x, p.y, 2, p.x, p.y, 45);
     torchGrad.addColorStop(0, 'rgba(251, 146, 60, 0.18)');
     torchGrad.addColorStop(0.4, 'rgba(251, 146, 60, 0.05)');
@@ -1594,7 +1759,6 @@ function drawArenaBackground(ctx: CanvasRenderingContext2D, width: number, heigh
     ctx.arc(p.x, p.y, 45, 0, Math.PI * 2);
     ctx.fill();
 
-    // 殿堂石柱方块
     ctx.fillStyle = '#131322';
     ctx.strokeStyle = '#24243e';
     ctx.lineWidth = 1.5;
@@ -1602,13 +1766,17 @@ function drawArenaBackground(ctx: CanvasRenderingContext2D, width: number, heigh
     ctx.strokeRect(p.x - 7, p.y - 7, 14, 14);
   }
 
-  // 4. 外缘柔和暗角晕影 (Vignette)
+  // 6. Soft edge vignette (no hard arena rectangle)
   const vignette = ctx.createRadialGradient(
-    width / 2, height / 2, arenaW * 0.48,
-    width / 2, height / 2, width * 0.62
+    width / 2,
+    height / 2,
+    Math.min(width, height) * 0.42,
+    width / 2,
+    height / 2,
+    Math.max(width, height) * 0.78
   );
   vignette.addColorStop(0, 'rgba(0, 0, 0, 0)');
-  vignette.addColorStop(1, 'rgba(3, 3, 7, 0.55)');
+  vignette.addColorStop(1, 'rgba(3, 3, 7, 0.45)');
   ctx.fillStyle = vignette;
   ctx.fillRect(0, 0, width, height);
 }
@@ -1654,6 +1822,15 @@ export const CombatCanvas: React.FC<Props> = ({
   const lastBossIdRef = useRef<string | null>(null);
   const isBossMovingRef = useRef<boolean>(false);
   const companionPositionsRef = useRef<Record<string, { x: number; y: number }>>({});
+  /** AI 多动症：站桩计时 + 单次小幅踱步偏移（不改动拉怪/治疗圈等意图站位） */
+  const companionFidgetRef = useRef<Record<string, {
+    idleMs: number;
+    activeUntil: number;
+    ox: number;
+    oy: number;
+    lastX: number;
+    lastY: number;
+  }>>({});
   const keysPressedRef = useRef<Set<string>>(new Set());
 
   // Mouse Click-to-Move & Auto-Pathfinding in Maze
@@ -1661,8 +1838,11 @@ export const CombatCanvas: React.FC<Props> = ({
   const autoNavActiveRef = useRef<boolean>(true);
   const mazeLeadDistRef = useRef<number>(0);
 
-  // Approach pull animation timer
+  // Approach pull animation timer — start poses captured so march ends on combat spots
   const approachElapsedRef = useRef<number>(0);
+  const approachStartPositionsRef = useRef<Record<string, { x: number; y: number }>>({});
+  const approachPullFiredRef = useRef(false);
+  const prevCanvasPhaseRef = useRef<string | null>(null);
   const pullShoutRef = useRef<string | null>(null);
 
   // FX references
@@ -1681,10 +1861,14 @@ export const CombatCanvas: React.FC<Props> = ({
   const trashMobsRef = useRef<TrashMob[]>(initTrashMobs());
   const lastDungeonTierRef = useRef<string>(dungeonTier);
   const lastTargetBossRef = useRef<string>(targetBossName);
+  /** Tracks phase for maze refresh — re-entering TRAVEL must revive trash (no leftover tombstones). */
+  const lastPhaseForTrashResetRef = useRef<string | null>(null);
   const isEncounteringRef = useRef<boolean>(false);
   const currentEncounterPackRef = useRef<number>(0);
   const encounterTimerMsRef = useRef<number>(0);
   const encounterSCTRef = useRef<EncounterSCTItem[]>([]);
+  /** Elapsed-ms when each pack was fully tombstoned — keeps early-clear march smooth. */
+  const packClearedAtElapsedRef = useRef<{ 1: number | null; 2: number | null }>({ 1: null, 2: null });
 
   // Keyboard listeners for WASD & Arrow Keys & Alt+1~9 Target Switching
   useEffect(() => {
@@ -1918,10 +2102,15 @@ export const CombatCanvas: React.FC<Props> = ({
     let animId: number;
     let tickCount = 0;
 
-    // Reset trash mob encounters when resetting to LOBBY/SUMMARY or changing tier/boss
+    // Reset maze trash when: lobby/summary, new travel segment (wipe retry / next boss / first enter), or tier/boss change
+    const prevPhaseForTrash = lastPhaseForTrashResetRef.current;
+    lastPhaseForTrashResetRef.current = runPhase;
+    const enteringTravel =
+      runPhase === 'TRAVEL_RECOVERY' && prevPhaseForTrash !== 'TRAVEL_RECOVERY';
     if (
       runPhase === 'LOBBY' ||
       runPhase === 'SUMMARY' ||
+      enteringTravel ||
       dungeonTier !== lastDungeonTierRef.current ||
       targetBossName !== lastTargetBossRef.current
     ) {
@@ -1931,10 +2120,12 @@ export const CombatCanvas: React.FC<Props> = ({
       isEncounteringRef.current = false;
       currentEncounterPackRef.current = 0;
       encounterTimerMsRef.current = 0;
+      packClearedAtElapsedRef.current = { 1: null, 2: null };
       mazeLeadDistRef.current = 0;
       const startWp = (dungeonTier === '20man' ? DRAGON_SOUL_WAYPOINTS : SHADOWFANG_WAYPOINTS)[0];
       playerPosRef.current = { x: startWp.x, y: startWp.y };
       companionPositionsRef.current = {};
+      companionFidgetRef.current = {};
     }
 
     const render = () => {
@@ -1942,7 +2133,15 @@ export const CombatCanvas: React.FC<Props> = ({
       const width = canvas.width;
       const height = canvas.height;
 
-      // Reset boss position if new boss spawned or in staging approach (central 60% rectangle)
+      // Entering PULL_APPROACH: always reset march clock (skip-travel can bypass TRAVEL frames)
+      if (runPhase === 'PULL_APPROACH' && prevCanvasPhaseRef.current !== 'PULL_APPROACH') {
+        approachElapsedRef.current = 0;
+        approachPullFiredRef.current = false;
+        approachStartPositionsRef.current = {};
+      }
+      prevCanvasPhaseRef.current = runPhase;
+
+      // Reset boss position if new boss spawned or during staging approach
       if (bossUnit?.id && bossUnit.id !== lastBossIdRef.current) {
         lastBossIdRef.current = bossUnit.id;
         bossPosRef.current = { x: 500, y: 180 };
@@ -1952,6 +2151,7 @@ export const CombatCanvas: React.FC<Props> = ({
         }
       }
       if (runPhase === 'PULL_APPROACH') {
+        // Keep boss planted on the right of the room during entry (visible, not missing)
         bossPosRef.current = { x: 500, y: 180 };
         if (bossUnit?.position) {
           bossUnit.position.x = 500;
@@ -2018,106 +2218,137 @@ export const CombatCanvas: React.FC<Props> = ({
       const stopDist1 = totalMazeLen * 0.32 - 48;
       const stopDist2 = totalMazeLen * 0.72 - 48;
 
+      const packStillAlive = (packIndex: 1 | 2) =>
+        trashMobsRef.current.some(m => m.packIndex === packIndex && !m.isDead && !m.isTombstone);
+
+      // Latch the moment each pack falls so early clears don't snap the lead forward
+      if (elapsed < tP1Start) {
+        packClearedAtElapsedRef.current[1] = null;
+        packClearedAtElapsedRef.current[2] = null;
+      } else {
+        if (!packStillAlive(1) && packClearedAtElapsedRef.current[1] === null) {
+          packClearedAtElapsedRef.current[1] = elapsed;
+        }
+        if (elapsed >= tP2Start && !packStillAlive(2) && packClearedAtElapsedRef.current[2] === null) {
+          packClearedAtElapsedRef.current[2] = elapsed;
+        }
+      }
+
       let targetLeadDist = 0;
       let currentEncounterPack = 0;
 
       if (elapsed < tP1Start) {
         targetLeadDist = (elapsed / tP1Start) * stopDist1;
-      } else if (elapsed < tP1Clear) {
-        targetLeadDist = stopDist1;
-        currentEncounterPack = 1;
       } else if (elapsed < tP2Start) {
-        const ratio = (elapsed - tP1Clear) / (tP2Start - tP1Clear);
-        targetLeadDist = stopDist1 + ratio * (stopDist2 - stopDist1);
-      } else if (elapsed < tP2Clear) {
-        targetLeadDist = stopDist2;
-        currentEncounterPack = 2;
+        if (packStillAlive(1)) {
+          targetLeadDist = stopDist1;
+          currentEncounterPack = 1;
+        } else {
+          const marchT0 = packClearedAtElapsedRef.current[1] ?? tP1Clear;
+          const denom = Math.max(1, tP2Start - marchT0);
+          const ratio = Math.max(0, Math.min(1, (elapsed - marchT0) / denom));
+          targetLeadDist = stopDist1 + ratio * (stopDist2 - stopDist1);
+        }
+      } else if (elapsed < totalT) {
+        if (packStillAlive(2)) {
+          targetLeadDist = stopDist2;
+          currentEncounterPack = 2;
+        } else {
+          const marchT0 = packClearedAtElapsedRef.current[2] ?? tP2Clear;
+          const denom = Math.max(1, totalT - marchT0);
+          const ratio = Math.max(0, Math.min(1, (elapsed - marchT0) / denom));
+          targetLeadDist = stopDist2 + ratio * (totalMazeLen - stopDist2);
+        }
       } else {
-        const ratio = (elapsed - tP2Clear) / (totalT - tP2Clear);
-        targetLeadDist = stopDist2 + ratio * (totalMazeLen - stopDist2);
+        targetLeadDist = totalMazeLen;
       }
 
       isEncounteringRef.current = currentEncounterPack > 0;
       currentEncounterPackRef.current = currentEncounterPack;
 
-      // Update Mob HP & Dissipation smoothly according to timeline
+      // Reset living packs before their fight window; never erase tombstones after clear
       trashMobsRef.current.forEach(mob => {
-        if (mob.packIndex === 1) {
-          if (elapsed < tP1Start) {
-            mob.hp = mob.maxHp;
-            mob.dissipateAlpha = 1.0;
-            mob.isDead = false;
-          } else if (elapsed < tP1HpZero) {
-            const ratio = (elapsed - tP1Start) / (tP1HpZero - tP1Start);
-            mob.hp = Math.max(0, Math.round(mob.maxHp * (1 - ratio)));
-            mob.dissipateAlpha = 1.0;
-            mob.isDead = false;
-          } else if (elapsed < tP1Clear) {
-            mob.hp = 0;
-            const fade = (elapsed - tP1HpZero) / (tP1Clear - tP1HpZero);
-            mob.dissipateAlpha = Math.max(0, 1 - fade);
-            mob.isDead = false;
-          } else {
-            mob.hp = 0;
-            mob.dissipateAlpha = 0;
-            mob.isDead = true;
-          }
-        } else if (mob.packIndex === 2) {
-          if (elapsed < tP2Start) {
-            mob.hp = mob.maxHp;
-            mob.dissipateAlpha = 1.0;
-            mob.isDead = false;
-          } else if (elapsed < tP2HpZero) {
-            const ratio = (elapsed - tP2Start) / (tP2HpZero - tP2Start);
-            mob.hp = Math.max(0, Math.round(mob.maxHp * (1 - ratio)));
-            mob.dissipateAlpha = 1.0;
-            mob.isDead = false;
-          } else if (elapsed < tP2Clear) {
-            mob.hp = 0;
-            const fade = (elapsed - tP2HpZero) / (tP2Clear - tP2HpZero);
-            mob.dissipateAlpha = Math.max(0, 1 - fade);
-            mob.isDead = false;
-          } else {
-            mob.hp = 0;
-            mob.dissipateAlpha = 0;
-            mob.isDead = true;
-          }
+        const fightStart = mob.packIndex === 1 ? tP1Start : tP2Start;
+        const forceKillAt = mob.packIndex === 1 ? tP1HpZero : tP2HpZero;
+        if (elapsed < fightStart && !mob.isTombstone) {
+          mob.hp = mob.maxHp;
+          mob.visualHp = mob.maxHp;
+          mob.isDead = false;
+          mob.isTombstone = false;
+          mob.dissipateAlpha = 1.0;
+          mob.x = mob.baseX;
+          mob.y = mob.baseY;
+        } else if (!mob.isDead && !mob.isTombstone && elapsed >= forceKillAt) {
+          // Soft deadline so the march can resume even if DPS RNG was unlucky
+          killTrashMobAsTombstone(mob);
+        } else if (!mob.isDead && currentEncounterPack === mob.packIndex) {
+          // Mild combat bob so the pack doesn't look frozen
+          const bob = Math.sin(tickCount * 0.12 + mob.baseX * 0.05) * 2.2;
+          const sway = Math.cos(tickCount * 0.09 + mob.baseY * 0.04) * 1.6;
+          mob.x = mob.baseX + sway;
+          mob.y = mob.baseY + bob;
         }
       });
 
-      // Automated attacks & SCT damage numbers during encounter
-      if (currentEncounterPack > 0 && tickCount % 10 === 0) {
-        const activePackMobs = trashMobsRef.current.filter(m => m.packIndex === currentEncounterPack && !m.isDead);
-        if (activePackMobs.length > 0) {
-          const targetMob = activePackMobs[tickCount % activePackMobs.length];
-          // Slash
+      // Discrete party ↔ trash combat (chip HP + light return damage). No auto-fade corpses.
+      if (currentEncounterPack > 0) {
+        const activePackMobs = trashMobsRef.current.filter(
+          m => m.packIndex === currentEncounterPack && !m.isDead && !m.isTombstone
+        );
+        const livingAllies = units.filter(u => (u.isAlive ?? u.alive) && u.hp > 0);
+
+        // Party hits trash — staggered so each mob dies on its own rhythm
+        if (activePackMobs.length > 0 && tickCount % 8 === 0) {
+          const targetMob = activePackMobs[Math.floor(Math.random() * activePackMobs.length)];
+          const isCrit = Math.random() > 0.55;
+          const baseHit = is20Man
+            ? (isCrit ? 9000 + Math.random() * 5000 : 4800 + Math.random() * 2800)
+            : (isCrit ? 5200 + Math.random() * 2800 : 2800 + Math.random() * 1600);
+          const dmg = Math.round(baseHit);
+          targetMob.hp = Math.max(0, targetMob.hp - dmg);
+
           slashesRef.current.push({
             id: `slash_${Date.now()}_${Math.random()}`,
             x: targetMob.x + (Math.random() - 0.5) * 20,
             y: targetMob.y + (Math.random() - 0.5) * 16,
             angle: (Math.random() - 0.5) * Math.PI,
-            color: Math.random() > 0.4 ? '#FACC15' : '#EF4444',
+            color: isCrit ? '#FACC15' : '#EF4444',
             elapsedMs: 0,
             totalMs: 180,
           });
-          // Ranged projectile
-          const caster = units.find(u => u.classId === 'MAGE' || u.classId === 'SHAMAN' || u.classId === 'DRUID');
-          if (caster) {
-            const cPos = companionPositionsRef.current[caster.id] || playerPosRef.current;
+
+          const caster = units.find(
+            u =>
+              (u.isAlive ?? u.alive) &&
+              (u.classId === 'MAGE' ||
+                u.classId === 'SHAMAN' ||
+                u.classId === 'DRUID' ||
+                u.classId === 'HUNTER' ||
+                u.classId === 'WARLOCK' ||
+                u.classId === 'PRIEST')
+          );
+          if (caster && Math.random() > 0.35) {
+            const cPos = caster.isPlayer
+              ? playerPosRef.current
+              : companionPositionsRef.current[caster.id] || playerPosRef.current;
+            const projColor =
+              caster.classId === 'MAGE' ? '#F97316' :
+              caster.classId === 'SHAMAN' ? '#38BDF8' :
+              caster.classId === 'HUNTER' ? '#ABD473' :
+              caster.classId === 'WARLOCK' ? '#A855F7' :
+              caster.classId === 'PRIEST' ? '#C084FC' : '#FBBF24';
             projectilesRef.current.push({
               id: `proj_${Date.now()}_${Math.random()}`,
               fromX: cPos.x,
               fromY: cPos.y,
               toX: targetMob.x,
               toY: targetMob.y,
-              color: caster.classId === 'MAGE' ? '#F97316' : caster.classId === 'SHAMAN' ? '#38BDF8' : '#FBBF24',
+              color: projColor,
               kind: 'FIRE',
               progress: 0,
             });
           }
-          // SCT
-          const isCrit = Math.random() > 0.45;
-          const dmg = isCrit ? Math.round(22000 + Math.random() * 8000) : Math.round(12000 + Math.random() * 4000);
+
           encounterSCTRef.current.push({
             id: `sct_${Date.now()}_${Math.random()}`,
             text: isCrit ? `💥 ${dmg}!` : `${dmg}`,
@@ -2127,6 +2358,122 @@ export const CombatCanvas: React.FC<Props> = ({
             createdAt: Date.now(),
             isCrit,
           });
+
+          if (targetMob.hp <= 0) {
+            killTrashMobAsTombstone(targetMob);
+            encounterSCTRef.current.push({
+              id: `tomb_${Date.now()}_${Math.random()}`,
+              text: '💀 击杀',
+              x: targetMob.x,
+              y: targetMob.y - 28,
+              color: '#FCA5A5',
+              createdAt: Date.now(),
+              isCrit: true,
+            });
+          }
+        }
+
+        // Trash returns light damage onto the party (prefer tank, never lethal wipe)
+        if (activePackMobs.length > 0 && livingAllies.length > 0 && tickCount % 14 === 0) {
+          const attacker = activePackMobs[Math.floor(Math.random() * activePackMobs.length)];
+          const tank = livingAllies.find(u => u.role === 'TANK');
+          const victim =
+            tank && Math.random() < 0.62
+              ? tank
+              : livingAllies[Math.floor(Math.random() * livingAllies.length)];
+          const hit = Math.round(
+            is20Man
+              ? 900 + Math.random() * 1400
+              : 550 + Math.random() * 900
+          );
+          const floorHp = Math.max(1, Math.round(victim.maxHp * 0.28));
+          const applied = Math.min(hit, Math.max(0, victim.hp - floorHp));
+          if (applied > 0) {
+            victim.hp = Math.max(floorHp, victim.hp - applied);
+            const vPos = victim.isPlayer
+              ? playerPosRef.current
+              : companionPositionsRef.current[victim.id] || {
+                  x: victim.position?.x ?? attacker.x - 40,
+                  y: victim.position?.y ?? attacker.y,
+                };
+
+            // Mob swipe / bolt toward victim
+            if (attacker.mobModel === 'SHADOW_CHANNELER' || attacker.mobModel === 'TWILIGHT_VOIDWEAVER') {
+              projectilesRef.current.push({
+                id: `mob_bolt_${Date.now()}_${Math.random()}`,
+                fromX: attacker.x,
+                fromY: attacker.y,
+                toX: vPos.x,
+                toY: vPos.y,
+                color: '#A855F7',
+                kind: 'FROST',
+                progress: 0,
+              });
+            } else {
+              slashesRef.current.push({
+                id: `mob_slash_${Date.now()}_${Math.random()}`,
+                x: vPos.x + (Math.random() - 0.5) * 12,
+                y: vPos.y + (Math.random() - 0.5) * 10,
+                angle: Math.atan2(vPos.y - attacker.y, vPos.x - attacker.x),
+                color: '#F87171',
+                elapsedMs: 0,
+                totalMs: 200,
+              });
+            }
+
+            encounterSCTRef.current.push({
+              id: `pdmg_${Date.now()}_${Math.random()}`,
+              text: `-${applied}`,
+              x: vPos.x + (Math.random() - 0.5) * 16,
+              y: vPos.y - 14,
+              color: '#FCA5A5',
+              createdAt: Date.now(),
+              isCrit: false,
+            });
+          }
+        }
+
+        // Light healer top-ups so the skirmish breathes (damage in, heal out)
+        if (livingAllies.length > 0 && tickCount % 18 === 0) {
+          const healer = livingAllies.find(u => u.role === 'HEALER');
+          const hurt = [...livingAllies]
+            .filter(u => u.hp < u.maxHp * 0.96)
+            .sort((a, b) => a.hp / a.maxHp - b.hp / b.maxHp)[0];
+          if (healer && hurt) {
+            const healAmt = Math.round(
+              is20Man ? 1200 + Math.random() * 1600 : 700 + Math.random() * 1000
+            );
+            const before = hurt.hp;
+            hurt.hp = Math.min(hurt.maxHp, hurt.hp + healAmt);
+            const gained = hurt.hp - before;
+            if (gained > 0) {
+              const hPos = healer.isPlayer
+                ? playerPosRef.current
+                : companionPositionsRef.current[healer.id] || healer.position || { x: 100, y: 100 };
+              const tPos = hurt.isPlayer
+                ? playerPosRef.current
+                : companionPositionsRef.current[hurt.id] || hurt.position || hPos;
+              beamsRef.current.push({
+                id: `maze_heal_${Date.now()}_${Math.random()}`,
+                fromX: hPos.x,
+                fromY: hPos.y,
+                toX: tPos.x,
+                toY: tPos.y,
+                color: '#34D399',
+                elapsedMs: 0,
+                totalMs: 280,
+              });
+              encounterSCTRef.current.push({
+                id: `pheal_${Date.now()}_${Math.random()}`,
+                text: `+${gained}`,
+                x: tPos.x + (Math.random() - 0.5) * 12,
+                y: tPos.y - 18,
+                color: '#6EE7B7',
+                createdAt: Date.now(),
+                isCrit: false,
+              });
+            }
+          }
         }
       }
 
@@ -2204,15 +2551,7 @@ export const CombatCanvas: React.FC<Props> = ({
         if (onFastForwardTravel) onFastForwardTravel();
       }
 
-      // Proximity Pull trigger in PULL_APPROACH: if player walks within 110px of Boss
-      if (runPhase === 'PULL_APPROACH') {
-        const bp = bossPosRef.current;
-        const distToBoss = Math.hypot(playerPosRef.current.x - bp.x, playerPosRef.current.y - bp.y);
-        if (distToBoss <= 110) {
-          pullShoutRef.current = `💀 ${bossUnit?.name || '首领'}: "愚蠢的入侵者，竟敢靠近！"`;
-          if (onApproachComplete) onApproachComplete();
-        }
-      }
+      // Proximity pull is handled inside STAGE B after entry snap + boss draw (avoid pre-snap false pulls)
 
       // ── STAGE A: TRAVEL_RECOVERY (Random Procedural Guaranteed-Passable Maze) ──
       if (runPhase === 'TRAVEL_RECOVERY') {
@@ -2505,8 +2844,8 @@ export const CombatCanvas: React.FC<Props> = ({
 
         // Draw Party in Maze with Smooth Vector Interpolation (NO TELEPORTATION!)
         const sortedParty = [...units].sort((a, b) => {
-          const isMeleeA = a.role === 'DPS' && (a.classId === 'ROGUE' || a.classId === 'DK');
-          const isMeleeB = b.role === 'DPS' && (b.classId === 'ROGUE' || b.classId === 'DK');
+          const isMeleeA = a.role === 'DPS' && (a.classId === 'ROGUE' || a.classId === 'DK' || a.classId === 'WARRIOR' || a.classId === 'PALADIN');
+          const isMeleeB = b.role === 'DPS' && (b.classId === 'ROGUE' || b.classId === 'DK' || b.classId === 'WARRIOR' || b.classId === 'PALADIN');
           const orderA = a.role === 'TANK' ? 0 : isMeleeA ? 1 : a.role === 'DPS' ? 2 : 3;
           const orderB = b.role === 'TANK' ? 0 : isMeleeB ? 1 : b.role === 'DPS' ? 2 : 3;
           return orderA - orderB;
@@ -2517,10 +2856,12 @@ export const CombatCanvas: React.FC<Props> = ({
           let targetPos: { x: number; y: number };
 
           if (currentEncounterPack > 0) {
-            const activeMobs = trashMobsRef.current.filter(m => m.packIndex === currentEncounterPack && !m.isDead);
+            const activeMobs = trashMobsRef.current.filter(
+              m => m.packIndex === currentEncounterPack && !m.isDead && !m.isTombstone
+            );
             const targetMob = activeMobs[0] || getPointAlongMaze(currentEncounterPack === 1 ? totalMazeLen * 0.32 : totalMazeLen * 0.72);
             const isTank = u.role === 'TANK';
-            const isMelee = u.role === 'DPS' && (u.classId === 'ROGUE' || u.classId === 'DK');
+            const isMelee = u.role === 'DPS' && (u.classId === 'ROGUE' || u.classId === 'DK' || u.classId === 'WARRIOR' || u.classId === 'PALADIN');
             const isHealer = u.role === 'HEALER';
 
             if (isTank) {
@@ -2583,7 +2924,7 @@ export const CombatCanvas: React.FC<Props> = ({
 
           // If member is dead, show resurrecting beam from healer
           if (!u.alive && revivingUnitId === u.id) {
-            const healer = units.find(unit => (unit.role === 'HEALER' || unit.classId === 'SHAMAN' || unit.classId === 'DRUID') && (unit.alive ?? unit.isAlive));
+            const healer = units.find(unit => (unit.role === 'HEALER' || unit.classId === 'SHAMAN' || unit.classId === 'DRUID' || unit.classId === 'PRIEST' || unit.classId === 'PALADIN') && (unit.alive ?? unit.isAlive));
             if (healer) {
               const hPos = healer.isPlayer ? playerPosRef.current : (companionPositionsRef.current[healer.id] || { x: 60, y: 80 });
               ctx.save();
@@ -2608,8 +2949,41 @@ export const CombatCanvas: React.FC<Props> = ({
           }
         });
 
-        // Draw active melee slashes
-        const nowSlashes = Date.now();
+        // Maze skirmish FX: beams / projectiles / slashes
+        beamsRef.current.forEach(beam => {
+          beam.elapsedMs += 16;
+          const progress = beam.elapsedMs / beam.totalMs;
+          if (progress < 1) {
+            ctx.save();
+            ctx.strokeStyle = beam.color || `rgba(16, 185, 129, ${(1 - progress) * 0.85})`;
+            ctx.globalAlpha = 1 - progress;
+            ctx.lineWidth = 3.5 * (1 - progress * 0.4);
+            ctx.beginPath();
+            ctx.moveTo(beam.fromX, beam.fromY);
+            const midX = (beam.fromX + beam.toX) / 2;
+            const midY = Math.min(beam.fromY, beam.toY) - 28;
+            ctx.quadraticCurveTo(midX, midY, beam.toX, beam.toY);
+            ctx.stroke();
+            ctx.restore();
+          }
+        });
+        beamsRef.current = beamsRef.current.filter(b => b.elapsedMs < b.totalMs);
+
+        projectilesRef.current.forEach(proj => {
+          proj.progress += 0.05;
+          if (proj.progress < 1) {
+            const curX = proj.fromX + (proj.toX - proj.fromX) * proj.progress;
+            const curY = proj.fromY + (proj.toY - proj.fromY) * proj.progress - Math.sin(proj.progress * Math.PI) * 22;
+            ctx.save();
+            ctx.fillStyle = proj.color;
+            ctx.beginPath();
+            ctx.arc(curX, curY, 5.5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+          }
+        });
+        projectilesRef.current = projectilesRef.current.filter(p => p.progress < 1);
+
         slashesRef.current.forEach(slash => {
           slash.elapsedMs += 16;
           const slashProgress = slash.elapsedMs / slash.totalMs;
@@ -2632,82 +3006,226 @@ export const CombatCanvas: React.FC<Props> = ({
         return;
       }
 
-      // ── STAGE B: PULL_APPROACH (Rally in Entrance -> Tank & Melee March to Boss) ───
+      // ── STAGE B: PULL_APPROACH — enter from LEFT; AI stand progress tracks tank→boss range ───
       if (runPhase === 'PULL_APPROACH') {
-        approachElapsedRef.current += 16;
-        const progress = Math.min(1, approachElapsedRef.current / 3500);
-
+        const bossStand = bossPosRef.current;
         const tankUnit = units.find(u => u.role === 'TANK') || units[0];
-        const meleeUnits = units.filter(u => u.id !== tankUnit?.id && u.role === 'DPS' && (u.classId === 'ROGUE' || u.classId === 'DK'));
-        const rangedAndHealers = units.filter(u => u.id !== tankUnit?.id && !meleeUnits.some(m => m.id === u.id));
+        const playerIsTank = !!(tankUnit && tankUnit.isPlayer);
+        const leftEntry = { x: 110, y: 180 };
 
-        // Draw Room Background (60% central arena + spacious outer hall)
+        // Spawn everyone at the left doorway once
+        if (approachElapsedRef.current === 0) {
+          const startSnap: Record<string, { x: number; y: number }> = {};
+          let meleeRank = 0;
+          let rangedRank = 0;
+          units.forEach((u) => {
+            let entry: { x: number; y: number };
+            if (u.role === 'TANK') {
+              entry = { ...leftEntry };
+            } else if (isMeleeDpsUnit(u)) {
+              entry = {
+                x: 88,
+                y: 158 + (meleeRank % 2 === 0 ? -18 : 22) + Math.floor(meleeRank / 2) * 8,
+              };
+              meleeRank += 1;
+            } else if (u.role === 'HEALER') {
+              entry = { x: 72, y: 210 + (rangedRank % 3) * 14 };
+              rangedRank += 1;
+            } else {
+              entry = { x: 70, y: 130 + (rangedRank % 5) * 16 };
+              rangedRank += 1;
+            }
+            startSnap[u.id] = entry;
+            if (u.isPlayer) {
+              playerPosRef.current = { ...entry };
+            } else {
+              companionPositionsRef.current[u.id] = { ...entry };
+            }
+            if (u.position) {
+              u.position.x = entry.x;
+              u.position.y = entry.y;
+            }
+          });
+          approachStartPositionsRef.current = startSnap;
+        }
+
+        approachElapsedRef.current += 16;
+
+        // Tank combat stand (progress reference)
+        const tankIdx = Math.max(0, units.findIndex(u => u.id === tankUnit?.id));
+        const tankDest = tankUnit
+          ? getCombatFormationPos(tankUnit, tankIdx, bossStand, 1)
+          : { x: 445, y: 180 };
+
+        // ── Player tank: free move; soft auto-walk toward stand if idle (no onPlayerMove — that cancelled casts / side-effects) ──
+        if (playerIsTank && canMove) {
+          const playerMoving =
+            moveX !== 0 || moveY !== 0 || !!clickTargetRef.current || !!autoApproachTarget;
+          if (!playerMoving) {
+            const dx = tankDest.x - playerPosRef.current.x;
+            const dy = tankDest.y - playerPosRef.current.y;
+            const dist = Math.hypot(dx, dy);
+            if (dist > 2) {
+              const step = Math.min(dist, 3.6);
+              playerPosRef.current.x += (dx / dist) * step;
+              playerPosRef.current.y += (dy / dist) * step;
+              if (tankUnit.position) {
+                tankUnit.position.x = playerPosRef.current.x;
+                tankUnit.position.y = playerPosRef.current.y;
+              }
+            }
+          }
+        }
+
+        // Resolve current tank world position
+        let tankPos = leftEntry;
+        if (tankUnit?.isPlayer) {
+          tankPos = { ...playerPosRef.current };
+        } else if (tankUnit) {
+          // AI tank marches on the timed path toward its stand
+          const timed = Math.min(1, approachElapsedRef.current / 3500);
+          const timedEase = 1 - Math.pow(1 - timed, 2.2);
+          const start = approachStartPositionsRef.current[tankUnit.id] || leftEntry;
+          tankPos = {
+            x: start.x + timedEase * (tankDest.x - start.x),
+            y: start.y + timedEase * (tankDest.y - start.y),
+          };
+          companionPositionsRef.current[tankUnit.id] = { ...tankPos };
+          if (tankUnit.position) {
+            tankUnit.position.x = tankPos.x;
+            tankUnit.position.y = tankPos.y;
+          }
+        }
+
+        // Formation progress = how close the tank is to the boss (closer → AI more settled)
+        const entryDist = Math.hypot(leftEntry.x - bossStand.x, leftEntry.y - bossStand.y);
+        const engageDist = 72; // ~fully in position when tank is this close to boss
+        const tankBossDist = Math.hypot(tankPos.x - bossStand.x, tankPos.y - bossStand.y);
+        const distProgress = Math.max(
+          0,
+          Math.min(1, (entryDist - tankBossDist) / Math.max(1, entryDist - engageDist))
+        );
+        // When no player tank, also allow the timed cinematic to finish the pull
+        const timedProgress = playerIsTank
+          ? 0
+          : Math.min(1, approachElapsedRef.current / 3500);
+        const progress = Math.max(distProgress, timedProgress);
+        const ease = progress * progress * (3 - 2 * progress); // smoothstep
+
         drawArenaBackground(ctx, width, height);
 
-        // Room Banner
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.55)';
+        ctx.fillRect(0, 100, 48, 160);
+        ctx.strokeStyle = '#64748B';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(0, 100, 48, 160);
+        ctx.fillStyle = '#94A3B8';
+        ctx.font = 'bold 10px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText('入口', 24, 185);
+
         ctx.fillStyle = '#FFD700';
         ctx.font = 'bold 13px sans-serif';
         ctx.textAlign = 'center';
-        ctx.fillText(`🛡️ 进入首领房间：小队集结推进（主坦领队带近战走向首领，远程与治疗跟随就位）`, width / 2, 42);
+        ctx.fillText(
+          playerIsTank
+            ? `🛡️ 主坦靠近首领，队友随距离落位（${Math.round(progress * 100)}%）· WASD/点击移动开怪`
+            : `🛡️ 全员自左侧入口冲入 · 奔向预定站位 · 主坦开怪`,
+          width / 2,
+          42
+        );
 
-        // 1. Tank marches smoothly from x:140 to 445 (center 60% rectangle)
-        if (tankUnit) {
-          const tX = 140 + progress * (445 - 140);
-          const tY = 180;
-          if (tankUnit.isPlayer) {
-            playerPosRef.current = { x: tX, y: tY };
-          } else {
-            companionPositionsRef.current[tankUnit.id] = { x: tX, y: tY };
-          }
-          tankUnit.position.x = tX;
-          tankUnit.position.y = tY;
-          drawClassCharacter(ctx, tankUnit, { x: tX, y: tY }, tankUnit.isPlayer, tankUnit.id === selectedUnitId, tickCount, 0);
-        }
-
-        // 2. Melee DPS marches alongside Tank from x:120 to 465
-        meleeUnits.forEach((mUnit, mIdx) => {
-          const mStartY = 160 + (mIdx % 2 === 0 ? -20 : 20);
-          const mDestY = 180 + (mIdx % 2 === 0 ? -28 : 28);
-          const mX = 120 + progress * (465 - 120);
-          const mY = mStartY + progress * (mDestY - mStartY);
-          if (mUnit.isPlayer) {
-            playerPosRef.current = { x: mX, y: mY };
-          } else {
-            companionPositionsRef.current[mUnit.id] = { x: mX, y: mY };
-          }
-          mUnit.position.x = mX;
-          mUnit.position.y = mY;
-          drawClassCharacter(ctx, mUnit, { x: mX, y: mY }, mUnit.isPlayer, mUnit.id === selectedUnitId, tickCount, mIdx + 1);
-        });
-
-        // 3. Ranged DPS and Healers advance smoothly into casting distance inside the 60% rectangle
-        rangedAndHealers.forEach((fUnit, fIdx) => {
-          const isHealer = fUnit.role === 'HEALER';
-          const startX = 100;
-          const startY = isHealer ? 210 : 130 + (fIdx % 4) * 30;
-          const destX = isHealer ? 210 : 250 + (fIdx % 3) * 32;
-          const destY = isHealer ? 200 : 120 + (fIdx % 4) * 32;
-
-          const fX = startX + progress * (destX - startX);
-          const fY = startY + progress * (destY - startY);
-          if (fUnit.isPlayer) {
-            playerPosRef.current = { x: fX, y: fY };
-          } else {
-            companionPositionsRef.current[fUnit.id] = { x: fX, y: fY };
-          }
-          fUnit.position.x = fX;
-          fUnit.position.y = fY;
-          drawClassCharacter(ctx, fUnit, { x: fX, y: fY }, fUnit.isPlayer, fUnit.id === selectedUnitId, tickCount, meleeUnits.length + fIdx + 1);
-        });
-
-        // Boss waiting on the right
+        // Draw boss FIRST so entry never looks empty (fallback if React state lags a tick)
         if (bossUnit) {
-          drawBossModel(ctx, bossUnit, bossPosRef.current, bossUnit.id === selectedUnitId, tickCount);
+          drawBossModel(ctx, bossUnit, bossStand, bossUnit.id === selectedUnitId, tickCount);
+        } else {
+          ctx.save();
+          ctx.translate(bossStand.x, bossStand.y);
+          ctx.fillStyle = 'rgba(0,0,0,0.5)';
+          ctx.beginPath();
+          ctx.ellipse(0, 36, 48, 18, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = '#7f1d1d';
+          ctx.fillRect(-28, -36, 56, 64);
+          ctx.fillStyle = '#FFD700';
+          ctx.font = 'bold 13px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText(`💀 ${targetBossName || '首领'}`, 0, -68);
+          ctx.restore();
         }
 
-        // Trigger: Tank arrives at boss
-        if (progress >= 1) {
-          pullShoutRef.current = `🛡️ ${tankUnit ? tankUnit.name : '主坦'}: "大家就位！开怪！"`;
+        units.forEach((u, idx) => {
+          const start = approachStartPositionsRef.current[u.id] || { x: 100, y: 180 };
+          const dest = getCombatFormationPos(u, idx, bossStand, 1);
+
+          // Player tank: keep live control position (already updated above / by WASD)
+          if (u.isPlayer && playerIsTank) {
+            if (u.position) {
+              u.position.x = playerPosRef.current.x;
+              u.position.y = playerPosRef.current.y;
+            }
+            drawClassCharacter(
+              ctx,
+              u,
+              playerPosRef.current,
+              true,
+              u.id === selectedUnitId,
+              tickCount,
+              idx
+            );
+            return;
+          }
+
+          // AI tank already placed above when not player
+          if (u.role === 'TANK' && !u.isPlayer) {
+            drawClassCharacter(ctx, u, tankPos, false, u.id === selectedUnitId, tickCount, idx);
+            return;
+          }
+
+          // AI (and non-tank player): stand progress tracks tank→boss distance
+          const desired = {
+            x: start.x + ease * (dest.x - start.x),
+            y: start.y + ease * (dest.y - start.y),
+          };
+          const cur = u.isPlayer
+            ? playerPosRef.current
+            : companionPositionsRef.current[u.id] || { ...start };
+          const dx = desired.x - cur.x;
+          const dy = desired.y - cur.y;
+          const dist = Math.hypot(dx, dy);
+          // Chase desired stand; faster as tank commits closer to boss
+          const maxStep = 2.2 + ease * 2.8;
+          if (dist > 0.5) {
+            const step = Math.min(dist, maxStep);
+            cur.x += (dx / dist) * step;
+            cur.y += (dy / dist) * step;
+          } else {
+            cur.x = desired.x;
+            cur.y = desired.y;
+          }
+
+          if (u.isPlayer) {
+            playerPosRef.current = { x: cur.x, y: cur.y };
+          } else {
+            companionPositionsRef.current[u.id] = { x: cur.x, y: cur.y };
+          }
+          if (u.position) {
+            u.position.x = cur.x;
+            u.position.y = cur.y;
+          }
+          drawClassCharacter(ctx, u, cur, !!u.isPlayer, u.id === selectedUnitId, tickCount, idx);
+        });
+
+        // Pull once: grace so left-door snap + boss paint always happen first
+        const pullRange = 110;
+        const approachGraceMs = 450;
+        const canPull =
+          !approachPullFiredRef.current &&
+          approachElapsedRef.current >= approachGraceMs &&
+          (tankBossDist <= pullRange || progress >= 0.98);
+        if (canPull) {
+          approachPullFiredRef.current = true;
+          pullShoutRef.current = `🛡️ ${tankUnit ? tankUnit.name : '主坦'}: "就位！开怪！"`;
           if (onApproachComplete) onApproachComplete();
         }
 
@@ -2804,28 +3322,15 @@ export const CombatCanvas: React.FC<Props> = ({
       units.forEach((u, idx) => {
         if (u.isPlayer) return;
 
-        // Item 5: Randomize AI teammate initial spawn coordinates inside the central 60% rectangle
+        // Missing pose (hot-join etc.): seed on predicted combat formation, slight perturb
         if (!companionPositionsRef.current[u.id]) {
+          const base = getCombatFormationPos(u, idx, bossPos, 1);
           const perturbX = ((idx * 17) % 21) - 10;
           const perturbY = ((idx * 23) % 21) - 10;
-          if (u.role === 'TANK') {
-            companionPositionsRef.current[u.id] = {
-              x: 440 + perturbX,
-              y: 180 + (idx % 2 === 0 ? -15 : 15) + perturbY,
-            };
-          } else if (u.classId === 'ROGUE' || (u.classId === 'DK' && u.role === 'DPS')) {
-            companionPositionsRef.current[u.id] = {
-              x: 470 + perturbX,
-              y: (idx % 2 === 0 ? 150 : 210) + perturbY,
-            };
-          } else {
-            const col = idx % 3;
-            const row = Math.floor(idx / 3);
-            companionPositionsRef.current[u.id] = {
-              x: 215 + col * 45 + perturbX,
-              y: 110 + (row % 5) * 32 + perturbY,
-            };
-          }
+          companionPositionsRef.current[u.id] = {
+            x: base.x + perturbX * 0.35,
+            y: base.y + perturbY * 0.35,
+          };
         }
         const pos = companionPositionsRef.current[u.id];
         const isAlive = (u.isAlive ?? u.alive) && u.hp > 0;
@@ -2835,32 +3340,8 @@ export const CombatCanvas: React.FC<Props> = ({
         let targetY = pos.y;
         const hpPct = u.hp / u.maxHp;
 
-        // 1. 根据职责计算默认阵型坐标（集中在中间 60% 矩形 [156, 624] x [72, 288] 打，外圈预留广阔空间）
-        let defaultTarget = { x: pos.x, y: pos.y };
-        if (u.role === 'TANK') {
-          // 主坦健康时(>=60% HP)在 (445, 180) 引住 Boss (500, 180) 使 Boss 背对全团；受伤时向后退守 (400, 180)
-          const tankOffset = (idx % 2 === 0 ? -12 : 16);
-          defaultTarget = hpPct >= 0.6 ? { x: 445, y: 180 + tankOffset } : { x: 400, y: 180 + tankOffset };
-        } else if (u.classId === 'ROGUE' || (u.classId === 'DK' && u.role === 'DPS')) {
-          // 近战 DPS：首领背后侧翼弧形扇开，各成员拥有专属角度与距离，互不重叠
-          const meleeAngle = Math.PI - 0.45 + (idx % 4) * 0.32;
-          const meleeDist = 48 + ((idx * 6) % 12);
-          defaultTarget = {
-            x: bossPos.x + Math.cos(meleeAngle) * meleeDist,
-            y: bossPos.y + Math.sin(meleeAngle) * meleeDist,
-          };
-        } else {
-          // 远程 DPS 与治疗：错落分布在中间 60% 矩形的左侧区域 (x: 210..320, y: 105..260)
-          const col = idx % 3;
-          const row = Math.floor(idx / 3);
-          const nameCode = u.name ? u.name.charCodeAt(0) : 65;
-          const hashX = ((idx * 31 + nameCode) % 17) - 8;
-          const hashY = ((idx * 43 + nameCode) % 21) - 10;
-          defaultTarget = {
-            x: 210 + col * 50 + hashX,
-            y: 105 + (row % 5) * 36 + hashY,
-          };
-        }
+        // 1. 默认阵型：与 PULL_APPROACH 共用 getCombatFormationPos，开怪不瞬移
+        const defaultTarget = getCombatFormationPos(u, idx, bossPos, hpPct);
 
         // 2. 地面治疗阵法与负面阵型权衡评估：
         // 存在多个地面治疗阵法时已经在其中一个了就不要走到其他的了，除非有负面阵型要躲避根据权衡是躲避还是继续站位
@@ -2876,12 +3357,69 @@ export const CombatCanvas: React.FC<Props> = ({
         targetX = formationResult.targetPos.x;
         targetY = formationResult.targetPos.y;
 
-        // 3. 微调抖动：在战斗中AI不时自然微调自身位置，若处于治疗阵或规避中则保持稳固
-        if (runPhase === 'BOSS_COMBAT' && bossUnit && bossUnit.alive && (formationResult.tradeOffDecision === 'DEFAULT_POSITION' || formationResult.tradeOffDecision === 'RETURN_TO_BOSS')) {
-          const microAngle = tickCount * 0.02 + idx * 1.5;
-          const microRadius = 8 + ((idx * 4) % 5);
-          targetX += Math.cos(microAngle) * microRadius;
-          targetY += Math.sin(microAngle * 0.8) * (microRadius * 0.7);
+        // 3. 多动症踱步：仅在默认阵型 / 回打 Boss 时允许——不干扰躲圈、蹭治疗阵、拉怪意图点
+        // 站桩超过该 AI 的 fidgetIdleThresholdMs（按角色名稳定随机，约 5~60s）后，在意图点周围小幅走动再回位
+        {
+          const canFidget =
+            runPhase === 'BOSS_COMBAT' &&
+            !!bossUnit &&
+            !!(bossUnit.alive ?? bossUnit.isAlive) &&
+            (formationResult.tradeOffDecision === 'DEFAULT_POSITION' ||
+              formationResult.tradeOffDecision === 'RETURN_TO_BOSS');
+
+          let fidget = companionFidgetRef.current[u.id];
+          if (!fidget) {
+            fidget = { idleMs: 0, activeUntil: 0, ox: 0, oy: 0, lastX: pos.x, lastY: pos.y };
+            companionFidgetRef.current[u.id] = fidget;
+          }
+
+          const nowMs = performance.now();
+          const frameDtMs = 1000 / 60;
+          const movedPx = Math.hypot(pos.x - fidget.lastX, pos.y - fidget.lastY);
+          fidget.lastX = pos.x;
+          fidget.lastY = pos.y;
+
+          if (!canFidget) {
+            fidget.idleMs = 0;
+            fidget.activeUntil = 0;
+            fidget.ox = 0;
+            fidget.oy = 0;
+          } else {
+            const personality = createAIPersonality(u.name, u.id);
+            const idleThresholdMs = resolveFidgetIdleThresholdMs(personality, {
+              role: u.role,
+              isMeleeDps: isMeleeDpsUnit(u),
+            });
+            const atIntent =
+              Math.hypot(pos.x - formationResult.targetPos.x, pos.y - formationResult.targetPos.y) <= 14;
+            const isFidgeting = nowMs < fidget.activeUntil;
+
+            if (isFidgeting) {
+              targetX += fidget.ox;
+              targetY += fidget.oy;
+            } else {
+              fidget.ox = 0;
+              fidget.oy = 0;
+              // 真正站桩（到岗且几乎不动）才累计不耐烦；赶路中不计
+              if (atIntent && movedPx < 0.85) {
+                fidget.idleMs += frameDtMs;
+                if (fidget.idleMs >= idleThresholdMs) {
+                  const angle =
+                    (((personality.seed + Math.floor(nowMs / 17) + idx * 97) % 360) * Math.PI) / 180;
+                  const radius =
+                    personality.fidgetRadiusPx * (0.55 + ((personality.seed >> 5) % 46) / 100);
+                  fidget.ox = Math.cos(angle) * radius;
+                  fidget.oy = Math.sin(angle) * radius;
+                  fidget.activeUntil = nowMs + personality.fidgetDurationMs;
+                  fidget.idleMs = 0;
+                  targetX += fidget.ox;
+                  targetY += fidget.oy;
+                }
+              } else if (!atIntent) {
+                fidget.idleMs = 0;
+              }
+            }
+          }
         }
 
         // 全场物理边界（外圈不实际限制移动，角色与玩家均可正常走入外圈，只是看起来更广阔）
@@ -2889,15 +3427,17 @@ export const CombatCanvas: React.FC<Props> = ({
         targetY = Math.max(30, Math.min(height - 30, targetY));
 
         // Clamped normal walking/running speed (杜绝过快瞬移与大步切片)
+        // isMoving 使用滞回：避免目标距离刚好卡在阈值附近时跑步动画抽搐
         const dx = targetX - pos.x;
         const dy = targetY - pos.y;
         const dist = Math.hypot(dx, dy);
+        const wasMoving = !!(u as any).isMoving;
         if (dist > 1) {
           const maxSpeed = 2.4;
           const step = Math.min(dist, maxSpeed);
           pos.x += (dx / dist) * step;
           pos.y += (dy / dist) * step;
-          (u as any).isMoving = dist > 2.0;
+          (u as any).isMoving = wasMoving ? dist > 1.6 : dist > 5.0;
         } else {
           (u as any).isMoving = false;
         }
@@ -2931,14 +3471,20 @@ export const CombatCanvas: React.FC<Props> = ({
             const dx = tPos.x - bossPosRef.current.x;
             const dy = tPos.y - bossPosRef.current.y;
             const dist = Math.hypot(dx, dy);
-            const desiredCombatDist = 60; // 近战交战理想距离 (<= 80px 攻击判定线)
+            // 追击滞回：开始追击 / 停止追击拉开间距，避免目标在临界距离晃动时 Boss 跑步动画抽搐
+            const CHASE_START_DIST = 68;
+            const CHASE_STOP_DIST = 54;
+            const wasChasing = isBossMovingRef.current;
+            const shouldChase = wasChasing ? dist > CHASE_STOP_DIST : dist > CHASE_START_DIST;
 
-            if (dist > desiredCombatDist) {
-              bossIsMoving = true;
+            if (shouldChase) {
               const bossSpeed = 2.8; // 首领跑步追击速度
-              const step = Math.min(bossSpeed, dist - desiredCombatDist);
-              bossPosRef.current.x += (dx / dist) * step;
-              bossPosRef.current.y += (dy / dist) * step;
+              const step = Math.min(bossSpeed, Math.max(0, dist - CHASE_STOP_DIST));
+              if (step > 0.35) {
+                bossIsMoving = true;
+                bossPosRef.current.x += (dx / dist) * step;
+                bossPosRef.current.y += (dy / dist) * step;
+              }
             }
 
             // 场地全范围自由通行，外圈不硬性设阻
@@ -2957,18 +3503,28 @@ export const CombatCanvas: React.FC<Props> = ({
 
       // ── Periodic Dynamic Combat FX (Projectiles, Healing Rays, Slashes) ───────
       if (runPhase === 'BOSS_COMBAT' && bossUnit && bossUnit.alive) {
-        // Ranged cast fireball flying projectile
+        // Ranged cast flying projectile (Mage / Warlock / Hunter / Priest / Elemental Shaman)
         if (tickCount % 30 === 0) {
-          const mage = units.find(u => u.classId === 'MAGE' && u.alive);
-          if (mage) {
-            const mPos = mage.isPlayer ? playerPosRef.current : (companionPositionsRef.current[mage.id] || { x: 160, y: 160 });
+          const rangedDps = units.find(
+            u =>
+              u.alive &&
+              u.role === 'DPS' &&
+              (u.classId === 'MAGE' || u.classId === 'WARLOCK' || u.classId === 'HUNTER' || u.classId === 'PRIEST' || u.classId === 'SHAMAN')
+          );
+          if (rangedDps) {
+            const mPos = rangedDps.isPlayer ? playerPosRef.current : (companionPositionsRef.current[rangedDps.id] || { x: 160, y: 160 });
+            const rColor =
+              rangedDps.classId === 'MAGE' ? '#FF4500' :
+              rangedDps.classId === 'WARLOCK' ? '#A855F7' :
+              rangedDps.classId === 'HUNTER' ? '#ABD473' :
+              rangedDps.classId === 'PRIEST' ? '#C084FC' : '#38BDF8';
             projectilesRef.current.push({
               id: `proj_${Date.now()}_${Math.random()}`,
               fromX: mPos.x,
               fromY: mPos.y,
               toX: bossPos.x,
               toY: bossPos.y,
-              color: '#FF4500',
+              color: rColor,
               kind: 'FIRE',
               progress: 0,
             });
@@ -2998,7 +3554,7 @@ export const CombatCanvas: React.FC<Props> = ({
 
         // Melee slash visual
         if (tickCount % 22 === 0) {
-          const melee = units.find(u => u.alive && (u.classId === 'ROGUE' || (u.classId === 'DK' && u.role === 'DPS')));
+          const melee = units.find(u => u.alive && (u.classId === 'ROGUE' || u.classId === 'WARRIOR' || ((u.classId === 'DK' || u.classId === 'PALADIN') && u.role === 'DPS')));
           if (melee) {
             const mPos = companionPositionsRef.current[melee.id];
             // 仅在近战单位实际处于首领攻击范围 (<=80px) 内时播放挥砍视觉特效

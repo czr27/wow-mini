@@ -3,11 +3,17 @@
 // Blood DK rotation: Soul Strike (Blood Shield) → Heart Strike → D&D
 // ============================================================
 
-import { Unit, GroundEffect } from '../types.js';
+import { ClassId, Unit, GroundEffect } from '../types.js';
 import {
-  Action, GameState, Priority, PrioritisedAction, RoleAI,
+  GameState, Priority, PrioritisedAction, RoleAI,
   getBoss, hpFraction,
 } from './AIController.js';
+import { getSpellsForClassSpec } from '../classes/ClassRegistry.js';
+import {
+  buildUsableCandidatesForUnit,
+  createAIPersonality,
+  evaluateUniversalAIDecision,
+} from './SkillMetricEvaluator.js';
 
 // Spell IDs must match those registered in DeathKnight.ts (class-dev)
 const SPELLS = {
@@ -654,16 +660,16 @@ export function evaluateGroundFormationPosition(
 export class TankAI implements RoleAI {
   decide(unit: Unit, gs: GameState): PrioritisedAction[] {
     const actions: PrioritisedAction[] = [];
+    if (unit.classId === 'BOSS' || unit.classId === 'NPC') return actions;
 
-    // ── Auto-attack fallback: if no threat table target, attack nearest living enemy ──
-    const boss = getBoss(gs.units, gs.bossId) ??
-      gs.units.find(u => u.role === 'ENEMY' && u.isAlive && u.hp > 0);
+    const livingEnemies = gs.units.filter(u => u.role === 'ENEMY' && u.isAlive && u.hp > 0);
+    const boss = getBoss(gs.units, gs.bossId) ?? livingEnemies[0];
     if (!boss) return actions;
 
+    const livingAllies = gs.units.filter(u => u.role !== 'ENEMY' && u.isAlive && u.hp > 0);
     const myHp = hpFraction(unit);
     const isTauntTop = this.isTopThreat(unit, boss);
 
-    // ── 坦克仇恨顺位与健康线决策 ──
     const allTanks = gs.units.filter(u => u.role === 'TANK');
     const threatDecision = evaluateTankThreatDecision(
       unit,
@@ -672,51 +678,56 @@ export class TankAI implements RoleAI {
       isTauntTop
     );
 
-    // If threatTable is empty (no aggro yet), auto-attack the living enemy
-    if (boss.threatTable.length === 0 || !boss.threatTable.some(e => e.sourceUnitId === unit.id)) {
-      actions.push(act(SPELLS.HEART_STRIKE, boss.id, Priority.DPS));
-    }
+    const specId = (unit as any).spec as string | undefined;
+    const ownedSpells = getSpellsForClassSpec(unit.classId as ClassId, specId);
 
-    // ── 1. INTERRUPT (handled by AIController from DPS AI, tank doesn't interrupt) ──
-
-    // ── 2. DEFENSIVE — taunt if decision says shouldTaunt ───────────────
+    // 1. 通用嘲讽：拥有任意嘲讽技能且需要接怪
     if (threatDecision.shouldTaunt) {
-      actions.push(act(SPELLS.DARK_COMMAND, boss.id, Priority.DEFENSIVE, true));
+      const tauntSpell = ownedSpells.find(s => s.isTaunt);
+      if (tauntSpell) {
+        actions.push(act(tauntSpell.id, boss.id, Priority.DEFENSIVE, true));
+      }
     }
 
-    // Bone Shield if stacks < 2 (basically always keep up)
-    if (auraStacks(unit, SPELLS.BONE_SHIELD) < 2) {
-      actions.push(act(SPELLS.BONE_SHIELD, unit.id, Priority.DEFENSIVE, true));
-    }
-
-    // Minor defensive CDs when below 60%
+    // 2. 通用减伤大招：血线低于60%开启小减伤，低于35%开启大减伤
     if (myHp < DEFENSIVE_HP_THRESHOLD) {
-      if (!hasAura(unit, SPELLS.VAMPIRIC_BLOOD)) {
-        actions.push(act(SPELLS.VAMPIRIC_BLOOD, unit.id, Priority.DEFENSIVE, true));
-      }
-      if (!hasAura(unit, SPELLS.ANTI_MAGIC)) {
-        actions.push(act(SPELLS.ANTI_MAGIC, unit.id, Priority.DEFENSIVE, true));
-      }
-    }
-
-    // Emergency major CD when near death
-    if (myHp < EMERGENCY_HP_THRESHOLD) {
-      if (!hasAura(unit, SPELLS.ICEBOUND_FORT)) {
-        actions.push(act(SPELLS.ICEBOUND_FORT, unit.id, Priority.DEFENSIVE, true));
+      const defensiveSpells = ownedSpells.filter(s => s.isDefensive && (!s.auraId || !hasAura(unit, s.auraId)));
+      const minorDef = defensiveSpells.find(s => !s.isMajorCd);
+      const majorDef = defensiveSpells.find(s => s.isMajorCd);
+      if (myHp < EMERGENCY_HP_THRESHOLD && majorDef) {
+        actions.push(act(majorDef.id, unit.id, Priority.DEFENSIVE, true));
+      } else if (minorDef) {
+        actions.push(act(minorDef.id, unit.id, Priority.DEFENSIVE, true));
       }
     }
 
-    // ── 3. BUFF (team-wide) ────────────────────────────────────
+    // 3. 通用规则输出/群拉循环（目标 >= 3 自动优先 AOE 群拉技能，否则按仇恨/性价比/输出选优）
+    if (!threatDecision.pauseThreat || boss.threatTable.length === 0) {
+      const personality = createAIPersonality(unit.name, unit.id);
+      const candidates = buildUsableCandidatesForUnit(unit, specId, () => true, {
+        roleFilter: 'DAMAGE',
+        useShortId: false,
+      });
 
-    // ── 4. ROTATION (DPS priority = 4, used for threat too) ───
-    // Priority order: Soul Strike (Blood Shield uptime) → Heart Strike → D&D → Rune Strike
-    // 如果处于暂停拉仇恨状态 (pauseThreat)，优先打 Soul Strike 维持护盾自保，暂停产生高仇恨技能
-    actions.push(act(SPELLS.SOUL_STRIKE, unit.id, Priority.DPS));
+      const decision = evaluateUniversalAIDecision({
+        caster: unit,
+        personality,
+        allies: livingAllies,
+        enemies: livingEnemies,
+        usableSkills: candidates,
+        tickCount: Math.floor((gs.elapsedMs || 0) / 100),
+      });
 
-    if (!threatDecision.pauseThreat) {
-      actions.push(act(SPELLS.HEART_STRIKE, boss.id, Priority.DPS));
-      actions.push(act(SPELLS.DEATH_AND_DECAY, boss.id, Priority.DPS));
-      actions.push(act(SPELLS.RUNE_STRIKE, boss.id, Priority.DPS));
+      if (decision.chosenCandidate) {
+        actions.push(
+          act(
+            decision.chosenCandidate.spellId,
+            (decision.targetUnit ?? boss).id,
+            Priority.DPS,
+            decision.chosenCandidate.castMs === 0
+          )
+        );
+      }
     }
 
     return actions;

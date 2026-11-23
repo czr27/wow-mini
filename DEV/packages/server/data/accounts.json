@@ -1,11 +1,11 @@
 [
   {
-    "id": "acc_1795307172004_3zhb2",
+    "id": "acc_1795354400156_7v85u",
     "username": "Champion",
     "passwordHash": "wow123",
     "characters": [
       {
-        "id": "char_1795307172004_122qa",
+        "id": "char_1795354400157_q92yv",
         "name": "莫格莱尼",
         "classId": "DK",
         "lastSpec": "BLOOD",
@@ -26,7 +26,7 @@
           }
         },
         "clearCertificates": [],
-        "createdAtIso": "2026-11-22T00:26:12.004Z",
+        "createdAtIso": "2026-11-22T13:33:20.157Z",
         "lastDungeonTier": "5man",
         "lastDungeonDifficulty": "HEROIC",
         "lastCustomDifficulty": {
@@ -41,10 +41,11 @@
           "enemyDamageCoeff": 1,
           "bossHpCoeff": 1
         },
-        "uiLayout": {}
+        "uiLayout": {},
+        "updatedAtMs": 0
       },
       {
-        "id": "char_1795307172004_95pg7",
+        "id": "char_1795354400157_t3adp",
         "name": "玛法里奥",
         "classId": "DRUID",
         "lastSpec": "RESTORATION",
@@ -65,7 +66,7 @@
           }
         },
         "clearCertificates": [],
-        "createdAtIso": "2026-11-22T00:26:12.004Z",
+        "createdAtIso": "2026-11-22T13:33:20.157Z",
         "lastDungeonTier": "5man",
         "lastDungeonDifficulty": "HEROIC",
         "lastCustomDifficulty": {
@@ -80,10 +81,11 @@
           "enemyDamageCoeff": 1,
           "bossHpCoeff": 1
         },
-        "uiLayout": {}
+        "uiLayout": {},
+        "updatedAtMs": 0
       },
       {
-        "id": "char_1795307172004_ep7r0",
+        "id": "char_1795354400157_4itku",
         "name": "萨尔",
         "classId": "SHAMAN",
         "lastSpec": "RESTORATION",
@@ -104,7 +106,7 @@
           }
         },
         "clearCertificates": [],
-        "createdAtIso": "2026-11-22T00:26:12.004Z",
+        "createdAtIso": "2026-11-22T13:33:20.157Z",
         "lastDungeonTier": "5man",
         "lastDungeonDifficulty": "HEROIC",
         "lastCustomDifficulty": {
@@ -119,10 +121,11 @@
           "enemyDamageCoeff": 1,
           "bossHpCoeff": 1
         },
-        "uiLayout": {}
+        "uiLayout": {},
+        "updatedAtMs": 0
       },
       {
-        "id": "char_1795307172004_vsgmn",
+        "id": "char_1795354400158_zfm21",
         "name": "吉安娜",
         "classId": "MAGE",
         "lastSpec": "FIRE",
@@ -143,7 +146,7 @@
           }
         },
         "clearCertificates": [],
-        "createdAtIso": "2026-11-22T00:26:12.004Z",
+        "createdAtIso": "2026-11-22T13:33:20.158Z",
         "lastDungeonTier": "5man",
         "lastDungeonDifficulty": "HEROIC",
         "lastCustomDifficulty": {
@@ -158,10 +161,11 @@
           "enemyDamageCoeff": 1,
           "bossHpCoeff": 1
         },
-        "uiLayout": {}
+        "uiLayout": {},
+        "updatedAtMs": 0
       },
       {
-        "id": "char_1795307172004_j6c9w",
+        "id": "char_1795354400158_kje6q",
         "name": "瓦莉拉",
         "classId": "ROGUE",
         "lastSpec": "COMBAT",
@@ -182,7 +186,7 @@
           }
         },
         "clearCertificates": [],
-        "createdAtIso": "2026-11-22T00:26:12.004Z",
+        "createdAtIso": "2026-11-22T13:33:20.158Z",
         "lastDungeonTier": "5man",
         "lastDungeonDifficulty": "HEROIC",
         "lastCustomDifficulty": {
@@ -197,10 +201,1651 @@
           "enemyDamageCoeff": 1,
           "bossHpCoeff": 1
         },
-        "uiLayout": {}
+        "uiLayout": {},
+        "updatedAtMs": 0
+      },
+      {
+        "id": "char_1795354400158_wakss",
+        "name": "瓦里安",
+        "classId": "WARRIOR",
+        "lastSpec": "ARMS",
+        "specKeybindings": {
+          "ARMS": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T13:33:20.158Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {},
+        "updatedAtMs": 0
+      },
+      {
+        "id": "char_1795354400158_h9j6l",
+        "name": "提里奥",
+        "classId": "PALADIN",
+        "lastSpec": "HOLY",
+        "specKeybindings": {
+          "HOLY": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T13:33:20.158Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {},
+        "updatedAtMs": 0
+      },
+      {
+        "id": "char_1795354400158_d69sw",
+        "name": "希尔瓦娜斯",
+        "classId": "HUNTER",
+        "lastSpec": "MARKSMANSHIP",
+        "specKeybindings": {
+          "MARKSMANSHIP": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T13:33:20.158Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {},
+        "updatedAtMs": 0
+      },
+      {
+        "id": "char_1795354400158_fl7co",
+        "name": "安度因",
+        "classId": "PRIEST",
+        "lastSpec": "HOLY",
+        "specKeybindings": {
+          "HOLY": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T13:33:20.158Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {},
+        "updatedAtMs": 0
+      },
+      {
+        "id": "char_1795354400159_9gemf",
+        "name": "古尔丹",
+        "classId": "WARLOCK",
+        "lastSpec": "AFFLICTION",
+        "specKeybindings": {
+          "AFFLICTION": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T13:33:20.159Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {},
+        "updatedAtMs": 0
+      },
+      {
+        "id": "char_1795385354872_yy4h9",
+        "name": "莫格莱尼",
+        "classId": "DK",
+        "lastSpec": "BLOOD",
+        "specKeybindings": {
+          "BLOOD": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T22:09:14.872Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {},
+        "updatedAtMs": 0
+      },
+      {
+        "id": "char_1795385354872_iq561",
+        "name": "玛法里奥",
+        "classId": "DRUID",
+        "lastSpec": "RESTORATION",
+        "specKeybindings": {
+          "RESTORATION": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T22:09:14.872Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {},
+        "updatedAtMs": 0
+      },
+      {
+        "id": "char_1795385354872_37us9",
+        "name": "萨尔",
+        "classId": "SHAMAN",
+        "lastSpec": "RESTORATION",
+        "specKeybindings": {
+          "RESTORATION": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T22:09:14.872Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {},
+        "updatedAtMs": 0
+      },
+      {
+        "id": "char_1795385354872_bqjma",
+        "name": "吉安娜",
+        "classId": "MAGE",
+        "lastSpec": "FIRE",
+        "specKeybindings": {
+          "FIRE": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T22:09:14.872Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {},
+        "updatedAtMs": 0
+      },
+      {
+        "id": "char_1795385354872_ugm3f",
+        "name": "瓦莉拉",
+        "classId": "ROGUE",
+        "lastSpec": "COMBAT",
+        "specKeybindings": {
+          "COMBAT": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T22:09:14.872Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {},
+        "updatedAtMs": 0
+      },
+      {
+        "id": "char_1795385354872_nwgrc",
+        "name": "瓦里安",
+        "classId": "WARRIOR",
+        "lastSpec": "ARMS",
+        "specKeybindings": {
+          "ARMS": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T22:09:14.873Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {},
+        "updatedAtMs": 0
+      },
+      {
+        "id": "char_1795385354873_9zkqp",
+        "name": "提里奥",
+        "classId": "PALADIN",
+        "lastSpec": "HOLY",
+        "specKeybindings": {
+          "HOLY": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T22:09:14.873Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {},
+        "updatedAtMs": 0
+      },
+      {
+        "id": "char_1795385354873_3gv58",
+        "name": "希尔瓦娜斯",
+        "classId": "HUNTER",
+        "lastSpec": "MARKSMANSHIP",
+        "specKeybindings": {
+          "MARKSMANSHIP": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T22:09:14.873Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {},
+        "updatedAtMs": 0
+      },
+      {
+        "id": "char_1795385354873_mes10",
+        "name": "安度因",
+        "classId": "PRIEST",
+        "lastSpec": "HOLY",
+        "specKeybindings": {
+          "HOLY": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T22:09:14.873Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {},
+        "updatedAtMs": 0
+      },
+      {
+        "id": "char_1795385354873_r5rx3",
+        "name": "古尔丹",
+        "classId": "WARLOCK",
+        "lastSpec": "AFFLICTION",
+        "specKeybindings": {
+          "AFFLICTION": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T22:09:14.873Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {},
+        "updatedAtMs": 0
+      },
+      {
+        "id": "char_1795385665236_eoi3m",
+        "name": "莫格莱尼",
+        "classId": "DK",
+        "lastSpec": "BLOOD",
+        "specKeybindings": {
+          "BLOOD": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T22:14:25.236Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {},
+        "updatedAtMs": 0
+      },
+      {
+        "id": "char_1795385665237_92xnh",
+        "name": "玛法里奥",
+        "classId": "DRUID",
+        "lastSpec": "RESTORATION",
+        "specKeybindings": {
+          "RESTORATION": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X",
+            "24": "`"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T22:14:25.237Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {
+          "raidFrames": {
+            "x": 24,
+            "y": 220,
+            "width": 395,
+            "height": 341
+          },
+          "statsPanel": {
+            "x": 1399,
+            "y": 358
+          }
+        },
+        "specSlotLayouts": {
+          "RESTORATION": {
+            "0": "lifebloom",
+            "1": "rejuvenation",
+            "2": "regrowth",
+            "3": "nourish",
+            "4": "swiftmend",
+            "5": "wild_growth",
+            "6": "tranquility",
+            "7": "natures_cure",
+            "8": "revive",
+            "9": "natures_swiftness",
+            "10": "healing_touch",
+            "11": "rebirth",
+            "12": "innervate",
+            "13": "moonfire",
+            "14": "wrath",
+            "15": "starfire"
+          }
+        },
+        "updatedAtMs": 0
+      },
+      {
+        "id": "char_1795385665237_dkjqf",
+        "name": "萨尔",
+        "classId": "SHAMAN",
+        "lastSpec": "RESTORATION",
+        "specKeybindings": {
+          "RESTORATION": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T22:14:25.237Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {},
+        "updatedAtMs": 0
+      },
+      {
+        "id": "char_1795385665237_nfwou",
+        "name": "吉安娜",
+        "classId": "MAGE",
+        "lastSpec": "FIRE",
+        "specKeybindings": {
+          "FIRE": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T22:14:25.237Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {},
+        "updatedAtMs": 0
+      },
+      {
+        "id": "char_1795385665237_3stbr",
+        "name": "瓦莉拉",
+        "classId": "ROGUE",
+        "lastSpec": "COMBAT",
+        "specKeybindings": {
+          "COMBAT": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T22:14:25.237Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {},
+        "updatedAtMs": 0
+      },
+      {
+        "id": "char_1795385665237_lydqq",
+        "name": "瓦里安",
+        "classId": "WARRIOR",
+        "lastSpec": "ARMS",
+        "specKeybindings": {
+          "ARMS": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T22:14:25.237Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {},
+        "updatedAtMs": 0
+      },
+      {
+        "id": "char_1795385665237_7uz2z",
+        "name": "提里奥",
+        "classId": "PALADIN",
+        "lastSpec": "HOLY",
+        "specKeybindings": {
+          "HOLY": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T22:14:25.237Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {},
+        "updatedAtMs": 0
+      },
+      {
+        "id": "char_1795385665237_95t59",
+        "name": "希尔瓦娜斯",
+        "classId": "HUNTER",
+        "lastSpec": "MARKSMANSHIP",
+        "specKeybindings": {
+          "MARKSMANSHIP": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T22:14:25.237Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {},
+        "updatedAtMs": 0
+      },
+      {
+        "id": "char_1795385665237_l33es",
+        "name": "安度因",
+        "classId": "PRIEST",
+        "lastSpec": "HOLY",
+        "specKeybindings": {
+          "HOLY": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T22:14:25.237Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {},
+        "updatedAtMs": 0
+      },
+      {
+        "id": "char_1795385665237_c077r",
+        "name": "古尔丹",
+        "classId": "WARLOCK",
+        "lastSpec": "AFFLICTION",
+        "specKeybindings": {
+          "AFFLICTION": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T22:14:25.237Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {},
+        "updatedAtMs": 0
+      },
+      {
+        "id": "char_1795352976455_rbhto",
+        "name": "莫格莱尼",
+        "classId": "DK",
+        "lastSpec": "BLOOD",
+        "specKeybindings": {
+          "BLOOD": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T13:09:36.455Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {},
+        "updatedAtMs": 0
+      },
+      {
+        "id": "char_1795352976455_h045p",
+        "name": "玛法里奥",
+        "classId": "DRUID",
+        "lastSpec": "RESTORATION",
+        "specKeybindings": {
+          "RESTORATION": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T13:09:36.455Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {
+          "raidFrames": {
+            "x": 24,
+            "y": 220,
+            "width": 155,
+            "height": 338
+          }
+        },
+        "updatedAtMs": 0
+      },
+      {
+        "id": "char_1795352976455_cadwi",
+        "name": "萨尔",
+        "classId": "SHAMAN",
+        "lastSpec": "RESTORATION",
+        "specKeybindings": {
+          "RESTORATION": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T13:09:36.455Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {},
+        "updatedAtMs": 0
+      },
+      {
+        "id": "char_1795352976455_ge7zn",
+        "name": "吉安娜",
+        "classId": "MAGE",
+        "lastSpec": "FIRE",
+        "specKeybindings": {
+          "FIRE": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T13:09:36.455Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {},
+        "updatedAtMs": 0
+      },
+      {
+        "id": "char_1795352976456_wsmy4",
+        "name": "瓦莉拉",
+        "classId": "ROGUE",
+        "lastSpec": "COMBAT",
+        "specKeybindings": {
+          "COMBAT": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T13:09:36.456Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {},
+        "updatedAtMs": 0
+      },
+      {
+        "id": "char_1795352976456_kfcm3",
+        "name": "瓦里安",
+        "classId": "WARRIOR",
+        "lastSpec": "ARMS",
+        "specKeybindings": {
+          "ARMS": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T13:09:36.456Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {},
+        "updatedAtMs": 0
+      },
+      {
+        "id": "char_1795352976456_et4c4",
+        "name": "提里奥",
+        "classId": "PALADIN",
+        "lastSpec": "HOLY",
+        "specKeybindings": {
+          "HOLY": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T13:09:36.456Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {},
+        "updatedAtMs": 0
+      },
+      {
+        "id": "char_1795352976456_wdmgs",
+        "name": "希尔瓦娜斯",
+        "classId": "HUNTER",
+        "lastSpec": "MARKSMANSHIP",
+        "specKeybindings": {
+          "MARKSMANSHIP": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T13:09:36.456Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {},
+        "updatedAtMs": 0
+      },
+      {
+        "id": "char_1795352976456_pq5hj",
+        "name": "安度因",
+        "classId": "PRIEST",
+        "lastSpec": "HOLY",
+        "specKeybindings": {
+          "HOLY": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T13:09:36.456Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {},
+        "updatedAtMs": 0
+      },
+      {
+        "id": "char_1795352976456_lq38m",
+        "name": "古尔丹",
+        "classId": "WARLOCK",
+        "lastSpec": "AFFLICTION",
+        "specKeybindings": {
+          "AFFLICTION": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T13:09:36.456Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {},
+        "updatedAtMs": 0
+      },
+      {
+        "id": "char_1795306445170_55fsn",
+        "name": "莫格莱尼",
+        "classId": "DK",
+        "lastSpec": "BLOOD",
+        "specKeybindings": {
+          "BLOOD": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T00:14:05.170Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {},
+        "updatedAtMs": 0
+      },
+      {
+        "id": "char_1795306445170_kspyc",
+        "name": "玛法里奥",
+        "classId": "DRUID",
+        "lastSpec": "RESTORATION",
+        "specKeybindings": {
+          "RESTORATION": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T00:14:05.170Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {},
+        "updatedAtMs": 0
+      },
+      {
+        "id": "char_1795306445170_zxaaw",
+        "name": "萨尔",
+        "classId": "SHAMAN",
+        "lastSpec": "RESTORATION",
+        "specKeybindings": {
+          "RESTORATION": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T00:14:05.170Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {},
+        "updatedAtMs": 0
+      },
+      {
+        "id": "char_1795306445170_vx9kt",
+        "name": "吉安娜",
+        "classId": "MAGE",
+        "lastSpec": "FIRE",
+        "specKeybindings": {
+          "FIRE": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T00:14:05.170Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {},
+        "updatedAtMs": 0
+      },
+      {
+        "id": "char_1795306445170_dlbsk",
+        "name": "瓦莉拉",
+        "classId": "ROGUE",
+        "lastSpec": "COMBAT",
+        "specKeybindings": {
+          "COMBAT": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T00:14:05.170Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {},
+        "updatedAtMs": 0
       }
     ],
-    "createdAtIso": "2026-11-22T00:26:12.004Z"
+    "createdAtIso": "2026-11-22T13:33:20.156Z",
+    "updatedAtMs": 0
   },
   {
     "id": "acc_1795307172004_ze24f",
@@ -259,10 +1904,67 @@
             "x": 1100,
             "y": 550
           }
-        }
+        },
+        "updatedAtMs": 0
+      },
+      {
+        "id": "char_1795306445170_dto3r",
+        "name": "雷克萨",
+        "classId": "DRUID",
+        "lastSpec": "BALANCE",
+        "specKeybindings": {
+          "BALANCE": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T00:14:05.170Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {
+          "raidFrames": {
+            "x": 50,
+            "y": 120,
+            "width": 320,
+            "height": 260
+          },
+          "actionBar": {
+            "x": 500,
+            "y": 820
+          },
+          "statsPanel": {
+            "x": 1100,
+            "y": 550
+          }
+        },
+        "updatedAtMs": 0
       }
     ],
-    "createdAtIso": "2026-11-22T00:26:12.004Z"
+    "createdAtIso": "2026-11-22T00:26:12.004Z",
+    "updatedAtMs": 0
   },
   {
     "id": "acc_1795304285915_2a4d1",
@@ -394,10 +2096,12 @@
           "enemyDamageCoeff": 1,
           "bossHpCoeff": 1
         },
-        "uiLayout": {}
+        "uiLayout": {},
+        "updatedAtMs": 0
       }
     ],
-    "createdAtIso": "2026-11-21T23:38:05.915Z"
+    "createdAtIso": "2026-11-21T23:38:05.915Z",
+    "updatedAtMs": 0
   },
   {
     "id": "acc_1795304308283_zx2c5",
@@ -529,10 +2233,12 @@
           "enemyDamageCoeff": 1,
           "bossHpCoeff": 1
         },
-        "uiLayout": {}
+        "uiLayout": {},
+        "updatedAtMs": 0
       }
     ],
-    "createdAtIso": "2026-11-21T23:38:28.283Z"
+    "createdAtIso": "2026-11-21T23:38:28.283Z",
+    "updatedAtMs": 0
   },
   {
     "id": "acc_1795304557385_aaz6v",
@@ -664,10 +2370,12 @@
           "enemyDamageCoeff": 1,
           "bossHpCoeff": 1
         },
-        "uiLayout": {}
+        "uiLayout": {},
+        "updatedAtMs": 0
       }
     ],
-    "createdAtIso": "2026-11-21T23:42:37.385Z"
+    "createdAtIso": "2026-11-21T23:42:37.385Z",
+    "updatedAtMs": 0
   },
   {
     "id": "acc_1795304601100_l5co1",
@@ -799,10 +2507,12 @@
           "enemyDamageCoeff": 1,
           "bossHpCoeff": 1
         },
-        "uiLayout": {}
+        "uiLayout": {},
+        "updatedAtMs": 0
       }
     ],
-    "createdAtIso": "2026-11-21T23:43:21.100Z"
+    "createdAtIso": "2026-11-21T23:43:21.100Z",
+    "updatedAtMs": 0
   },
   {
     "id": "acc_1795304630660_u8psv",
@@ -934,10 +2644,12 @@
           "enemyDamageCoeff": 1,
           "bossHpCoeff": 1
         },
-        "uiLayout": {}
+        "uiLayout": {},
+        "updatedAtMs": 0
       }
     ],
-    "createdAtIso": "2026-11-21T23:43:50.660Z"
+    "createdAtIso": "2026-11-21T23:43:50.660Z",
+    "updatedAtMs": 0
   },
   {
     "id": "acc_1795304654714_yt64h",
@@ -1069,10 +2781,12 @@
           "enemyDamageCoeff": 1,
           "bossHpCoeff": 1
         },
-        "uiLayout": {}
+        "uiLayout": {},
+        "updatedAtMs": 0
       }
     ],
-    "createdAtIso": "2026-11-21T23:44:14.714Z"
+    "createdAtIso": "2026-11-21T23:44:14.714Z",
+    "updatedAtMs": 0
   },
   {
     "id": "acc_1795304664152_qk9v2",
@@ -1204,10 +2918,12 @@
           "enemyDamageCoeff": 1,
           "bossHpCoeff": 1
         },
-        "uiLayout": {}
+        "uiLayout": {},
+        "updatedAtMs": 0
       }
     ],
-    "createdAtIso": "2026-11-21T23:44:24.152Z"
+    "createdAtIso": "2026-11-21T23:44:24.152Z",
+    "updatedAtMs": 0
   },
   {
     "id": "acc_1795304932216_dnbh8",
@@ -1339,10 +3055,12 @@
           "enemyDamageCoeff": 1,
           "bossHpCoeff": 1
         },
-        "uiLayout": {}
+        "uiLayout": {},
+        "updatedAtMs": 0
       }
     ],
-    "createdAtIso": "2026-11-21T23:48:52.216Z"
+    "createdAtIso": "2026-11-21T23:48:52.216Z",
+    "updatedAtMs": 0
   },
   {
     "id": "acc_1795305152094_7gmj1",
@@ -1474,10 +3192,12 @@
           "enemyDamageCoeff": 1,
           "bossHpCoeff": 1
         },
-        "uiLayout": {}
+        "uiLayout": {},
+        "updatedAtMs": 0
       }
     ],
-    "createdAtIso": "2026-11-21T23:52:32.094Z"
+    "createdAtIso": "2026-11-21T23:52:32.094Z",
+    "updatedAtMs": 0
   },
   {
     "id": "acc_1795305156166_db5uq",
@@ -1609,10 +3329,12 @@
           "enemyDamageCoeff": 1,
           "bossHpCoeff": 1
         },
-        "uiLayout": {}
+        "uiLayout": {},
+        "updatedAtMs": 0
       }
     ],
-    "createdAtIso": "2026-11-21T23:52:36.166Z"
+    "createdAtIso": "2026-11-21T23:52:36.166Z",
+    "updatedAtMs": 0
   },
   {
     "id": "acc_1795305206753_vtwra",
@@ -1744,10 +3466,12 @@
           "enemyDamageCoeff": 1,
           "bossHpCoeff": 1
         },
-        "uiLayout": {}
+        "uiLayout": {},
+        "updatedAtMs": 0
       }
     ],
-    "createdAtIso": "2026-11-21T23:53:26.753Z"
+    "createdAtIso": "2026-11-21T23:53:26.753Z",
+    "updatedAtMs": 0
   },
   {
     "id": "acc_1795305223261_qcixl",
@@ -1879,10 +3603,12 @@
           "enemyDamageCoeff": 1,
           "bossHpCoeff": 1
         },
-        "uiLayout": {}
+        "uiLayout": {},
+        "updatedAtMs": 0
       }
     ],
-    "createdAtIso": "2026-11-21T23:53:43.261Z"
+    "createdAtIso": "2026-11-21T23:53:43.261Z",
+    "updatedAtMs": 0
   },
   {
     "id": "acc_1795305323625_9g0et",
@@ -2014,10 +3740,12 @@
           "enemyDamageCoeff": 1,
           "bossHpCoeff": 1
         },
-        "uiLayout": {}
+        "uiLayout": {},
+        "updatedAtMs": 0
       }
     ],
-    "createdAtIso": "2026-11-21T23:55:23.625Z"
+    "createdAtIso": "2026-11-21T23:55:23.625Z",
+    "updatedAtMs": 0
   },
   {
     "id": "acc_1795305327950_0tisp",
@@ -2149,10 +3877,12 @@
           "enemyDamageCoeff": 1,
           "bossHpCoeff": 1
         },
-        "uiLayout": {}
+        "uiLayout": {},
+        "updatedAtMs": 0
       }
     ],
-    "createdAtIso": "2026-11-21T23:55:27.950Z"
+    "createdAtIso": "2026-11-21T23:55:27.950Z",
+    "updatedAtMs": 0
   },
   {
     "id": "acc_1795305413043_tmz7a",
@@ -2284,10 +4014,12 @@
           "enemyDamageCoeff": 1,
           "bossHpCoeff": 1
         },
-        "uiLayout": {}
+        "uiLayout": {},
+        "updatedAtMs": 0
       }
     ],
-    "createdAtIso": "2026-11-21T23:56:53.043Z"
+    "createdAtIso": "2026-11-21T23:56:53.043Z",
+    "updatedAtMs": 0
   },
   {
     "id": "acc_1795305425803_6mqfi",
@@ -2419,10 +4151,12 @@
           "enemyDamageCoeff": 1,
           "bossHpCoeff": 1
         },
-        "uiLayout": {}
+        "uiLayout": {},
+        "updatedAtMs": 0
       }
     ],
-    "createdAtIso": "2026-11-21T23:57:05.803Z"
+    "createdAtIso": "2026-11-21T23:57:05.803Z",
+    "updatedAtMs": 0
   },
   {
     "id": "acc_1795305438317_tmop2",
@@ -2554,10 +4288,12 @@
           "enemyDamageCoeff": 1,
           "bossHpCoeff": 1
         },
-        "uiLayout": {}
+        "uiLayout": {},
+        "updatedAtMs": 0
       }
     ],
-    "createdAtIso": "2026-11-21T23:57:18.317Z"
+    "createdAtIso": "2026-11-21T23:57:18.317Z",
+    "updatedAtMs": 0
   },
   {
     "id": "acc_1795305449835_fd6vx",
@@ -2689,10 +4425,12 @@
           "enemyDamageCoeff": 1,
           "bossHpCoeff": 1
         },
-        "uiLayout": {}
+        "uiLayout": {},
+        "updatedAtMs": 0
       }
     ],
-    "createdAtIso": "2026-11-21T23:57:29.835Z"
+    "createdAtIso": "2026-11-21T23:57:29.835Z",
+    "updatedAtMs": 0
   },
   {
     "id": "acc_1795305646287_iba44",
@@ -2824,10 +4562,12 @@
           "enemyDamageCoeff": 1,
           "bossHpCoeff": 1
         },
-        "uiLayout": {}
+        "uiLayout": {},
+        "updatedAtMs": 0
       }
     ],
-    "createdAtIso": "2026-11-22T00:00:46.287Z"
+    "createdAtIso": "2026-11-22T00:00:46.287Z",
+    "updatedAtMs": 0
   },
   {
     "id": "acc_1795305669666_vd4wy",
@@ -2959,10 +4699,12 @@
           "enemyDamageCoeff": 1,
           "bossHpCoeff": 1
         },
-        "uiLayout": {}
+        "uiLayout": {},
+        "updatedAtMs": 0
       }
     ],
-    "createdAtIso": "2026-11-22T00:01:09.666Z"
+    "createdAtIso": "2026-11-22T00:01:09.666Z",
+    "updatedAtMs": 0
   },
   {
     "id": "acc_1795305878366_5mntu",
@@ -3008,7 +4750,7 @@
           {
             "id": "cert_1795305878367_lf8sk",
             "dungeonId": "shadowfang_keep",
-            "dungeonName": "影牙城堡（英雄模式）",
+            "dungeonName": "影牙城堡（英雄�����式）",
             "clearedAtIso": "2026-11-22T00:04:38.367Z",
             "characterName": "阿尔萨斯",
             "characterClass": "DK",
@@ -3094,10 +4836,12 @@
           "enemyDamageCoeff": 1,
           "bossHpCoeff": 1
         },
-        "uiLayout": {}
+        "uiLayout": {},
+        "updatedAtMs": 0
       }
     ],
-    "createdAtIso": "2026-11-22T00:04:38.366Z"
+    "createdAtIso": "2026-11-22T00:04:38.366Z",
+    "updatedAtMs": 0
   },
   {
     "id": "acc_1795305936085_brxuk",
@@ -3229,10 +4973,12 @@
           "enemyDamageCoeff": 1,
           "bossHpCoeff": 1
         },
-        "uiLayout": {}
+        "uiLayout": {},
+        "updatedAtMs": 0
       }
     ],
-    "createdAtIso": "2026-11-22T00:05:36.085Z"
+    "createdAtIso": "2026-11-22T00:05:36.085Z",
+    "updatedAtMs": 0
   },
   {
     "id": "acc_1795306119783_9t6t2",
@@ -3364,10 +5110,12 @@
           "enemyDamageCoeff": 1,
           "bossHpCoeff": 1
         },
-        "uiLayout": {}
+        "uiLayout": {},
+        "updatedAtMs": 0
       }
     ],
-    "createdAtIso": "2026-11-22T00:08:39.783Z"
+    "createdAtIso": "2026-11-22T00:08:39.783Z",
+    "updatedAtMs": 0
   },
   {
     "id": "acc_1795306222205_l5to0",
@@ -3499,10 +5247,12 @@
           "enemyDamageCoeff": 1,
           "bossHpCoeff": 1
         },
-        "uiLayout": {}
+        "uiLayout": {},
+        "updatedAtMs": 0
       }
     ],
-    "createdAtIso": "2026-11-22T00:10:22.205Z"
+    "createdAtIso": "2026-11-22T00:10:22.205Z",
+    "updatedAtMs": 0
   },
   {
     "id": "acc_1795306243745_jh4q2",
@@ -3634,10 +5384,12 @@
           "enemyDamageCoeff": 1,
           "bossHpCoeff": 1
         },
-        "uiLayout": {}
+        "uiLayout": {},
+        "updatedAtMs": 0
       }
     ],
-    "createdAtIso": "2026-11-22T00:10:43.745Z"
+    "createdAtIso": "2026-11-22T00:10:43.745Z",
+    "updatedAtMs": 0
   },
   {
     "id": "acc_1795306291383_y5pc7",
@@ -3769,10 +5521,12 @@
           "enemyDamageCoeff": 1,
           "bossHpCoeff": 1
         },
-        "uiLayout": {}
+        "uiLayout": {},
+        "updatedAtMs": 0
       }
     ],
-    "createdAtIso": "2026-11-22T00:11:31.383Z"
+    "createdAtIso": "2026-11-22T00:11:31.383Z",
+    "updatedAtMs": 0
   },
   {
     "id": "acc_1795306430476_gl8rr",
@@ -3904,10 +5658,12 @@
           "enemyDamageCoeff": 1,
           "bossHpCoeff": 1
         },
-        "uiLayout": {}
+        "uiLayout": {},
+        "updatedAtMs": 0
       }
     ],
-    "createdAtIso": "2026-11-22T00:13:50.476Z"
+    "createdAtIso": "2026-11-22T00:13:50.476Z",
+    "updatedAtMs": 0
   },
   {
     "id": "acc_1795306444742_balqq",
@@ -4039,10 +5795,12 @@
           "enemyDamageCoeff": 1,
           "bossHpCoeff": 1
         },
-        "uiLayout": {}
+        "uiLayout": {},
+        "updatedAtMs": 0
       }
     ],
-    "createdAtIso": "2026-11-22T00:14:04.742Z"
+    "createdAtIso": "2026-11-22T00:14:04.742Z",
+    "updatedAtMs": 0
   },
   {
     "id": "acc_1795306660090_dm765",
@@ -4174,10 +5932,12 @@
           "enemyDamageCoeff": 1,
           "bossHpCoeff": 1
         },
-        "uiLayout": {}
+        "uiLayout": {},
+        "updatedAtMs": 0
       }
     ],
-    "createdAtIso": "2026-11-22T00:17:40.090Z"
+    "createdAtIso": "2026-11-22T00:17:40.090Z",
+    "updatedAtMs": 0
   },
   {
     "id": "acc_1795306664411_1carh",
@@ -4309,10 +6069,12 @@
           "enemyDamageCoeff": 1,
           "bossHpCoeff": 1
         },
-        "uiLayout": {}
+        "uiLayout": {},
+        "updatedAtMs": 0
       }
     ],
-    "createdAtIso": "2026-11-22T00:17:44.411Z"
+    "createdAtIso": "2026-11-22T00:17:44.411Z",
+    "updatedAtMs": 0
   },
   {
     "id": "acc_1795306711540_1xrl5",
@@ -4444,10 +6206,12 @@
           "enemyDamageCoeff": 1,
           "bossHpCoeff": 1
         },
-        "uiLayout": {}
+        "uiLayout": {},
+        "updatedAtMs": 0
       }
     ],
-    "createdAtIso": "2026-11-22T00:18:31.540Z"
+    "createdAtIso": "2026-11-22T00:18:31.540Z",
+    "updatedAtMs": 0
   },
   {
     "id": "acc_1795307171757_4da7m",
@@ -4579,9 +6343,320 @@
           "enemyDamageCoeff": 1,
           "bossHpCoeff": 1
         },
-        "uiLayout": {}
+        "uiLayout": {},
+        "updatedAtMs": 0
       }
     ],
-    "createdAtIso": "2026-11-22T00:26:11.757Z"
+    "createdAtIso": "2026-11-22T00:26:11.757Z",
+    "updatedAtMs": 0
+  },
+  {
+    "id": "acc_1795391950872_ph7wq",
+    "username": "test_login_probe",
+    "passwordHash": "test1234",
+    "characters": [],
+    "createdAtIso": "2026-11-22T23:59:10.872Z",
+    "updatedAtMs": 1795391950872
+  },
+  {
+    "id": "acc_1795392373466_5cgxb",
+    "username": "czr27",
+    "passwordHash": "262626",
+    "characters": [
+      {
+        "id": "char_1795392421499_i1re0",
+        "name": "牛头人万岁",
+        "classId": "DRUID",
+        "lastSpec": "BALANCE",
+        "specKeybindings": {
+          "RESTORATION": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "Q",
+            "6": "E",
+            "7": "R",
+            "8": "T",
+            "9": "F",
+            "10": "C",
+            "11": "X",
+            "17": "SHIFT+Q",
+            "18": "SHIFT+E",
+            "19": "SHIFT+R",
+            "20": "SHIFT+T",
+            "21": "SHIFT+F",
+            "22": "SHIFT+C",
+            "23": "SHIFT+X",
+            "24": "`"
+          },
+          "BALANCE": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-23T00:07:01.499Z",
+        "updatedAtMs": 1795397907245,
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {},
+        "specSlotLayouts": {
+          "RESTORATION": {
+            "4": "starfire",
+            "5": "swiftmend",
+            "6": "nourish",
+            "7": "rejuvenation",
+            "8": "natures_swiftness",
+            "9": "healing_touch",
+            "10": "wild_growth",
+            "11": "revive",
+            "13": "moonfire",
+            "15": "natures_cure",
+            "19": "lifebloom",
+            "21": "regrowth",
+            "22": "tranquility",
+            "23": "rebirth",
+            "25": "innervate",
+            "26": "barkskin",
+            "28": "mark_of_the_wild"
+          }
+        }
+      },
+      {
+        "id": "char_1795307313080_emowk",
+        "name": "牛头人万岁",
+        "classId": "DRUID",
+        "lastSpec": "RESTORATION",
+        "specKeybindings": {
+          "RESTORATION": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "Q",
+            "6": "E",
+            "7": "R",
+            "8": "T",
+            "9": "F",
+            "10": "C",
+            "11": "X",
+            "17": "SHIFT+Q",
+            "18": "SHIFT+E",
+            "19": "SHIFT+R",
+            "20": "SHIFT+T",
+            "21": "SHIFT+F",
+            "22": "SHIFT+C",
+            "23": "SHIFT+X",
+            "24": "`"
+          },
+          "BALANCE": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T00:28:33.081Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "NORMAL",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {
+          "raidFrames": {
+            "x": 73,
+            "y": 242,
+            "width": 355,
+            "height": 358
+          }
+        },
+        "updatedAtMs": 1795398274005,
+        "specSlotLayouts": {
+          "RESTORATION": {
+            "0": "moonfire",
+            "5": "swiftmend",
+            "6": "nourish",
+            "7": "rejuvenation",
+            "8": "natures_swiftness",
+            "9": "healing_touch",
+            "10": "wild_growth",
+            "11": "revive",
+            "18": "remove_corruption",
+            "19": "lifebloom",
+            "21": "regrowth",
+            "22": "tranquility",
+            "23": "rebirth",
+            "24": "barkskin",
+            "25": "innervate",
+            "28": "mark_of_the_wild"
+          }
+        }
+      },
+      {
+        "id": "char_1795307337938_hf4zt",
+        "name": "法克小面包",
+        "classId": "MAGE",
+        "lastSpec": "FIRE",
+        "specKeybindings": {
+          "FIRE": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T00:28:57.938Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {},
+        "updatedAtMs": 0
+      },
+      {
+        "id": "char_1795307354737_jguuy",
+        "name": "就爱拉怪",
+        "classId": "DK",
+        "lastSpec": "BLOOD",
+        "specKeybindings": {
+          "BLOOD": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T00:29:14.738Z",
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {},
+        "updatedAtMs": 0
+      },
+      {
+        "id": "char_1795330534674_h5ghw",
+        "name": "图腾插满地",
+        "classId": "SHAMAN",
+        "lastSpec": "RESTORATION",
+        "specKeybindings": {
+          "RESTORATION": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-22T06:55:34.674Z",
+        "lastDungeonTier": "20man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {},
+        "updatedAtMs": 0
+      }
+    ],
+    "createdAtIso": "2026-11-23T00:06:13.466Z",
+    "updatedAtMs": 1795398274005
   }
 ]

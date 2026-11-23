@@ -28,10 +28,15 @@ DEV/
 │   │   ├── vite.config.ts
 │   │   └── src/
 │   │       ├── main.tsx
-│   │       ├── App.tsx
-│   │       ├── components/  ← React HUD组件
-│   │       ├── canvas/      ← Canvas渲染层
-│   │       └── store/       ← 游戏状态Store
+│   │       ├── App.tsx       ← 顶层装配壳（禁止再堆业务；拆分见 UI_AND_ROOMS §4）
+│   │       ├── screens/      ← 大厅/战斗画面壳（LobbyScreen、CombatHudScreen）
+│   │       ├── components/   ← React HUD / 房间 / 弹窗
+│   │       ├── combat/       ← 消耗/资源/阵容/施法闸门/效果表/AI 执行/20Hz 帧（见 UI_AND_ROOMS §4）
+│   │       ├── hooks/        ← useRoomLobby、useNetworkRoomSync、useCombatTick、施法 barrel
+│   │       ├── utils/        ← HUD 布局等纯工具
+│   │       ├── canvas/       ← Canvas渲染层
+│   │       ├── net/          ← WebSocket / 房间门面
+│   │       └── store/        ← 预留（尚未接线为 SSOT，勿迁入现有 App 状态）
 │   └── server/           ← Node.js WebSocket（Phase 3）
 │       ├── package.json
 │       └── src/

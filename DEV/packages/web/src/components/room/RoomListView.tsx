@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import type { ClassId, DungeonDifficulty } from '@cata-raid-sim/engine';
-import { type LobbyRoom, DUNGEON_ROLE_QUOTAS, getRoleBySpec } from '@cata-raid-sim/engine';
+import type { ClassId, DungeonDifficulty, CustomDifficultySettings } from '@cata-raid-sim/engine';
+import { type LobbyRoom, DUNGEON_ROLE_QUOTAS, DEFAULT_CUSTOM_DIFFICULTY, getRoleBySpec } from '@cata-raid-sim/engine';
 
 interface RoomListViewProps {
   rooms: LobbyRoom[];
@@ -10,7 +10,14 @@ interface RoomListViewProps {
     classId: ClassId;
     spec: string;
   };
-  onCreateRoom: (name: string, dungeonId: string, difficulty: DungeonDifficulty) => void;
+  customDifficulty?: CustomDifficultySettings;
+  onChangeCustomDifficulty?: (settings: CustomDifficultySettings) => void;
+  onCreateRoom: (
+    name: string,
+    dungeonId: string,
+    difficulty: DungeonDifficulty,
+    customDiff?: CustomDifficultySettings
+  ) => void;
   onJoinRoom: (roomId: string) => void;
   onJoinWaitingQueue: (roomId: string) => void;
   onQuickJoin: () => void;
@@ -20,6 +27,8 @@ interface RoomListViewProps {
 export const RoomListView: React.FC<RoomListViewProps> = ({
   rooms,
   player,
+  customDifficulty = DEFAULT_CUSTOM_DIFFICULTY,
+  onChangeCustomDifficulty,
   onCreateRoom,
   onJoinRoom,
   onJoinWaitingQueue,
@@ -32,6 +41,15 @@ export const RoomListView: React.FC<RoomListViewProps> = ({
   const [newRoomName, setNewRoomName] = useState(`${player.name}的队伍`);
   const [newDungeonId, setNewDungeonId] = useState<string>('shadowfang_keep');
   const [newDifficulty, setNewDifficulty] = useState<DungeonDifficulty>('HEROIC');
+
+  const updateCoeff = (key: keyof CustomDifficultySettings, val: number) => {
+    if (onChangeCustomDifficulty) {
+      onChangeCustomDifficulty({
+        ...customDifficulty,
+        [key]: Math.max(0.01, Math.min(20, Number.isFinite(val) ? val : 1.0)),
+      });
+    }
+  };
 
   const playerRole = getRoleBySpec(player.classId, player.spec);
   const roleBadge = playerRole === 'TANK' ? '🛡️ 坦克' : playerRole === 'HEALER' ? '💚 治疗' : '⚔️ 输出';
@@ -46,14 +64,19 @@ export const RoomListView: React.FC<RoomListViewProps> = ({
   const handleCreateSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!newRoomName.trim()) return;
-    onCreateRoom(newRoomName.trim(), newDungeonId, newDifficulty);
+    onCreateRoom(
+      newRoomName.trim(),
+      newDungeonId,
+      newDifficulty,
+      newDifficulty === 'CUSTOM' ? customDifficulty : undefined
+    );
     setShowCreateModal(false);
   };
 
   return (
-    <div className="flex flex-col h-full w-full bg-slate-950 text-slate-100 select-none">
+    <div className="flex flex-col h-full min-h-0 w-full bg-slate-950 text-slate-100 select-none">
       {/* Top Room Header */}
-      <div className="flex items-center justify-between px-6 py-3 bg-gradient-to-r from-slate-900 via-amber-950/40 to-slate-900 border-b border-amber-500/30 shadow-lg">
+      <div className="shrink-0 flex items-center justify-between px-4 sm:px-6 py-3 bg-gradient-to-r from-slate-900 via-amber-950/40 to-slate-900 border-b border-amber-500/30 shadow-lg">
         <div className="flex items-center space-x-3">
           <div className="w-8 h-8 rounded bg-amber-500/20 border border-amber-500 flex items-center justify-center font-black text-amber-400 text-base">
             🏰
@@ -89,10 +112,10 @@ export const RoomListView: React.FC<RoomListViewProps> = ({
         </div>
       </div>
 
-      {/* Main Content Area */}
-      <div className="flex-1 flex flex-col p-6 space-y-4 max-w-7xl mx-auto w-full overflow-hidden">
+      {/* Main Content Area — full-bleed; room table scrolls when many rooms */}
+      <div className="flex-1 min-h-0 flex flex-col p-3 sm:p-4 gap-3 w-full overflow-hidden">
         {/* Action Toolbar */}
-        <div className="flex flex-wrap items-center justify-between gap-4 bg-slate-900/90 p-3 rounded-lg border border-slate-800 shadow">
+        <div className="shrink-0 flex flex-wrap items-center justify-between gap-4 bg-slate-900/90 p-3 rounded-lg border border-slate-800 shadow">
           {/* Left search & filter */}
           <div className="flex items-center space-x-3">
             <div className="relative">
@@ -166,7 +189,7 @@ export const RoomListView: React.FC<RoomListViewProps> = ({
         </div>
 
         {/* Room Table */}
-        <div className="flex-1 bg-slate-900/70 border border-slate-800 rounded-lg overflow-y-auto shadow-inner">
+        <div className="flex-1 min-h-0 bg-slate-900/70 border border-slate-800 rounded-lg overflow-y-auto overscroll-contain shadow-inner">
           {filteredRooms.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-64 text-slate-500 space-y-2">
               <span className="text-4xl">🏰</span>
@@ -174,13 +197,13 @@ export const RoomListView: React.FC<RoomListViewProps> = ({
             </div>
           ) : (
             <table className="w-full text-left text-xs">
-              <thead className="bg-slate-950/80 text-slate-400 sticky top-0 border-b border-slate-800 z-10">
+              <thead className="bg-slate-950/95 text-slate-400 sticky top-0 border-b border-slate-800 z-10">
                 <tr>
                   <th className="py-2.5 px-4 w-20">房号</th>
                   <th className="py-2.5 px-4">房间名称</th>
                   <th className="py-2.5 px-4">副本地图</th>
                   <th className="py-2.5 px-4 w-28">难度</th>
-                  <th className="py-2.5 px-4 w-40">人员分工状态</th>
+                  <th className="py-2.5 px-4 w-48">人数 总数(AI)</th>
                   <th className="py-2.5 px-4 w-28">房间状态</th>
                   <th className="py-2.5 px-4 w-32 text-center">操作</th>
                 </tr>
@@ -191,30 +214,44 @@ export const RoomListView: React.FC<RoomListViewProps> = ({
                   const tanks = room.members.filter(m => m.role === 'TANK').length;
                   const healers = room.members.filter(m => m.role === 'HEALER').length;
                   const dps = room.members.filter(m => m.role === 'DPS').length;
-                  const isFull = room.members.length >= quota.capacity;
-                  const isInCombat = room.status === 'IN_COMBAT';
+                  const humanCount = room.members.filter(m => m.isPlayer && !m.isAi).length;
+                  const aiCount = room.members.filter(m => m.isAi).length;
+                  const totalCount = room.members.length;
+                  const playersFull = humanCount >= quota.capacity;
+                  const isInCombat = room.status === 'IN_COMBAT' || room.status === 'OUT_OF_COMBAT';
+                  const canJoin = !playersFull;
 
                   return (
                     <tr
                       key={room.id}
-                      className="hover:bg-slate-800/50 transition cursor-pointer"
+                      className={`transition ${
+                        playersFull
+                          ? 'bg-slate-950/80 opacity-45 cursor-not-allowed'
+                          : 'hover:bg-slate-800/50 cursor-pointer'
+                      }`}
                     >
-                      <td className="py-3 px-4 font-mono font-bold text-amber-400">
+                      <td className={`py-3 px-4 font-mono font-bold ${playersFull ? 'text-slate-600' : 'text-amber-400'}`}>
                         #{String(idx + 1).padStart(2, '0')}
                       </td>
                       <td className="py-3 px-4">
-                        <div className="font-semibold text-slate-200">{room.name}</div>
+                        <div className={`font-semibold ${playersFull ? 'text-slate-500' : 'text-slate-200'}`}>{room.name}</div>
                         <div className="text-[10px] text-slate-500">ID: {room.id}</div>
                       </td>
                       <td className="py-3 px-4">
-                        <span className="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-slate-800 text-slate-300 border border-slate-700">
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium border ${
+                          playersFull
+                            ? 'bg-slate-900 text-slate-600 border-slate-800'
+                            : 'bg-slate-800 text-slate-300 border-slate-700'
+                        }`}>
                           {quota.dungeonName} ({quota.tier === '5man' ? '5人' : '20人'})
                         </span>
                       </td>
                       <td className="py-3 px-4">
                         <span
                           className={`font-bold ${
-                            room.difficulty === 'HEROIC'
+                            playersFull
+                              ? 'text-slate-600'
+                              : room.difficulty === 'HEROIC'
                               ? 'text-red-400'
                               : room.difficulty === 'CUSTOM'
                               ? 'text-purple-400'
@@ -225,33 +262,56 @@ export const RoomListView: React.FC<RoomListViewProps> = ({
                         </span>
                       </td>
                       <td className="py-3 px-4">
-                        <div className="flex items-center space-x-2">
-                          <span className={`font-mono font-bold ${isFull ? 'text-amber-400' : 'text-emerald-400'}`}>
-                            {room.members.length}/{quota.capacity}
-                          </span>
-                          <span className="text-[10px] text-slate-400">
+                        <div className="flex flex-col space-y-0.5">
+                          <div className="flex items-center space-x-2">
+                            <span
+                              className={`font-mono font-bold ${
+                                playersFull ? 'text-slate-500' : 'text-emerald-400'
+                              }`}
+                              title="总数(AI数) · 括号外=玩家+AI，括号内=AI"
+                            >
+                              {totalCount}/{quota.capacity} ({aiCount})
+                            </span>
+                            <span className={`text-[10px] ${playersFull ? 'text-slate-600' : 'text-slate-400'}`}>
+                              玩家{humanCount} · AI{aiCount}
+                            </span>
+                          </div>
+                          <span className={`text-[10px] ${playersFull ? 'text-slate-600' : 'text-slate-400'}`}>
                             🛡️{tanks} 💚{healers} ⚔️{dps}
                           </span>
                         </div>
                       </td>
                       <td className="py-3 px-4">
                         {isInCombat ? (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-rose-950/80 text-rose-300 border border-rose-700/50 animate-pulse">
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border ${
+                            playersFull
+                              ? 'bg-slate-900 text-slate-600 border-slate-700'
+                              : 'bg-rose-950/80 text-rose-300 border-rose-700/50 animate-pulse'
+                          }`}>
                             ⚔️ 战斗进行中
                           </span>
                         ) : (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-950/80 text-emerald-300 border border-emerald-700/50">
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border ${
+                            playersFull
+                              ? 'bg-slate-900 text-slate-600 border-slate-700'
+                              : 'bg-emerald-950/80 text-emerald-300 border-emerald-700/50'
+                          }`}>
                             ⏳ 大厅等待中
                           </span>
                         )}
                       </td>
                       <td className="py-3 px-4 text-center">
-                        {isInCombat ? (
+                        {!canJoin ? (
+                          <span className="px-3 py-1 rounded font-bold text-xs bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed">
+                            人数已满
+                          </span>
+                        ) : isInCombat ? (
                           <button
-                            onClick={() => onJoinWaitingQueue(room.id)}
+                            onClick={() => onJoinRoom(room.id)}
                             className="px-3 py-1 rounded font-bold text-xs bg-rose-600 hover:bg-rose-500 text-white shadow transition"
+                            title="战斗中可热加入并顶替同职责 AI"
                           >
-                            等待加入
+                            热加入
                           </button>
                         ) : (
                           <button
@@ -273,16 +333,24 @@ export const RoomListView: React.FC<RoomListViewProps> = ({
 
       {/* Create Room Modal */}
       {showCreateModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-          <div className="bg-slate-900 border border-amber-500/40 rounded-xl shadow-2xl max-w-md w-full p-6 text-slate-100 animate-in fade-in zoom-in-95 duration-150">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4"
+          onClick={() => setShowCreateModal(false)}
+        >
+          <div
+            className="bg-slate-900 border border-amber-500/40 rounded-xl shadow-2xl max-w-md w-full p-6 text-slate-100 animate-in fade-in zoom-in-95 duration-150"
+            onClick={e => e.stopPropagation()}
+          >
             <div className="flex items-center justify-between border-b border-slate-800 pb-3 mb-4">
               <h2 className="text-base font-bold text-amber-300 flex items-center space-x-2">
                 <span>➕</span>
                 <span>创建全新副本房间</span>
               </h2>
               <button
+                type="button"
                 onClick={() => setShowCreateModal(false)}
                 className="text-slate-400 hover:text-slate-200 text-sm font-bold"
+                aria-label="关闭"
               >
                 ✕
               </button>
@@ -332,18 +400,7 @@ export const RoomListView: React.FC<RoomListViewProps> = ({
 
               <div>
                 <label className="block text-slate-300 font-semibold mb-1">难度选择</label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setNewDifficulty('HEROIC')}
-                    className={`p-2 rounded border text-center transition ${
-                      newDifficulty === 'HEROIC'
-                        ? 'border-red-500 bg-red-950/30 text-red-300 font-bold'
-                        : 'border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700'
-                    }`}
-                  >
-                    英雄难度 (Heroic)
-                  </button>
+                <div className="grid grid-cols-3 gap-2">
                   <button
                     type="button"
                     onClick={() => setNewDifficulty('NORMAL')}
@@ -353,9 +410,96 @@ export const RoomListView: React.FC<RoomListViewProps> = ({
                         : 'border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700'
                     }`}
                   >
-                    普通难度 (Normal)
+                    普通难度
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setNewDifficulty('HEROIC')}
+                    className={`p-2 rounded border text-center transition ${
+                      newDifficulty === 'HEROIC'
+                        ? 'border-red-500 bg-red-950/30 text-red-300 font-bold'
+                        : 'border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700'
+                    }`}
+                  >
+                    英雄难度
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setNewDifficulty('CUSTOM')}
+                    className={`p-2 rounded border text-center transition ${
+                      newDifficulty === 'CUSTOM'
+                        ? 'border-violet-500 bg-violet-950/40 text-violet-300 font-bold'
+                        : 'border-slate-800 bg-slate-950 text-slate-400 hover:border-slate-700'
+                    }`}
+                  >
+                    ⚙️ 自定义模式
                   </button>
                 </div>
+
+                {newDifficulty === 'CUSTOM' && (
+                  <div className="mt-2.5 p-3 rounded-lg bg-slate-950/90 border border-violet-500/40 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-[11px] font-bold text-violet-300">快速预设（进房后可微调全部10项）</span>
+                      <div className="flex items-center space-x-1">
+                        <button
+                          type="button"
+                          onClick={() => onChangeCustomDifficulty?.({
+                            playerDamageCoeff: 2.0, playerHealingCoeff: 2.0, playerHpCoeff: 1.5, playerMpCoeff: 1.5,
+                            aiDamageCoeff: 1.5, aiHealingCoeff: 1.5, aiHpCoeff: 1.2, aiMpCoeff: 1.2,
+                            enemyDamageCoeff: 0.6, bossHpCoeff: 0.7,
+                          })}
+                          className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-300 border border-emerald-700/50 hover:bg-emerald-900"
+                        >
+                          爽快割草
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onChangeCustomDifficulty?.({
+                            playerDamageCoeff: 0.8, playerHealingCoeff: 0.8, playerHpCoeff: 0.8, playerMpCoeff: 0.8,
+                            aiDamageCoeff: 0.8, aiHealingCoeff: 0.8, aiHpCoeff: 0.8, aiMpCoeff: 0.8,
+                            enemyDamageCoeff: 2.0, bossHpCoeff: 2.5,
+                          })}
+                          className="text-[10px] px-1.5 py-0.5 rounded bg-rose-950 text-rose-300 border border-rose-700/50 hover:bg-rose-900"
+                        >
+                          地狱挑战
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onChangeCustomDifficulty?.({ ...DEFAULT_CUSTOM_DIFFICULTY })}
+                          className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700"
+                        >
+                          重置 1.0x
+                        </button>
+                      </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 text-[10px]">
+                      <div>
+                        <div className="flex justify-between text-slate-400">
+                          <span>敌方伤害:</span>
+                          <span className="font-mono text-rose-300">{customDifficulty.enemyDamageCoeff.toFixed(2)}x</span>
+                        </div>
+                        <input
+                          type="range" min="0.01" max="20.0" step="0.05"
+                          value={customDifficulty.enemyDamageCoeff}
+                          onChange={(e) => updateCoeff('enemyDamageCoeff', parseFloat(e.target.value))}
+                          className="w-full h-1 bg-slate-800 rounded accent-rose-400"
+                        />
+                      </div>
+                      <div>
+                        <div className="flex justify-between text-slate-400">
+                          <span>BOSS血量:</span>
+                          <span className="font-mono text-amber-300">{customDifficulty.bossHpCoeff.toFixed(2)}x</span>
+                        </div>
+                        <input
+                          type="range" min="0.01" max="20.0" step="0.05"
+                          value={customDifficulty.bossHpCoeff}
+                          onChange={(e) => updateCoeff('bossHpCoeff', parseFloat(e.target.value))}
+                          className="w-full h-1 bg-slate-800 rounded accent-amber-400"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="pt-3 border-t border-slate-800 flex justify-end space-x-3">

@@ -76,20 +76,20 @@ export const DRUID: ClassSpec = {
       gcdCategory: 'NORMAL',
       cooldownMs: 0,
       resourceCost: 'MANA',
-      resourceCostAmount: 2000,
+      resourceCostAmount: 2300,
       targetType: 'SINGLE_ALLY',
       school: 'NATURE',
       spec: 'RESTO_HEAL',
       effects: [
         {
           type: 'HEAL',
-          baseValue: 16000,
-          description: '1.5s快速治疗，附加6秒暴击HOT，并刷新目标身上的生命绽放持续时间',
+          baseValue: 11800,
+          description: '1.5s快速急救治疗（80级满急速1.0s），附加6秒HoT并刷新生命绽放',
         },
         {
           type: 'HOT',
           auraId: 'regrowth',
-          baseValue: 1800,
+          baseValue: 1600,
           durationMs: 6_000,
           tickIntervalMs: 2_000,
           description: '附加6s持续治疗HoT',
@@ -105,15 +105,15 @@ export const DRUID: ClassSpec = {
       gcdCategory: 'NORMAL',
       cooldownMs: 0,
       resourceCost: 'MANA',
-      resourceCostAmount: 2400,
+      resourceCostAmount: 2600,
       targetType: 'SINGLE_ALLY',
       school: 'NATURE',
       spec: 'RESTO_HEAL',
       effects: [
         {
           type: 'HEAL',
-          baseValue: 34000,
-          description: '2.5s读条强效大量治疗，单次直接治疗量极高，并刷新目标身上的生命绽放持续时间',
+          baseValue: 20500,
+          description: '2.5s重型单抬大治疗（80级满急速1.67s），刷新目标生命绽放',
         },
       ],
     },
@@ -126,15 +126,15 @@ export const DRUID: ClassSpec = {
       gcdCategory: 'NORMAL',
       cooldownMs: 0,
       resourceCost: 'MANA',
-      resourceCostAmount: 1200, // 省蓝
+      resourceCostAmount: 950,
       targetType: 'SINGLE_ALLY',
       school: 'NATURE',
       spec: 'RESTO_HEAL',
       effects: [
         {
           type: 'HEAL',
-          baseValue: 11000,
-          description: '省蓝读条治疗（2.5s），并刷新目标身上的生命绽放持续时间',
+          baseValue: 8500,
+          description: '省蓝常规读条治疗（2.5s基础，满急速1.67s），刷新生命绽放',
         },
       ],
     },
@@ -245,14 +245,14 @@ export const DRUID: ClassSpec = {
       gcdCategory: 'NORMAL',
       cooldownMs: 600_000,
       resourceCost: 'MANA',
-      resourceCostAmount: 6800,
+      resourceCostAmount: 2400,
       targetType: 'SINGLE_ALLY',
       school: 'NATURE',
       travelOnly: false,
       effects: [
         {
           type: 'RESURRECT',
-          description: '战斗复活大招：在战斗中使一名已阵亡的盟友复活，恢复其60%生命值与60%法力值，CD 10min',
+          description: '战斗复活大招：在战斗中复活阵亡盟友，恢复60%生命值与法力值，CD 10min',
         },
       ],
     },
@@ -265,14 +265,14 @@ export const DRUID: ClassSpec = {
       gcdCategory: 'NORMAL',
       cooldownMs: 0,
       resourceCost: 'MANA',
-      resourceCostAmount: 6800,
+      resourceCostAmount: 2400,
       targetType: 'SINGLE_ALLY',
       school: 'NATURE',
       travelOnly: true,
       effects: [
         {
           type: 'RESURRECT',
-          description: '非战斗复活，脱离战斗后复活已阵亡的盟友，恢复35%生命值与法力值',
+          description: '非战斗复活，脱离战斗后复活已阵亡的盟友（无CD）',
         },
       ],
     },
@@ -288,7 +288,6 @@ export const DRUID: ClassSpec = {
       resourceCostAmount: 0,
       targetType: 'SELF',
       school: 'NATURE',
-      spec: 'RESTO_HEAL',
       effects: [
         {
           type: 'BUFF',
@@ -467,6 +466,48 @@ export const DRUID: ClassSpec = {
       ],
     },
 
+    {
+      id: 'druid_hurricane',
+      name: '飓风',
+      castTimeMs: 2_500,
+      gcdType: 'normal',
+      gcdCategory: 'NORMAL',
+      cooldownMs: 0,
+      resourceCost: 'MANA',
+      resourceCostAmount: 2400,
+      targetType: 'AOE_ENEMY',
+      school: 'NATURE',
+      spec: 'BALANCE_DPS',
+      effects: [
+        {
+          type: 'SPELL_DAMAGE',
+          baseValue: 8200,
+          description: '召唤风暴席卷目标区域所有敌人（平衡德持续AOE）',
+        },
+      ],
+    },
+
+    {
+      id: 'druid_starfall',
+      name: '星辰坠落',
+      castTimeMs: 0,
+      gcdType: 'normal',
+      gcdCategory: 'NORMAL',
+      cooldownMs: 90_000,
+      resourceCost: 'MANA',
+      resourceCostAmount: 2200,
+      targetType: 'AOE_ENEMY',
+      school: 'ARCANE',
+      spec: 'BALANCE_DPS',
+      effects: [
+        {
+          type: 'SPELL_DAMAGE',
+          baseValue: 11500,
+          description: '召唤流星群轰击周围所有敌人（平衡德爆发AOE）',
+        },
+      ],
+    },
+
     // ── 野性德鲁伊技能 (熊坦 & 猎豹DPS) ────────
 
     {
@@ -627,6 +668,27 @@ export const DRUID: ClassSpec = {
         {
           type: 'TAUNT',
           description: '嘲讽目标强制攻击德鲁伊，仇恨复制为最高仇恨×110%，CD 8s',
+        },
+      ],
+    },
+
+    {
+      id: 'druid_swipe',
+      name: '横扫',
+      castTimeMs: 0,
+      gcdType: 'rogue',
+      gcdCategory: 'ROGUE',
+      cooldownMs: 3_000,
+      resourceCost: 'ENERGY',
+      resourceCostAmount: 45,
+      targetType: 'AOE_ENEMY',
+      school: 'PHYSICAL',
+      spec: 'FERAL',
+      effects: [
+        {
+          type: 'PHYSICAL_DAMAGE',
+          baseValue: 7800,
+          description: '横扫面前所有敌人造成群体物理伤害（野性核心AOE）',
         },
       ],
     },

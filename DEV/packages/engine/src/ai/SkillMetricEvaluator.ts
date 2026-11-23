@@ -1,14 +1,39 @@
 // ============================================================
-// Cata Raid Sim — AI Skill Metric Evaluator & Personality System
+// Cata Raid Sim — Universal Rule-Driven AI Skill Metric Evaluator
 // Computes dynamic metrics (DPS, HPS, DPS/Cost, HPS/Cost, DPS/CD, HPS/CD, isAOE)
-// Classifies skills into Major/Minor cycles, Throughput vs Cost Efficiency,
-// and evaluates AI & Boss decisions with seeded individuality and jitter.
+// Dynamically inspects ANY unit's owned available skills from ClassRegistry
+// (zero per-spec hardcoding!) and applies universal priority rules:
+//   1. AoE Priority:
+//      - Healer: Tank above danger line (>=45%) & multiple allies below health line (<85%) -> AoE Heal
+//      - Healer Raid Crisis: >=3 allies critically low (<45%) -> Raid Major AoE CD / Smart AoE Heal
+//      - DPS/Tank: >=3 living hittable enemy targets -> AoE Damage
+//   2. Emergency Single-Target Save (anyone <45% HP):
+//      - Strictly favors high-HPS fast/heavy heals; suppresses slow low-HPS fillers (e.g. Healing Wave)
+//   3. Sustained Cost-Efficiency & Output (性价比与输出平衡)
 // ============================================================
 
-import type { Unit } from '../types.js';
+import type { ClassId, Unit } from '../types.js';
+import {
+  getSpellsForClassSpec,
+  type NormalizedSpell,
+} from '../classes/ClassRegistry.js';
+import {
+  getHastedCastTimeMs,
+  LEVEL_80_MAX_HASTE,
+} from '../engine/TierProfile.js';
 
 export type SkillCycle = 'MAJOR' | 'MINOR' | 'SUSTAINED';
 export type SkillRoleCategory = 'DAMAGE' | 'HEAL' | 'DEFENSIVE' | 'UTILITY' | 'INTERRUPT';
+export type EvaluatorResourceType =
+  | 'MANA'
+  | 'ENERGY'
+  | 'RUNIC_POWER'
+  | 'RAGE'
+  | 'FOCUS'
+  | 'HOLY_POWER'
+  | 'RUNE'
+  | 'COMBO_POINTS'
+  | 'NONE';
 
 export interface SkillEvaluationInput {
   id: string;
@@ -17,7 +42,7 @@ export interface SkillEvaluationInput {
   castTimeMs: number;
   cooldownMs: number;
   resourceCost: number;
-  resourceType?: 'MANA' | 'ENERGY' | 'RUNIC_POWER' | 'NONE';
+  resourceType?: EvaluatorResourceType;
   rawDamage?: number;
   rawHeal?: number;
   isAOE?: boolean;
@@ -33,9 +58,9 @@ export interface SkillMetrics {
   castTimeMs: number;
   cooldownMs: number;
   resourceCost: number;
-  resourceType: 'MANA' | 'ENERGY' | 'RUNIC_POWER' | 'NONE';
+  resourceType: EvaluatorResourceType;
 
-  // Core metrics required by user:
+  // Core metrics:
   dps: number;             // DPS (Damage Per Second)
   hps: number;             // HPS (Healing Per Second)
   dpsPerCost: number;      // DPS / 消耗 (Damage Per Resource Cost)
@@ -57,23 +82,43 @@ export interface AIPersonality {
   id: string;
 
   // 1. 蓝量 / 能量健康线浮动 (Health line jitter)
-  // 比如常规30%蓝线，每个AI根据随机种子在20%~40%之间抖动；盗贼能量储备在22~42浮动
   resourceHealthyThreshold: number;
   energyReserveThreshold: number;
 
-  // 2. 输出量 vs 性价比平衡值浮动 (Throughput vs Cost Efficiency balance jitter)
-  // 0.32 ~ 0.68：低值代表偏好低耗可持续性价比，高值代表偏好纯输出爆发
+  // 2. 输出量 vs 性价比平衡值浮动 (0.32 ~ 0.68)
   throughputVsEfficiencyBias: number;
 
-  // 3. 周期爆发/救急倾向 (Aggressiveness in popping major/minor cycles)
-  // 0.85 ~ 1.15
+  // 3. 周期爆发/救急倾向 (0.85 ~ 1.15)
   cycleAggression: number;
 
-  // 4. 群体偏好目标数门槛 (AOE threshold count jitter: 2 或 3)
+  // 4. 群体偏好目标数门槛 (2 或 3)
   aoeThresholdCount: number;
 
-  // 5. 步调偏移抖动 (0 ~ 29 ticks，避免所有机器人同步卡点动作)
+  // 5. 步调偏移抖动 (0 ~ 29 ticks)
   tickOffset: number;
+
+  /**
+   * 6. 多动症 / 站桩不耐烦：原地站太久后小幅走动的意向
+   * - fidgetIdleThresholdMs: 默认（坦克/远程/治疗）约 5s~60s；近战 DPS 请用 resolveFidgetIdleThresholdMs
+   * - fidgetRadiusPx: 相对意图站位的小幅半径（不影响拉怪/治疗圈决策）
+   * - fidgetDurationMs: 单次踱步持续多久后回到意图点
+   */
+  fidgetIdleThresholdMs: number;
+  fidgetRadiusPx: number;
+  fidgetDurationMs: number;
+}
+
+/**
+ * 按角色解析站桩不耐烦阈值：近战非坦 1~10s，坦克/远程/治疗保持人格默认 5~60s
+ */
+export function resolveFidgetIdleThresholdMs(
+  personality: AIPersonality,
+  opts: { role?: string; isMeleeDps?: boolean }
+): number {
+  if (opts.role !== 'TANK' && opts.isMeleeDps) {
+    return 1000 + (personality.seed % 9000); // 1s ~ 10s
+  }
+  return personality.fidgetIdleThresholdMs;
 }
 
 /**
@@ -88,23 +133,17 @@ export function createAIPersonality(name: string, id: string = ''): AIPersonalit
   }
   const pos = Math.abs(hash);
 
-  // 蓝量健康线: 0.22 ~ 0.38 (中位数 ~0.30)
   const resourceHealthyThreshold = Number((0.22 + ((pos % 17) / 100)).toFixed(2));
-
-  // 能量储备线: 22 ~ 42 能量
   const energyReserveThreshold = 22 + (pos % 21);
-
-  // 性价比 vs 输出量平衡值: 0.32 ~ 0.68 (中位数 0.50)
   const throughputVsEfficiencyBias = Number((0.32 + ((pos % 37) / 100)).toFixed(2));
-
-  // 周期爆发激进倾向: 0.85 ~ 1.15
   const cycleAggression = Number((0.85 + ((pos % 31) / 100)).toFixed(2));
-
-  // 群体偏好目标数门槛: 2 或 3 个受伤队友/敌方目标
   const aoeThresholdCount = 2 + (pos % 2);
-
-  // 步调防撞车偏移: 0 ~ 29 ticks
   const tickOffset = pos % 30;
+
+  // 多动意向（坦克/远程/治疗默认）：有人 5s 就踱步，有人能站将近一分钟——同名稳定可复现
+  const fidgetIdleThresholdMs = 5000 + (pos % 56000); // 5s ~ 61s
+  const fidgetRadiusPx = 8 + (pos % 17); // 8 ~ 24 px
+  const fidgetDurationMs = 900 + ((pos >> 3) % 1400); // 0.9s ~ 2.3s
 
   return {
     seed: pos,
@@ -116,6 +155,9 @@ export function createAIPersonality(name: string, id: string = ''): AIPersonalit
     cycleAggression,
     aoeThresholdCount,
     tickOffset,
+    fidgetIdleThresholdMs,
+    fidgetRadiusPx,
+    fidgetDurationMs,
   };
 }
 
@@ -123,31 +165,25 @@ export function createAIPersonality(name: string, id: string = ''): AIPersonalit
  * 为单个技能精确计算 DPS, HPS, DPS/消耗, HPS/消耗, DPS/CD, HPS/CD, isAOE 及大小周期分类
  */
 export function computeSkillMetrics(params: SkillEvaluationInput): SkillMetrics {
-  const castSec = params.castTimeMs > 0 ? params.castTimeMs / 1000 : 1.25; // 瞬发技能按 1.25s 基础 GCD 计
+  // 80级满急速下瞬发技能占 1.0s GCD
+  const castSec = params.castTimeMs > 0 ? params.castTimeMs / 1000 : 1.0;
   const cdSec = params.cooldownMs > 0 ? params.cooldownMs / 1000 : castSec;
   const dmg = params.rawDamage || 0;
   const heal = params.rawHeal || 0;
   const cost = params.resourceCost || 0;
 
-  // 1. DPS 与 HPS
   const dps = dmg > 0 ? Math.round(dmg / castSec) : 0;
   const hps = heal > 0 ? Math.round(heal / castSec) : 0;
 
-  // 2. DPS / 消耗 与 HPS / 消耗 (性价比)
   const dpsPerCost = cost > 0 ? Number((dmg / cost).toFixed(2)) : (dmg > 0 ? 999 : 0);
   const hpsPerCost = cost > 0 ? Number((heal / cost).toFixed(2)) : (heal > 0 ? 999 : 0);
 
-  // 3. DPS / CD 与 HPS / CD (爆发/救急冷却密度)
   const dpsPerCd = dmg > 0 ? Math.round(dmg / cdSec) : 0;
   const hpsPerCd = heal > 0 ? Math.round(heal / cdSec) : 0;
 
   const isAOE = Boolean(params.isAOE);
   const maxAoeTargets = params.maxAoeTargets || (isAOE ? 5 : 1);
 
-  // 4. 大小周期分类 (根据输出成本与冷却时间):
-  // 大周期 (MAJOR): CD >= 45s (长CD爆发、大招救急、全团大抬血，如宁静、激活、冲动、首领全屏机制)
-  // 小周期 (MINOR): 6s <= CD < 45s (核心战术小技能，如迅捷治愈、野性成长、熔岩爆裂、激流、打断反制)
-  // 常规循环 (SUSTAINED): CD < 6s (常规读条或填充循环，如滋养、治疗波、火球术、影袭)
   let cycle: SkillCycle = 'SUSTAINED';
   if (params.cooldownMs >= 45000) {
     cycle = 'MAJOR';
@@ -180,6 +216,101 @@ export function computeSkillMetrics(params: SkillEvaluationInput): SkillMetrics 
   };
 }
 
+/**
+ * 从 ClassRegistry 的 NormalizedSpell 动态构建技能指标（自动应用 80 级满急速读条缩减）
+ */
+export function computeMetricsFromNormalizedSpell(
+  spell: NormalizedSpell,
+  haste: number = LEVEL_80_MAX_HASTE
+): SkillMetrics {
+  const effectiveCastMs = spell.castTimeMs > 0
+    ? getHastedCastTimeMs(spell.castTimeMs, haste)
+    : 0;
+
+  const totalHeal = spell.directHeal + spell.hotTotalHeal + spell.shieldValue;
+  const totalDamage = spell.directDamage + spell.dotTotalDamage;
+
+  let roleType: SkillRoleCategory = 'UTILITY';
+  if (spell.isInterrupt) roleType = 'INTERRUPT';
+  else if (spell.isHeal && !spell.isDamage) roleType = 'HEAL';
+  else if (spell.isDamage) roleType = 'DAMAGE';
+  else if (spell.isDefensive) roleType = 'DEFENSIVE';
+
+  // For AoE skills, single-target base value scales when hitting multiple targets
+  const rawHeal = totalHeal;
+  const rawDamage = totalDamage;
+
+  return computeSkillMetrics({
+    id: spell.id,
+    name: spell.name,
+    roleType,
+    castTimeMs: effectiveCastMs,
+    cooldownMs: spell.cooldownMs,
+    resourceCost: spell.resourceCostAmount,
+    resourceType: spell.resourceKind,
+    rawDamage,
+    rawHeal,
+    isAOE: spell.isAOE,
+    maxAoeTargets: spell.maxAoeTargets,
+    description: spell.description,
+  });
+}
+
+/**
+ * 通用资源余额查询（支持魔兽世界全 10 职业所有资源）
+ */
+export function getUnitResourceAmount(unit: Unit, kind: EvaluatorResourceType): number {
+  if (kind === 'NONE') return Number.MAX_SAFE_INTEGER;
+  if (kind === 'MANA') {
+    const res = unit.resources?.find(r => r.kind === 'MANA');
+    return res ? res.current : (unit.mp ?? 0);
+  }
+  if (kind === 'ENERGY') {
+    const res = unit.resources?.find(r => r.kind === 'ENERGY');
+    return res ? res.current : (unit.energy ?? 100);
+  }
+  if (kind === 'RAGE') {
+    const res = unit.resources?.find(r => r.kind === 'RAGE');
+    return res ? res.current : (unit.rage ?? 50);
+  }
+  if (kind === 'FOCUS') {
+    const res = unit.resources?.find(r => r.kind === 'FOCUS');
+    return res ? res.current : (unit.focus ?? 100);
+  }
+  if (kind === 'RUNIC_POWER') {
+    const res = unit.resources?.find(r => r.kind === 'RUNIC_POWER');
+    return res ? res.current : (unit.runicPower ?? 0);
+  }
+  if (kind === 'HOLY_POWER') {
+    const res = unit.resources?.find(r => r.kind === 'HOLY_POWER');
+    return res ? res.current : (unit.holyPower ?? 0);
+  }
+  if (kind === 'COMBO_POINTS') {
+    const res = unit.resources?.find(r => r.kind === 'COMBO_POINTS');
+    return res ? res.current : (unit.comboPoints ?? 0);
+  }
+  if (kind === 'RUNE') {
+    if (!unit.runes || unit.runes.length === 0) return 6;
+    return unit.runes.filter(r => r.cooldownMs <= 0).length;
+  }
+  return 0;
+}
+
+export function getUnitResourceMax(unit: Unit, kind: EvaluatorResourceType): number {
+  if (kind === 'MANA') {
+    const res = unit.resources?.find(r => r.kind === 'MANA');
+    return res ? res.max : (unit.maxMp || 45000);
+  }
+  if (kind === 'ENERGY' || kind === 'RAGE' || kind === 'FOCUS' || kind === 'RUNIC_POWER') {
+    const res = unit.resources?.find(r => r.kind === kind);
+    return res ? res.max : 100;
+  }
+  if (kind === 'HOLY_POWER') return 3;
+  if (kind === 'COMBO_POINTS') return 5;
+  if (kind === 'RUNE') return 6;
+  return 100;
+}
+
 export interface SkillScoreContext {
   caster: Unit;
   personality: AIPersonality;
@@ -191,49 +322,48 @@ export interface SkillScoreContext {
 }
 
 /**
- * 智能决策打分函数：
- * 综合技能的 DPS/HPS、性价比、大小周期、群体适合度，以及 AI 个体抖动，得出当前最适合释放的技能评分
+ * 通用技能综合评分函数（无职业硬编码）：
+ * 综合输出吞吐量 (DPS/HPS)、性价比 (输出/消耗)、群体覆盖收益、冷却节奏与个体抖动
  */
 export function scoreSkillCandidate(skill: SkillMetrics, ctx: SkillScoreContext): number {
   const { caster, personality, allies, enemies, tickCount } = ctx;
 
-  // 1. 检查资源状态 (当前资源与该 AI 个性化健康线的对比)
+  // 1. 通用资源可用性与健康线判定
   let isLowResource = false;
-  if (skill.resourceType === 'MANA') {
-    const curMp = caster.mp ?? 0;
-    const maxMp = caster.maxMp || 100000;
-    const mpRatio = maxMp > 0 ? curMp / maxMp : 1;
-    // 当蓝量低于该 AI 专属的健康线时，进入节能模式
-    isLowResource = mpRatio < personality.resourceHealthyThreshold;
-    if (curMp < skill.resourceCost) return -1; // 资源不足直接不可用
-  } else if (skill.resourceType === 'ENERGY') {
-    const curEnergy = caster.energy ?? 100;
-    isLowResource = curEnergy < personality.energyReserveThreshold;
-    if (curEnergy < skill.resourceCost) return -1;
+  if (skill.resourceType !== 'NONE') {
+    const cur = getUnitResourceAmount(caster, skill.resourceType);
+    if (cur < skill.resourceCost) return -1;
+
+    if (skill.resourceType === 'MANA') {
+      const maxMp = getUnitResourceMax(caster, 'MANA');
+      const mpRatio = maxMp > 0 ? cur / maxMp : 1;
+      isLowResource = mpRatio < personality.resourceHealthyThreshold;
+    } else if (skill.resourceType === 'ENERGY' || skill.resourceType === 'FOCUS') {
+      isLowResource = cur < personality.energyReserveThreshold;
+    } else if (skill.resourceType === 'RAGE') {
+      isLowResource = cur < 25;
+    }
   }
 
-  // 2. 权重分配 (输出性价比 vs 纯输出量)
-  // 当救急状态下 (isEmergency)：纯输出量 (DPS、HPS) 占据主导，严禁贪恋省蓝性价比！
-  // 当消耗不足时：输出性价比 (DPS/消耗、HPS/消耗) 权重极大提升，优先低耗技能
-  // 当消耗充足时：纯输出量 (DPS、HPS、DPS/CD、HPS/CD) 占据主导
+  // 2. 吞吐量 vs 性价比权重分配
   let throughputWeight: number;
   let efficiencyWeight: number;
 
   if (ctx.isEmergency) {
-    // 救急救命状态：队友濒临死亡，吞吐量必须彻底压倒性价比，防猝死！
-    throughputWeight = 0.90 + personality.throughputVsEfficiencyBias * 0.08;
+    // 急救防猝死状态：纯吞吐量与出伤/出疗速度压倒一切，严禁贪省蓝
+    throughputWeight = 0.94 + personality.throughputVsEfficiencyBias * 0.04;
     efficiencyWeight = 1 - throughputWeight;
   } else if (isLowResource) {
-    // 节能优先：70%~90% 偏向高性价比，抑制高耗爆发
-    efficiencyWeight = 0.70 + (1 - personality.throughputVsEfficiencyBias) * 0.20;
+    // 低资源节能状态：优先高性价比技能
+    efficiencyWeight = 0.78 + (1 - personality.throughputVsEfficiencyBias) * 0.14;
     throughputWeight = 1 - efficiencyWeight;
   } else {
-    // 充沛输出：60%~80% 偏向纯输出量与冷却爆发
-    throughputWeight = 0.60 + personality.throughputVsEfficiencyBias * 0.25;
+    // 资源充沛常规期：兼顾输出与性价比，偏重吞吐量
+    throughputWeight = 0.66 + personality.throughputVsEfficiencyBias * 0.22;
     efficiencyWeight = 1 - throughputWeight;
   }
 
-  // 3. 群体适合度判定 (isAOE)
+  // 3. 群体覆盖系数 (isAOE)
   let aoeMultiplier = 1.0;
   if (skill.isAOE) {
     if (skill.roleType === 'HEAL') {
@@ -241,85 +371,83 @@ export function scoreSkillCandidate(skill: SkillMetrics, ctx: SkillScoreContext)
       if (injuredCount >= personality.aoeThresholdCount) {
         aoeMultiplier = Math.min(skill.maxAoeTargets, injuredCount) * 0.95;
       } else {
-        // 单体受伤时施放群体技能收益减半
-        aoeMultiplier = 0.45;
+        aoeMultiplier = 0.35;
       }
     } else {
       const enemyCount = enemies.filter(e => (e.alive ?? e.isAlive) && e.hp > 0).length;
-      if (enemyCount >= 2) {
-        aoeMultiplier = Math.min(skill.maxAoeTargets, enemyCount) * 0.90;
+      if (enemyCount >= 3) {
+        aoeMultiplier = Math.min(skill.maxAoeTargets, enemyCount) * 1.05;
+      } else if (enemyCount === 2) {
+        aoeMultiplier = 1.25;
       } else {
-        // 单个首领时群体技能效率轻微折损
-        aoeMultiplier = 0.65;
+        aoeMultiplier = 0.55;
       }
     }
   }
 
-  // 4. 大小周期与爆发/救急判定
+  // 4. 大小周期冷却利用率
   let cycleMultiplier = 1.0;
   if (skill.cycle === 'MAJOR') {
     if (skill.roleType === 'HEAL') {
-      // 大周期救急 (如宁静、法力之潮、激活)：需要团队大面积低血线或极端紧急
-      const criticalCount = allies.filter(a => (a.alive ?? a.isAlive) && a.hp < a.maxHp * 0.45).length;
-      if (criticalCount >= 2 || ctx.isEmergency) {
-        cycleMultiplier = 2.6 * personality.cycleAggression;
+      const criticalCount = allies.filter(a => (a.alive ?? a.isAlive) && a.hp < a.maxHp * 0.50).length;
+      if (criticalCount >= 3 || (criticalCount >= 2 && ctx.isEmergency)) {
+        cycleMultiplier = 2.8 * personality.cycleAggression;
       } else {
-        cycleMultiplier = 0.15; // 平时留存大招，不随意挥霍
+        cycleMultiplier = 0.12; // 平时保留全团大招
       }
     } else {
-      // 大周期爆发 (如冲动、燃烧、首领全屏大招)：进入爆发期或首领狂暴
       const bossTarget = enemies[0];
       const bossHpPct = bossTarget && bossTarget.maxHp > 0 ? bossTarget.hp / bossTarget.maxHp : 1;
-      if (bossHpPct < 0.35 || ctx.isEmergency) {
-        cycleMultiplier = 2.2 * personality.cycleAggression;
-      } else {
-        cycleMultiplier = 1.2 * personality.cycleAggression;
-      }
+      cycleMultiplier = (bossHpPct < 0.35 || ctx.isEmergency ? 2.0 : 1.25) * personality.cycleAggression;
     }
   } else if (skill.cycle === 'MINOR') {
-    // 小周期技能：具备较高的冷却利用价值，适度优先出手
-    cycleMultiplier = 1.35 * personality.cycleAggression;
-  } else {
-    // 常规填充技能
-    cycleMultiplier = 1.0;
+    cycleMultiplier = 1.32 * personality.cycleAggression;
   }
 
-  // 5. 核心量化打分
+  // 5. 核心量化打分（修复量纲失衡：保证吞吐量与性价比同量纲可比）
   const tpRate = skill.roleType === 'HEAL' ? skill.hps : skill.dps;
   const cdRate = skill.roleType === 'HEAL' ? skill.hpsPerCd : skill.dpsPerCd;
   const effRate = skill.roleType === 'HEAL' ? skill.hpsPerCost : skill.dpsPerCost;
 
-  // 消耗不足时抑制高耗技能，严格优先低耗技能
+  // 低资源非紧急时，温和抑制高耗技能
   let costModifier = 1.0;
-  if (isLowResource && skill.resourceCost > 0 && !ctx.isEmergency) {
-    costModifier = Math.max(0.25, 1.0 - (skill.resourceCost - 1600) / 3200);
+  if (isLowResource && skill.resourceType === 'MANA' && skill.resourceCost > 0 && !ctx.isEmergency) {
+    costModifier = Math.max(0.28, 1.0 - (skill.resourceCost - 1200) / 3000);
   }
 
-  // 救急技能加成与慢速节能惩罚：当有人濒危时，高HPS技能获大幅度提升，低HPS慢速技能被压制
+  // 救急加速与慢速低疗惩罚：急救时快速/重型大疗获强加权，慢速低HPS填充技能大幅降权
   let emergencyBonus = 1.0;
   if (ctx.isEmergency && skill.roleType === 'HEAL') {
-    if (skill.hps >= 8000) {
-      emergencyBonus = 2.2;
+    if (skill.hps >= 8000 || (skill.castTimeMs <= 1200 && skill.rawThroughput >= 9000)) {
+      emergencyBonus = 2.6;
+    } else if (skill.hps >= 6000) {
+      emergencyBonus = 1.3;
     } else {
-      emergencyBonus = 0.35;
+      emergencyBonus = 0.22;
     }
   }
 
-  // 归一化评分 (基准化处理)
-  const normTP = (tpRate / 1000) * 1.5 + (cdRate / 1000) * 0.8;
-  const normEff = effRate > 50 ? 50 : effRate * 3.5;
+  // 零消耗瞬发/核心技能（如圣能终结技、免费触发）给予合理性价比上限，避免 999 扭曲
+  const cappedEff = effRate > 25 ? 25 : effRate;
+  const normTP = (tpRate / 1000) * 2.4 + (cdRate / 1000) * 0.6;
+  const normEff = cappedEff * 2.2;
 
-  let baseScore = (normTP * throughputWeight + normEff * efficiencyWeight) * aoeMultiplier * cycleMultiplier * costModifier * emergencyBonus;
+  let baseScore =
+    (normTP * throughputWeight + normEff * efficiencyWeight) *
+    aoeMultiplier *
+    cycleMultiplier *
+    costModifier *
+    emergencyBonus;
 
-  // 6. 随机性微抖动 (±6% 抖动，以 AI 种子和 tick 驱动，打破僵硬机械感)
-  const jitter = 1 + (((personality.seed + tickCount) % 13) - 6) * 0.01;
+  // 6. 随机性微抖动 (±5%)
+  const jitter = 1 + (((personality.seed + tickCount) % 11) - 5) * 0.01;
   baseScore *= jitter;
 
   return Math.max(0, baseScore);
 }
 
 // ────────────────────────────────────────────────────────────
-// 预置标准化技能库数据 (包含治疗、伤害、坦克与首领技能)
+// 预置标准化技能库数据 (保持向后兼容 + 80 级标定)
 // ────────────────────────────────────────────────────────────
 
 export const PREDEFINED_SKILL_INPUTS: Record<string, SkillEvaluationInput> = {
@@ -330,8 +458,8 @@ export const PREDEFINED_SKILL_INPUTS: Record<string, SkillEvaluationInput> = {
     roleType: 'HEAL',
     castTimeMs: 2500,
     cooldownMs: 0,
-    resourceCost: 1100,
-    rawHeal: 9500,
+    resourceCost: 950,
+    rawHeal: 8500,
     isAOE: false,
     description: '常规高效单体慢速治疗，刷新生命绽放',
   },
@@ -341,8 +469,8 @@ export const PREDEFINED_SKILL_INPUTS: Record<string, SkillEvaluationInput> = {
     roleType: 'HEAL',
     castTimeMs: 1500,
     cooldownMs: 0,
-    resourceCost: 3900,
-    rawHeal: 14000,
+    resourceCost: 2600,
+    rawHeal: 12500,
     isAOE: false,
     description: '快速救急治疗，附加暴击HoT并刷新生命绽放',
   },
@@ -352,10 +480,10 @@ export const PREDEFINED_SKILL_INPUTS: Record<string, SkillEvaluationInput> = {
     roleType: 'HEAL',
     castTimeMs: 2500,
     cooldownMs: 0,
-    resourceCost: 3400,
-    rawHeal: 25000,
+    resourceCost: 2500,
+    rawHeal: 20500,
     isAOE: false,
-    description: '重度救急大治疗，单次输出量高但耗蓝较重',
+    description: '重度救急大治疗，单次输出量高',
   },
   druid_swiftmend: {
     id: 'druid_swiftmend',
@@ -363,8 +491,8 @@ export const PREDEFINED_SKILL_INPUTS: Record<string, SkillEvaluationInput> = {
     roleType: 'HEAL',
     castTimeMs: 0,
     cooldownMs: 15000,
-    resourceCost: 1600,
-    rawHeal: 28000 + 26600, // 直抬 + 百花齐放绿圈
+    resourceCost: 1200,
+    rawHeal: 24000,
     isAOE: true,
     maxAoeTargets: 5,
     description: '小周期核心瞬发救急，生成百花齐放群体绿圈',
@@ -375,8 +503,8 @@ export const PREDEFINED_SKILL_INPUTS: Record<string, SkillEvaluationInput> = {
     roleType: 'HEAL',
     castTimeMs: 0,
     cooldownMs: 8000,
-    resourceCost: 4800,
-    rawHeal: 16800,
+    resourceCost: 2400,
+    rawHeal: 15400,
     isAOE: true,
     maxAoeTargets: 5,
     description: '小周期智能群刷 HoT，快速覆盖5名受伤队友',
@@ -387,8 +515,8 @@ export const PREDEFINED_SKILL_INPUTS: Record<string, SkillEvaluationInput> = {
     roleType: 'HEAL',
     castTimeMs: 8000,
     cooldownMs: 180000,
-    resourceCost: 6800,
-    rawHeal: 48000,
+    resourceCost: 3400,
+    rawHeal: 42000,
     isAOE: true,
     maxAoeTargets: 10,
     description: '大周期全团超大型急救引导治疗',
@@ -400,20 +528,20 @@ export const PREDEFINED_SKILL_INPUTS: Record<string, SkillEvaluationInput> = {
     castTimeMs: 0,
     cooldownMs: 180000,
     resourceCost: 0,
-    rawHeal: 45000,
+    rawHeal: 15000,
     isAOE: false,
     description: '大周期法力值回复大招',
   },
 
-  // ── 萨满 (Shaman) ──
+  // ── 萨满 (Shaman — 80级满级标定，治疗链无CD 2.5s基础读条) ──
   shaman_healing_wave: {
     id: 'shaman_healing_wave',
     name: '治疗波',
     roleType: 'HEAL',
     castTimeMs: 2500,
     cooldownMs: 0,
-    resourceCost: 1800,
-    rawHeal: 9500,
+    resourceCost: 950,
+    rawHeal: 8800,
     isAOE: false,
     description: '常规高性价比慢速治疗，省蓝首选',
   },
@@ -423,10 +551,10 @@ export const PREDEFINED_SKILL_INPUTS: Record<string, SkillEvaluationInput> = {
     roleType: 'HEAL',
     castTimeMs: 1500,
     cooldownMs: 0,
-    resourceCost: 3800,
-    rawHeal: 16000,
+    resourceCost: 2400,
+    rawHeal: 12400,
     isAOE: false,
-    description: '快速救急技能，高耗低性价，用于防猝死',
+    description: '快速救急技能，用于危急防猝死',
   },
   shaman_greater_healing_wave: {
     id: 'shaman_greater_healing_wave',
@@ -434,10 +562,10 @@ export const PREDEFINED_SKILL_INPUTS: Record<string, SkillEvaluationInput> = {
     roleType: 'HEAL',
     castTimeMs: 2500,
     cooldownMs: 0,
-    resourceCost: 4200,
-    rawHeal: 32000,
+    resourceCost: 2700,
+    rawHeal: 20500,
     isAOE: false,
-    description: '重度慢速大治疗',
+    description: '重度大治疗，坦克危急核心抬血',
   },
   shaman_chain_heal: {
     id: 'shaman_chain_heal',
@@ -445,11 +573,11 @@ export const PREDEFINED_SKILL_INPUTS: Record<string, SkillEvaluationInput> = {
     roleType: 'HEAL',
     castTimeMs: 2500,
     cooldownMs: 0,
-    resourceCost: 3400,
-    rawHeal: 28000,
+    resourceCost: 2200,
+    rawHeal: 23500,
     isAOE: true,
     maxAoeTargets: 4,
-    description: '智能多目标跳跃治疗，优先弹向生命值百分比最低的受伤队友',
+    description: '2.5s读条无CD智能多目标跳跃治疗，优先弹向低血量队友',
   },
   shaman_riptide: {
     id: 'shaman_riptide',
@@ -457,19 +585,19 @@ export const PREDEFINED_SKILL_INPUTS: Record<string, SkillEvaluationInput> = {
     roleType: 'HEAL',
     castTimeMs: 0,
     cooldownMs: 6000,
-    resourceCost: 2200,
-    rawHeal: 12500,
+    resourceCost: 1600,
+    rawHeal: 15000,
     isAOE: false,
-    description: '小周期瞬发 HoT，提供潮汐奔涌加速',
+    description: '小周期瞬发直疗+HoT',
   },
   shaman_healing_rain: {
     id: 'shaman_healing_rain',
-    name: '大雨 (治疗之雨)',
+    name: '治疗之雨',
     roleType: 'HEAL',
-    castTimeMs: 0,
+    castTimeMs: 2000,
     cooldownMs: 10000,
-    resourceCost: 6500,
-    rawHeal: 32000,
+    resourceCost: 2800,
+    rawHeal: 21000,
     isAOE: true,
     maxAoeTargets: 6,
     description: '小周期大范围地面群体治疗水圈',
@@ -480,8 +608,8 @@ export const PREDEFINED_SKILL_INPUTS: Record<string, SkillEvaluationInput> = {
     roleType: 'UTILITY',
     castTimeMs: 0,
     cooldownMs: 180000,
-    resourceCost: 0,
-    rawHeal: 40000,
+    resourceCost: 800,
+    rawHeal: 15000,
     isAOE: true,
     maxAoeTargets: 10,
     description: '大周期团队法力恢复图腾',
@@ -494,21 +622,21 @@ export const PREDEFINED_SKILL_INPUTS: Record<string, SkillEvaluationInput> = {
     roleType: 'DAMAGE',
     castTimeMs: 2250,
     cooldownMs: 0,
-    resourceCost: 2000,
-    rawDamage: 11000,
+    resourceCost: 1400,
+    rawDamage: 10500,
     isAOE: false,
     description: '常规核心单体读条输出',
   },
   mage_pyroblast: {
     id: 'mage_pyroblast',
-    name: '炎爆术 (热力迸发瞬发)',
+    name: '炎爆术',
     roleType: 'DAMAGE',
     castTimeMs: 0,
     cooldownMs: 0,
     resourceCost: 0,
-    rawDamage: 18500,
+    rawDamage: 16500,
     isAOE: false,
-    description: '触发后0耗无CD瞬发超高爆发',
+    description: '瞬发高爆发',
   },
   mage_living_bomb: {
     id: 'mage_living_bomb',
@@ -516,8 +644,8 @@ export const PREDEFINED_SKILL_INPUTS: Record<string, SkillEvaluationInput> = {
     roleType: 'DAMAGE',
     castTimeMs: 0,
     cooldownMs: 0,
-    resourceCost: 2600,
-    rawDamage: 22000,
+    resourceCost: 1800,
+    rawDamage: 18000,
     isAOE: true,
     maxAoeTargets: 3,
     description: '小周期持续 DoT 与终结范围爆轰',
@@ -530,7 +658,7 @@ export const PREDEFINED_SKILL_INPUTS: Record<string, SkillEvaluationInput> = {
     cooldownMs: 120000,
     resourceCost: 0,
     rawDamage: 0,
-    rawHeal: 40000,
+    rawHeal: 25000,
     isAOE: false,
     description: '大周期法力枯竭自我急救恢复',
   },
@@ -544,7 +672,7 @@ export const PREDEFINED_SKILL_INPUTS: Record<string, SkillEvaluationInput> = {
     cooldownMs: 0,
     resourceCost: 40,
     resourceType: 'ENERGY',
-    rawDamage: 5500,
+    rawDamage: 6500,
     isAOE: false,
     description: '常规连击点积攒技能',
   },
@@ -556,7 +684,7 @@ export const PREDEFINED_SKILL_INPUTS: Record<string, SkillEvaluationInput> = {
     cooldownMs: 0,
     resourceCost: 35,
     resourceType: 'ENERGY',
-    rawDamage: 19500,
+    rawDamage: 16500,
     isAOE: false,
     description: '高爆发终结技',
   },
@@ -568,7 +696,7 @@ export const PREDEFINED_SKILL_INPUTS: Record<string, SkillEvaluationInput> = {
     cooldownMs: 0,
     resourceCost: 25,
     resourceType: 'ENERGY',
-    rawDamage: 15000,
+    rawDamage: 12000,
     isAOE: false,
     description: '小周期攻击速度核心增益维护',
   },
@@ -580,7 +708,7 @@ export const PREDEFINED_SKILL_INPUTS: Record<string, SkillEvaluationInput> = {
     cooldownMs: 180000,
     resourceCost: 0,
     resourceType: 'ENERGY',
-    rawDamage: 30000,
+    rawDamage: 24000,
     isAOE: false,
     description: '大周期急速能量回复大爆发',
   },
@@ -590,10 +718,10 @@ export const PREDEFINED_SKILL_INPUTS: Record<string, SkillEvaluationInput> = {
     id: 'shaman_lava_burst',
     name: '熔岩爆裂',
     roleType: 'DAMAGE',
-    castTimeMs: 1500,
+    castTimeMs: 2000,
     cooldownMs: 8000,
-    resourceCost: 2600,
-    rawDamage: 16000,
+    resourceCost: 1600,
+    rawDamage: 14000,
     isAOE: false,
     description: '小周期必暴击高额单体爆发',
   },
@@ -603,8 +731,8 @@ export const PREDEFINED_SKILL_INPUTS: Record<string, SkillEvaluationInput> = {
     roleType: 'DAMAGE',
     castTimeMs: 0,
     cooldownMs: 6000,
-    resourceCost: 2200,
-    rawDamage: 16800,
+    resourceCost: 1200,
+    rawDamage: 13800,
     isAOE: false,
     description: '小周期高性价比持续火焰 DoT',
   },
@@ -614,8 +742,8 @@ export const PREDEFINED_SKILL_INPUTS: Record<string, SkillEvaluationInput> = {
     roleType: 'DAMAGE',
     castTimeMs: 2000,
     cooldownMs: 0,
-    resourceCost: 1600,
-    rawDamage: 9000,
+    resourceCost: 1400,
+    rawDamage: 8500,
     isAOE: false,
     description: '常规高性价比低耗输出',
   },
@@ -625,11 +753,70 @@ export const PREDEFINED_SKILL_INPUTS: Record<string, SkillEvaluationInput> = {
     roleType: 'DAMAGE',
     castTimeMs: 2000,
     cooldownMs: 3000,
-    resourceCost: 3000,
-    rawDamage: 25500,
+    resourceCost: 2200,
+    rawDamage: 25800,
+    isAOE: true,
+    maxAoeTargets: 4,
+    description: '小周期多目标弹射群体伤害，命中回蓝',
+  },
+  shaman_earth_shield: {
+    id: 'shaman_earth_shield',
+    name: '大地之盾',
+    roleType: 'HEAL',
+    castTimeMs: 0,
+    cooldownMs: 0,
+    resourceCost: 1800,
+    rawHeal: 20000,
+    isAOE: false,
+    description: '坦克维护：9层受击回血护盾 + 受疗+20%',
+  },
+  shaman_unleash_life: {
+    id: 'shaman_unleash_life',
+    name: '生命释放',
+    roleType: 'HEAL',
+    castTimeMs: 0,
+    cooldownMs: 15000,
+    resourceCost: 1600,
+    rawHeal: 8500,
+    isAOE: false,
+    description: '瞬发治疗并强化下一次直接治疗+30%',
+  },
+  shaman_healing_tide_totem: {
+    id: 'shaman_healing_tide_totem',
+    name: '治疗之潮图腾',
+    roleType: 'HEAL',
+    castTimeMs: 0,
+    cooldownMs: 180000,
+    resourceCost: 1200,
+    rawHeal: 26000,
+    isAOE: true,
+    maxAoeTargets: 5,
+    description: '大周期群体治疗图腾冷却',
+  },
+  shaman_ascendance: {
+    id: 'shaman_ascendance',
+    name: '升腾',
+    roleType: 'UTILITY',
+    castTimeMs: 0,
+    cooldownMs: 180000,
+    resourceCost: 1000,
+    rawHeal: 30000,
+    rawDamage: 20000,
+    isAOE: true,
+    maxAoeTargets: 5,
+    description: '大周期升腾爆发：伤害+35% / 治疗复制',
+  },
+  shaman_ancestral_guidance: {
+    id: 'shaman_ancestral_guidance',
+    name: '先祖指引',
+    roleType: 'HEAL',
+    castTimeMs: 0,
+    cooldownMs: 120000,
+    resourceCost: 0,
+    rawHeal: 18000,
     isAOE: true,
     maxAoeTargets: 3,
-    description: '小周期多目标弹射群体伤害',
+    description: '大周期伤害/治疗转化群体治疗',
   },
 
   // ── 首领技能通用评估预置 (Boss Skills) ──
@@ -640,7 +827,7 @@ export const PREDEFINED_SKILL_INPUTS: Record<string, SkillEvaluationInput> = {
     castTimeMs: 4000,
     cooldownMs: 32000,
     resourceCost: 0,
-    rawDamage: 65000,
+    rawDamage: 42000,
     isAOE: true,
     maxAoeTargets: 10,
     description: '大周期强力全场机制技能',
@@ -652,7 +839,7 @@ export const PREDEFINED_SKILL_INPUTS: Record<string, SkillEvaluationInput> = {
     castTimeMs: 6000,
     cooldownMs: 30000,
     resourceCost: 0,
-    rawHeal: 55000,
+    rawHeal: 40000,
     isAOE: false,
     description: '大周期高额自愈技能',
   },
@@ -663,7 +850,7 @@ export const PREDEFINED_SKILL_INPUTS: Record<string, SkillEvaluationInput> = {
     castTimeMs: 2500,
     cooldownMs: 26000,
     resourceCost: 0,
-    rawHeal: 45000,
+    rawHeal: 32000,
     isAOE: false,
     description: '小周期紧急自愈技能',
   },
@@ -674,7 +861,7 @@ export const PREDEFINED_SKILL_INPUTS: Record<string, SkillEvaluationInput> = {
     castTimeMs: 0,
     cooldownMs: 20000,
     resourceCost: 0,
-    rawDamage: 28000,
+    rawDamage: 18000,
     isAOE: true,
     maxAoeTargets: 10,
     description: '小周期全场暗影脉冲',
@@ -686,7 +873,7 @@ export const PREDEFINED_SKILL_INPUTS: Record<string, SkillEvaluationInput> = {
     castTimeMs: 3000,
     cooldownMs: 32000,
     resourceCost: 0,
-    rawDamage: 45000,
+    rawDamage: 28000,
     isAOE: true,
     maxAoeTargets: 5,
     description: '大周期高额锥形扇形强杀伤害',
@@ -698,7 +885,7 @@ export const PREDEFINED_SKILL_INPUTS: Record<string, SkillEvaluationInput> = {
     castTimeMs: 2000,
     cooldownMs: 16000,
     resourceCost: 0,
-    rawDamage: 35000,
+    rawDamage: 22000,
     isAOE: true,
     maxAoeTargets: 2,
     description: '小周期双目标点名诅咒与暗影伤害',
@@ -710,7 +897,7 @@ export const PREDEFINED_SKILL_INPUTS: Record<string, SkillEvaluationInput> = {
     castTimeMs: 0,
     cooldownMs: 15000,
     resourceCost: 0,
-    rawDamage: 18000,
+    rawDamage: 12000,
     isAOE: false,
     description: '小周期针对坦克的致死打击',
   },
@@ -721,13 +908,12 @@ export const PREDEFINED_SKILL_INPUTS: Record<string, SkillEvaluationInput> = {
     castTimeMs: 0,
     cooldownMs: 8000,
     resourceCost: 0,
-    rawDamage: 25000,
+    rawDamage: 16000,
     isAOE: false,
     description: '常规循环主坦重击',
   },
 };
 
-// 预计算的标准化技能指标字典 (缓存提高运行帧率)
 export const COMPUTED_SKILL_METRICS: Record<string, SkillMetrics> = {};
 for (const [key, input] of Object.entries(PREDEFINED_SKILL_INPUTS)) {
   COMPUTED_SKILL_METRICS[key] = computeSkillMetrics(input);
@@ -735,23 +921,19 @@ for (const [key, input] of Object.entries(PREDEFINED_SKILL_INPUTS)) {
 
 // ────────────────────────────────────────────────────────────
 // AI 通用决策引擎 (Universal AI Decision Engine)
-// 统一规则体系，不针对专精写死 if-else，而是根据 AI 拥有的可用技能动态计算
-// 优先级 1: 优先判断是否放 AOE 技能
-//   - 治疗：判断 Tank 在危险线上 (>=40% HP) 且多名其他队友在健康线下 (<85% HP)，优先释放 AOE 治疗
-//   - 输出：判断当前可命中目标 >= 3 个，优先释放 AOE 伤害技能
-// 优先级 2: 单体紧急救急 (防猝死)
-//   - 目标血线在危险线下 (<40%)，必须使用高吞吐量救急技能，禁止在危急时刻只放慢速节能技能
-// 优先级 3: 常规平稳期 (兼顾输出量与性价比，消耗不足优先低耗)
+// 统一规则体系：不针对专精写死 if-else，而是根据 AI 拥有的可用技能动态算分
 // ────────────────────────────────────────────────────────────
 
 export interface UsableSkillCandidate {
   spellId: string;
   spellName: string;
+  /** 可选：关联的标准化技能定义 */
+  normalizedSpell?: NormalizedSpell;
   metrics: SkillMetrics;
   baseAmt: number;
   castMs: number;
   cost: number;
-  resourceType: 'MANA' | 'ENERGY' | 'RUNIC_POWER' | 'NONE';
+  resourceType: EvaluatorResourceType;
   isAOE: boolean;
   maxTargets?: number;
   isOnCooldown?: boolean;
@@ -774,19 +956,132 @@ export interface UniversalAIDecisionResult {
   score: number;
 }
 
+/** 是否为治疗向维护/增效 Buff（大地之盾、圣光道标、升腾、先祖指引等）——纯数据驱动，不按 spellId 硬编码 */
+export function isHealSupportBuffSpell(sp: NormalizedSpell): boolean {
+  if (!sp.isBuff || sp.isDamage || sp.isRaidBuff || sp.isDefensive) return false;
+  if (sp.isHeal) return true; // 如生命释放（直疗+Buff）
+  // 友方维护 Buff（道标/大地之盾等）
+  if (sp.targetType === 'SINGLE_ALLY' || sp.targetType === 'SMART_ALLY' || sp.targetType === 'AOE_ALLY') {
+    return true;
+  }
+  // 自身治疗增效大招（升腾/先祖指引等 MAJOR CD）
+  if (sp.targetType === 'SELF' && sp.isMajorCd) {
+    return true;
+  }
+  return false;
+}
+
+/** 是否为输出向增效 Buff（宿敌、元素释放、狂野怒火等） */
+export function isDamageSupportBuffSpell(sp: NormalizedSpell): boolean {
+  if (!sp.isBuff || sp.isHeal || sp.isRaidBuff) return false;
+  if (sp.isDamage) return true;
+  if (sp.targetType === 'SINGLE_ENEMY' || sp.targetType === 'AOE_ENEMY') return true;
+  if (sp.targetType === 'SELF' && (sp.isMajorCd || sp.cooldownMs >= 15_000)) return true;
+  return false;
+}
+
+/**
+ * 通用候选技能生成器：直接根据单位职业/专精拥有的技能与当前冷却/资源生成候选集（零专精硬编码）
+ * 新技能只要在 ClassRegistry 标好 isHeal/isDamage/isBuff/isAOE/cooldown 等标签，就会自动进入评估。
+ */
+export function buildUsableCandidatesForUnit(
+  caster: Unit,
+  specId: string | undefined,
+  isCdReady: (spell: NormalizedSpell) => boolean,
+  options?: {
+    roleFilter?: 'HEAL' | 'DAMAGE' | 'ALL';
+    useShortId?: boolean;
+  }
+): UsableSkillCandidate[] {
+  if (caster.classId === 'BOSS' || caster.classId === 'NPC') return [];
+  const spells = getSpellsForClassSpec(caster.classId as ClassId, specId);
+  const haste = caster.stats?.haste ?? LEVEL_80_MAX_HASTE;
+  const roleFilter = options?.roleFilter ?? (caster.role === 'HEALER' ? 'HEAL' : 'DAMAGE');
+  const useShortId = options?.useShortId ?? false;
+
+  const candidates: UsableSkillCandidate[] = [];
+  for (const sp of spells) {
+    // 跳过非战斗/复活/纯打断/纯嘲讽/纯驱散/团队常驻Buff/纯资源恢复（由独立触发器处理）
+    if (sp.isOutOfCombatOnly || sp.isResurrect || sp.isInterrupt || sp.isTaunt || sp.isDispel || sp.isRaidBuff) {
+      continue;
+    }
+    if (sp.isDefensive && !sp.isHeal && !sp.isDamage && !isHealSupportBuffSpell(sp) && !isDamageSupportBuffSpell(sp)) {
+      continue;
+    }
+    if (sp.isResourceRestore && !sp.isHeal && !sp.isDamage) continue;
+
+    const healSupport = isHealSupportBuffSpell(sp);
+    const dmgSupport = isDamageSupportBuffSpell(sp);
+
+    if (roleFilter === 'HEAL' && !sp.isHeal && !healSupport) continue;
+    if (roleFilter === 'DAMAGE' && !sp.isDamage && !dmgSupport) continue;
+
+    const effectiveCastMs = sp.castTimeMs > 0 ? getHastedCastTimeMs(sp.castTimeMs, haste) : 0;
+    let baseAmt = roleFilter === 'HEAL' || (roleFilter === 'ALL' && (sp.isHeal || healSupport))
+      ? (sp.directHeal + sp.hotTotalHeal + sp.shieldValue)
+      : (sp.directDamage + sp.dotTotalDamage);
+
+    // 纯 Buff：给 AI 一个合理的“等效吞吐”以便参与优先级排序（不依赖具体 spellId）
+    if (baseAmt <= 0 && (healSupport || dmgSupport)) {
+      if (sp.isMajorCd) {
+        baseAmt = 28000; // 大招增效等效爆发
+      } else if (sp.targetType === 'SINGLE_ALLY' || sp.targetType === 'SMART_ALLY') {
+        baseAmt = 14000; // 维护型友方 Buff
+      } else {
+        baseAmt = 10000;
+      }
+    }
+
+    if (baseAmt <= 0) continue;
+
+    let metrics = computeMetricsFromNormalizedSpell(sp, haste);
+    // 纯增效 Buff：补齐吞吐指标，并把 roleType 对齐到当前职责
+    if ((healSupport || dmgSupport) && metrics.rawThroughput <= 0) {
+      metrics = computeSkillMetrics({
+        id: sp.id,
+        name: sp.name,
+        roleType: healSupport ? 'HEAL' : 'DAMAGE',
+        castTimeMs: effectiveCastMs,
+        cooldownMs: sp.cooldownMs,
+        resourceCost: sp.resourceCostAmount,
+        resourceType: sp.resourceKind,
+        rawHeal: healSupport ? baseAmt : 0,
+        rawDamage: dmgSupport ? baseAmt : 0,
+        isAOE: sp.isAOE,
+        maxAoeTargets: sp.maxAoeTargets,
+        description: sp.description,
+      });
+    } else if (healSupport && metrics.roleType === 'UTILITY') {
+      (metrics as { roleType: SkillRoleCategory }).roleType = 'HEAL';
+    } else if (dmgSupport && metrics.roleType === 'UTILITY') {
+      (metrics as { roleType: SkillRoleCategory }).roleType = 'DAMAGE';
+    }
+
+    candidates.push({
+      spellId: useShortId ? sp.shortId : sp.id,
+      spellName: sp.name,
+      normalizedSpell: sp,
+      metrics,
+      baseAmt,
+      castMs: effectiveCastMs,
+      cost: sp.resourceCostAmount,
+      resourceType: sp.resourceKind,
+      isAOE: sp.isAOE,
+      maxTargets: sp.maxAoeTargets,
+      isOnCooldown: !isCdReady(sp),
+    });
+  }
+  return candidates;
+}
+
 export function evaluateUniversalAIDecision(input: UniversalAIDecisionInput): UniversalAIDecisionResult {
   const { caster, personality, allies, enemies, usableSkills, tickCount } = input;
 
-  // 1. 过滤可用技能 (未在冷却中，且拥有足够施法资源)
+  // 1. 过滤可用技能（未在冷却中，且当前资源足够）
   const available = usableSkills.filter(s => {
     if (s.isOnCooldown) return false;
-    if (s.resourceType === 'MANA') {
-      return (caster.mp ?? 0) >= s.cost;
-    }
-    if (s.resourceType === 'ENERGY') {
-      return (caster.energy ?? 100) >= s.cost;
-    }
-    return true;
+    if (s.resourceType === 'NONE') return true;
+    return getUnitResourceAmount(caster, s.resourceType) >= s.cost;
   });
 
   if (available.length === 0) {
@@ -799,34 +1094,77 @@ export function evaluateUniversalAIDecision(input: UniversalAIDecisionInput): Un
     };
   }
 
-  // 2. 战场血线与仇恨对象分析
+  // 2. 战场血线与目标态势分析
   const livingAllies = allies.filter(a => (a.alive ?? a.isAlive) && a.hp > 0);
   const tankUnit = livingAllies.find(a => a.role === 'TANK');
   const tankHpRatio = tankUnit && tankUnit.maxHp > 0 ? tankUnit.hp / tankUnit.maxHp : 1.0;
-  const tankDangerLine = 0.40; // 坦克危险线：40% HP
+  const tankDangerLine = 0.45; // 坦克危险线：45% HP
   const isTankSafe = !tankUnit || tankHpRatio >= tankDangerLine;
 
-  const healthLine = 0.85; // 玩家健康线：85% HP
-  const injuredOtherAllies = livingAllies.filter(a => a.id !== tankUnit?.id && (a.hp / a.maxHp) < healthLine);
+  const healthLine = 0.85; // 团队健康线：85% HP
+  const injuredOtherAllies = livingAllies.filter(
+    a => a.id !== tankUnit?.id && a.maxHp > 0 && (a.hp / a.maxHp) < healthLine
+  );
+  const criticalAllies = livingAllies.filter(
+    a => a.maxHp > 0 && (a.hp / a.maxHp) < 0.45
+  );
 
-  const sortedLowestAllies = [...livingAllies].sort((a, b) => (a.hp / a.maxHp) - (b.hp / b.maxHp));
+  const sortedLowestAllies = [...livingAllies].sort(
+    (a, b) => (a.hp / (a.maxHp || 1)) - (b.hp / (b.maxHp || 1))
+  );
   const lowestAlly = sortedLowestAllies[0] || caster;
   const lowestHpRatio = lowestAlly.maxHp > 0 ? lowestAlly.hp / lowestAlly.maxHp : 1.0;
 
-  const isAnyEmergency = lowestHpRatio < 0.40 || !isTankSafe;
+  const isAnyEmergency = lowestHpRatio < 0.45 || !isTankSafe;
   const livingEnemies = enemies.filter(e => (e.alive ?? e.isAlive) && e.hp > 0);
   const primaryEnemy = livingEnemies[0] || null;
 
   // ─────────────────────────────────────────────────────────────
-  // 规则一：优先判断是否放 AOE 技能 (通用规则最高优先级)
+  // 规则一（最高优先级）：在可用技能中优先判断是否放 AOE 技能
   // ─────────────────────────────────────────────────────────────
-  // 对于治疗：判断 Tank 在危险线上且多名其他玩家在健康线下，优先放 AOE 治疗
   if (caster.role === 'HEALER' || available.some(s => s.metrics.roleType === 'HEAL')) {
-    const shouldAoeHeal = isTankSafe && injuredOtherAllies.length >= personality.aoeThresholdCount;
-    if (shouldAoeHeal) {
-      const aoeHealCandidates = available.filter(s => s.isAOE && s.metrics.roleType === 'HEAL');
-      if (aoeHealCandidates.length > 0) {
-        const scoredAoe = aoeHealCandidates.map(c => ({
+    const aoeHealCandidates = available.filter(s => s.isAOE && s.metrics.roleType === 'HEAL');
+
+    if (aoeHealCandidates.length > 0) {
+      // 场景 1A：全团危机（>=3 名队友濒危 <45%），优先释放全团大招或群体抬血
+      if (criticalAllies.length >= 3) {
+        const majorAoe = aoeHealCandidates.filter(c => c.metrics.cycle === 'MAJOR');
+        const crisisPool = majorAoe.length > 0 ? majorAoe : (tankHpRatio >= 0.25 ? aoeHealCandidates : []);
+        if (crisisPool.length > 0) {
+          const scoredCrisis = crisisPool.map(c => ({
+            candidate: c,
+            score: scoreSkillCandidate(c.metrics, {
+              caster,
+              personality,
+              target: lowestAlly,
+              allies: livingAllies,
+              enemies: livingEnemies,
+              tickCount,
+              isEmergency: true,
+            }),
+          })).sort((a, b) => b.score - a.score);
+
+          if (scoredCrisis.length > 0 && scoredCrisis[0].score > 0) {
+            return {
+              decisionType: 'AOE',
+              chosenCandidate: scoredCrisis[0].candidate,
+              targetUnit: lowestAlly,
+              reason: `全团危急(${criticalAllies.length}名队友低于45%血线)，优先释放群体急救技能`,
+              score: scoredCrisis[0].score,
+            };
+          }
+        }
+      }
+
+      // 场景 1B：Tank 在危险线上 (>=45%) 且多名其他玩家在健康线下 (<85%) -> 优先 AOE 治疗
+      const effectiveAoeThreshold = livingAllies.length <= 5 ? 2 : personality.aoeThresholdCount;
+      const shouldAoeHeal = isTankSafe && injuredOtherAllies.length >= effectiveAoeThreshold;
+      if (shouldAoeHeal) {
+        // 常规团血压力时优先常规/小周期 AOE（如治疗链、治疗之雨、野性成长、治疗之环、黎明圣光），留住 3 分钟大招应对全团危急
+        const nonMajorAoe = aoeHealCandidates.filter(c => c.metrics.cycle !== 'MAJOR');
+        const pool = nonMajorAoe.length > 0 ? nonMajorAoe : aoeHealCandidates;
+
+        const scoredAoe = pool.map(c => ({
           candidate: c,
           score: scoreSkillCandidate(c.metrics, {
             caster,
@@ -844,7 +1182,7 @@ export function evaluateUniversalAIDecision(input: UniversalAIDecisionInput): Un
             decisionType: 'AOE',
             chosenCandidate: scoredAoe[0].candidate,
             targetUnit: lowestAlly,
-            reason: `Tank血线安全(${(tankHpRatio * 100).toFixed(0)}% >= 40%)且${injuredOtherAllies.length}名其他队友在健康线下(<85%)，优先释放群体治疗`,
+            reason: `Tank血线安全(${(tankHpRatio * 100).toFixed(0)}% >= 45%)且${injuredOtherAllies.length}名其他队友在健康线下(<85%)，优先释放群体治疗`,
             score: scoredAoe[0].score,
           };
         }
@@ -852,8 +1190,8 @@ export function evaluateUniversalAIDecision(input: UniversalAIDecisionInput): Un
     }
   }
 
-  // 对于 DPS：可以产生目标大于等于3个时，优先放 AOE 伤害
-  if (caster.role === 'DPS' || available.some(s => s.metrics.roleType === 'DAMAGE')) {
+  // 对于 DPS / 坦克：可命中敌方目标 >= 3 个（多目标场景）优先放 AOE 伤害技能
+  if (caster.role === 'DPS' || caster.role === 'TANK' || available.some(s => s.metrics.roleType === 'DAMAGE')) {
     const shouldAoeDps = livingEnemies.length >= 3;
     if (shouldAoeDps) {
       const aoeDpsCandidates = available.filter(s => s.isAOE && s.metrics.roleType === 'DAMAGE');
@@ -876,7 +1214,7 @@ export function evaluateUniversalAIDecision(input: UniversalAIDecisionInput): Un
             decisionType: 'AOE',
             chosenCandidate: scoredAoe[0].candidate,
             targetUnit: primaryEnemy,
-            reason: `可产生目标(${livingEnemies.length})大于等于3个，优先释放群体伤害技能`,
+            reason: `可命中目标(${livingEnemies.length})达到群体阈值，优先释放群体伤害技能`,
             score: scoredAoe[0].score,
           };
         }
@@ -885,11 +1223,32 @@ export function evaluateUniversalAIDecision(input: UniversalAIDecisionInput): Un
   }
 
   // ─────────────────────────────────────────────────────────────
-  // 规则二：救急判断 (紧急单体救急，防猝死)
+  // 规则二：单体紧急救急（防坦克或队友猝死）——优先于 Buff 维护
   // ─────────────────────────────────────────────────────────────
   if (isAnyEmergency) {
     const emergencyTarget = (!isTankSafe && tankUnit) ? tankUnit : lowestAlly;
-    const emergencyHeals = available.filter(s => !s.isAOE && s.metrics.roleType === 'HEAL');
+
+    // 多人危急时才先开自身治疗增效大招（升腾/先祖指引等）；单体保坦直接抬血
+    const majorAmplify = available.filter(
+      s =>
+        s.normalizedSpell &&
+        isHealSupportBuffSpell(s.normalizedSpell) &&
+        s.normalizedSpell.isMajorCd &&
+        s.normalizedSpell.targetType === 'SELF'
+    );
+    if (majorAmplify.length > 0 && criticalAllies.length >= 2) {
+      return {
+        decisionType: 'EMERGENCY_ST',
+        chosenCandidate: majorAmplify[0],
+        targetUnit: caster,
+        reason: `多人危急(${criticalAllies.length})，先开启治疗增效大招（${majorAmplify[0].spellName}）`,
+        score: 80,
+      };
+    }
+
+    const emergencyHeals = available.filter(
+      s => !s.isAOE && s.metrics.roleType === 'HEAL' && !(s.normalizedSpell && isHealSupportBuffSpell(s.normalizedSpell) && !s.normalizedSpell.isHeal)
+    );
     if (emergencyHeals.length > 0) {
       const scoredEmergency = emergencyHeals.map(c => ({
         candidate: c,
@@ -909,7 +1268,7 @@ export function evaluateUniversalAIDecision(input: UniversalAIDecisionInput): Un
           decisionType: 'EMERGENCY_ST',
           chosenCandidate: scoredEmergency[0].candidate,
           targetUnit: emergencyTarget,
-          reason: `目标(${emergencyTarget.name})血线处于危险线下(${((emergencyTarget.hp / emergencyTarget.maxHp) * 100).toFixed(0)}% < 40%)，优先高吞吐量救急`,
+          reason: `目标(${emergencyTarget.name})血线低于危险线(${((emergencyTarget.hp / (emergencyTarget.maxHp || 1)) * 100).toFixed(0)}% < 45%)，优先高吞吐量急救`,
           score: scoredEmergency[0].score,
         };
       }
@@ -917,13 +1276,69 @@ export function evaluateUniversalAIDecision(input: UniversalAIDecisionInput): Un
   }
 
   // ─────────────────────────────────────────────────────────────
-  // 规则三：常规平稳期 (性价比与纯输出量平衡，低耗优先)
+  // 规则三：Buff 维护（仅在团队整体较健康时；有人需要抬血时让位给治疗）
   // ─────────────────────────────────────────────────────────────
-  // 如果是治疗，对当前生命值最低的队友进行常规维护或填充治疗
+  if (
+    !isAnyEmergency &&
+    lowestHpRatio >= 0.90 &&
+    (caster.role === 'HEALER' || available.some(s => s.normalizedSpell && isHealSupportBuffSpell(s.normalizedSpell)))
+  ) {
+    const maintenanceBuffs = available.filter(s => {
+      const sp = s.normalizedSpell;
+      if (!sp || !sp.isBuff || sp.isDamage) return false;
+      if (sp.isMajorCd) return false;
+      if (sp.targetType !== 'SINGLE_ALLY' && sp.targetType !== 'SMART_ALLY' && sp.targetType !== 'AOE_ALLY') {
+        return false;
+      }
+      if (sp.isHeal && sp.directHeal > 0 && (sp.maxStacks || 1) <= 1) return false;
+      return true;
+    });
+
+    if (maintenanceBuffs.length > 0 && tankUnit) {
+      const missing = maintenanceBuffs.filter(c => {
+        const auraId = c.normalizedSpell?.auraId || c.normalizedSpell?.shortId || '';
+        const alreadyUp = livingAllies.some(
+          a =>
+            a.buffs?.some(
+              b =>
+                (b.spellId === auraId ||
+                  b.spellId === c.normalizedSpell?.shortId ||
+                  b.spellId === c.normalizedSpell?.id) &&
+                (!b.sourceUnitId || b.sourceUnitId === caster.id)
+            )
+        );
+        return !alreadyUp;
+      });
+
+      if (missing.length > 0) {
+        const chosen = missing[0];
+        return {
+          decisionType: 'BUFF_MAINTENANCE',
+          chosenCandidate: chosen,
+          targetUnit: tankUnit,
+          reason: `维护型友方 Buff（${chosen.spellName}）缺失，优先补上坦克/友方`,
+          score: 50,
+        };
+      }
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // 规则四：性价比与输出综合选优
+  // ─────────────────────────────────────────────────────────────
   if (caster.role === 'HEALER' || available.some(s => s.metrics.roleType === 'HEAL')) {
     if (lowestHpRatio < 0.98) {
-      const singleHeals = available.filter(s => s.metrics.roleType === 'HEAL');
-      const scoredHeals = singleHeals.map(c => ({
+      // 单体或轻伤维护：过滤掉非必要 3 分钟大招与纯维护 Buff（大地之盾/道标等），平衡吞吐量与蓝耗性价比
+      const regularHeals = available.filter(s => {
+        if (s.metrics.roleType !== 'HEAL' || s.metrics.cycle === 'MAJOR') return false;
+        const sp = s.normalizedSpell;
+        // 无直疗的维护/增效 Buff 不参与常规抬血评分（避免大地之盾挤掉治疗波）
+        if (sp && isHealSupportBuffSpell(sp) && sp.directHeal <= 0) return false;
+        return true;
+      });
+      const pool = regularHeals.length > 0 ? regularHeals : available.filter(s => s.metrics.roleType === 'HEAL');
+
+      const scoredHeals = pool.map(c => ({
         candidate: c,
         score: scoreSkillCandidate(c.metrics, {
           caster,
@@ -932,7 +1347,7 @@ export function evaluateUniversalAIDecision(input: UniversalAIDecisionInput): Un
           allies: livingAllies,
           enemies: livingEnemies,
           tickCount,
-          isEmergency: false,
+          isEmergency: lowestHpRatio < 0.60,
         }),
       })).sort((a, b) => b.score - a.score);
 
@@ -941,15 +1356,17 @@ export function evaluateUniversalAIDecision(input: UniversalAIDecisionInput): Un
           decisionType: 'SUSTAINED_ST',
           chosenCandidate: scoredHeals[0].candidate,
           targetUnit: lowestAlly,
-          reason: '常规平稳治疗：根据蓝量与性价比/输出权重平衡选优',
+          reason: '常规治疗：按当前血线与资源占比平衡性价比和输出选优',
           score: scoredHeals[0].score,
         };
       }
     }
   }
 
-  // 如果是 DPS 或首领，选择当前单体最高得分技能
-  const singleDamageSkills = available.filter(s => s.metrics.roleType === 'DAMAGE' || s.metrics.roleType === 'UTILITY');
+  // DPS / 坦克常规单体输出：按性价比与输出综合选优
+  const singleDamageSkills = available.filter(
+    s => s.metrics.roleType === 'DAMAGE' || s.metrics.roleType === 'UTILITY'
+  );
   if (singleDamageSkills.length > 0) {
     const scoredDps = singleDamageSkills.map(c => ({
       candidate: c,

@@ -7,10 +7,37 @@ export interface PlayerCastBarProps {
   onCancelCast?: () => void;
 }
 
+/**
+ * Classic WoW cast-bar proportions (vs previous 320×64 frame):
+ * - width −30% → 224
+ * - height +20% → 77
+ *
+ * Visual rules (Blizzard classic / community consensus):
+ * - Gray metal border, dark recessed track
+ * - Cast & channel both fill L→R (yellow cast / green channel)
+ * - Centered spell name + remaining seconds on the right
+ * - Spark rides the leading edge
+ * - Successful finish → snap full green briefly
+ * - Interrupt / fail → snap red with "Interrupted"
+ */
+const FRAME_WIDTH = 224;
+const FRAME_HEIGHT = 77;
+const BAR_HEIGHT = 18;
+const ICON_SIZE = 22;
+const FLASH_MS = 650;
+
 const STORAGE_KEY_POS = 'cata_player_castbar_pos';
 const STORAGE_KEY_LOCKED = 'cata_player_castbar_locked';
-const FRAME_WIDTH = 320;
-const FRAME_HEIGHT = 64;
+
+type FlashKind = 'success' | 'interrupted';
+
+interface FlashState {
+  kind: FlashKind;
+  spellName: string;
+  spellId: string;
+  isChannel: boolean;
+  until: number;
+}
 
 function getDefaultPos(): { x: number; y: number } {
   if (typeof window !== 'undefined') {
@@ -42,11 +69,16 @@ function loadSavedPosition(): { x: number; y: number } {
 function loadSavedLocked(): boolean {
   try {
     const raw = localStorage.getItem(STORAGE_KEY_LOCKED);
-    if (raw !== null) {
-      return JSON.parse(raw);
-    }
+    if (raw !== null) return JSON.parse(raw);
   } catch {}
   return false;
+}
+
+function formatRemain(elapsedMs: number, totalMs: number, isChannel?: boolean): string {
+  const remain = isChannel
+    ? Math.max(0, totalMs - elapsedMs)
+    : Math.max(0, totalMs - elapsedMs);
+  return (remain / 1000).toFixed(1);
 }
 
 export const PlayerCastBar: React.FC<PlayerCastBarProps> = ({
@@ -56,12 +88,51 @@ export const PlayerCastBar: React.FC<PlayerCastBarProps> = ({
   const [pos, setPos] = useState<{ x: number; y: number }>(loadSavedPosition);
   const [isLocked, setIsLocked] = useState<boolean>(loadSavedLocked);
   const [isDragging, setIsDragging] = useState(false);
+  const [flash, setFlash] = useState<FlashState | null>(null);
+  const [nowTick, setNowTick] = useState(0);
   const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
   const latestPosRef = useRef<{ x: number; y: number }>(pos);
+  const lastCastRef = useRef<PlayerCastState | null>(null);
 
   useEffect(() => {
     latestPosRef.current = pos;
   }, [pos]);
+
+  // Detect cast end → WoW-style flash
+  // - Finished cast/channel, or mid-channel stop → full green
+  // - Interrupted cast-time spell → full red "Interrupted"
+  useEffect(() => {
+    if (playerCast) {
+      lastCastRef.current = playerCast;
+      setFlash(null);
+      return;
+    }
+    const last = lastCastRef.current;
+    if (!last) return;
+    lastCastRef.current = null;
+    const completed = last.progress >= 0.92;
+    const channelStop = !!last.isChannel;
+    // 引导结束/打断 → 满格变绿；其他中断 → 红
+    const kind: FlashKind = completed || channelStop ? 'success' : 'interrupted';
+    setFlash({
+      kind,
+      spellName: last.spellName,
+      spellId: last.spellId,
+      isChannel: !!last.isChannel,
+      until: Date.now() + FLASH_MS,
+    });
+  }, [playerCast]);
+
+  // Drive flash fade / clear
+  useEffect(() => {
+    if (!flash) return;
+    const id = window.setInterval(() => setNowTick(Date.now()), 50);
+    const clearId = window.setTimeout(() => setFlash(null), Math.max(0, flash.until - Date.now()) + 20);
+    return () => {
+      window.clearInterval(id);
+      window.clearTimeout(clearId);
+    };
+  }, [flash]);
 
   const toggleLock = (forceVal?: boolean) => {
     setIsLocked((prev) => {
@@ -82,16 +153,12 @@ export const PlayerCastBar: React.FC<PlayerCastBarProps> = ({
     } catch {}
   };
 
-  // Listen to toggle lock custom event from anywhere in the UI
   useEffect(() => {
-    const handleToggle = () => {
-      toggleLock();
-    };
+    const handleToggle = () => toggleLock();
     window.addEventListener('cata_toggle_castbar_lock', handleToggle);
     return () => window.removeEventListener('cata_toggle_castbar_lock', handleToggle);
   }, []);
 
-  // Screen resize handler to keep within boundaries
   useEffect(() => {
     const handleResize = () => {
       setPos((prev) => {
@@ -109,23 +176,21 @@ export const PlayerCastBar: React.FC<PlayerCastBarProps> = ({
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Drag listeners
   useEffect(() => {
     if (!isDragging) return;
-
     const handleMouseMove = (e: MouseEvent) => {
       if (!dragRef.current) return;
       const dx = e.clientX - dragRef.current.startX;
       const dy = e.clientY - dragRef.current.startY;
       const maxX = Math.max(0, window.innerWidth - FRAME_WIDTH);
       const maxY = Math.max(0, window.innerHeight - FRAME_HEIGHT);
-      const newX = Math.max(0, Math.min(maxX, dragRef.current.origX + dx));
-      const newY = Math.max(0, Math.min(maxY, dragRef.current.origY + dy));
-      const nextPos = { x: newX, y: newY };
+      const nextPos = {
+        x: Math.max(0, Math.min(maxX, dragRef.current.origX + dx)),
+        y: Math.max(0, Math.min(maxY, dragRef.current.origY + dy)),
+      };
       latestPosRef.current = nextPos;
       setPos(nextPos);
     };
-
     const handleMouseUp = () => {
       setIsDragging(false);
       dragRef.current = null;
@@ -133,7 +198,6 @@ export const PlayerCastBar: React.FC<PlayerCastBarProps> = ({
         localStorage.setItem(STORAGE_KEY_POS, JSON.stringify(latestPosRef.current));
       } catch {}
     };
-
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
     return () => {
@@ -154,139 +218,261 @@ export const PlayerCastBar: React.FC<PlayerCastBarProps> = ({
     setIsDragging(true);
   };
 
-  // If not casting and window is locked, stay invisible
-  if (!playerCast && isLocked) {
+  const activeFlash = flash && Date.now() < flash.until ? flash : null;
+  // silence unused nowTick warning by reading it (forces re-render during flash)
+  void nowTick;
+
+  if (!playerCast && !activeFlash && isLocked) {
     return null;
   }
 
-  // Preview anchor mode when not actively casting but unlocked
-  if (!playerCast) {
+  // ── Layout shell (classic metal frame) ──────────────────────────────────
+  const shellClass = `fixed z-50 select-none ${
+    isDragging
+      ? 'cursor-grabbing'
+      : isLocked
+      ? ''
+      : 'cursor-grab'
+  }`;
+
+  const renderClassicBar = (opts: {
+    spellName: string;
+    spellId: string;
+    fillPct: number;
+    fillMode: 'cast' | 'channel' | 'success' | 'interrupted';
+    timerText: string;
+    labelOverride?: string;
+    showSpark?: boolean;
+    preview?: boolean;
+  }) => {
+    const {
+      spellName,
+      spellId,
+      fillPct,
+      fillMode,
+      timerText,
+      labelOverride,
+      showSpark = true,
+      preview = false,
+    } = opts;
+
+    let fillColor = '#E6B800'; // classic yellow
+    if (fillMode === 'channel') fillColor = '#2ECC71';
+    if (fillMode === 'success') fillColor = '#33CC33';
+    if (fillMode === 'interrupted') fillColor = '#CC3333';
+
+    const pct = Math.min(100, Math.max(0, fillPct));
+    const displayName = labelOverride || spellName;
+
     return (
       <div
-        style={{ left: `${pos.x}px`, top: `${pos.y}px` }}
-        onMouseDown={handleMouseDown}
-        className={`fixed z-50 w-80 select-none cursor-grab transition-shadow ${
-          isDragging
-            ? 'cursor-grabbing shadow-[0_0_24px_rgba(245,158,11,0.6)] ring-2 ring-amber-400'
-            : 'shadow-2xl hover:border-amber-400'
-        }`}
+        style={{ width: FRAME_WIDTH }}
+        className={`relative ${preview ? 'opacity-80' : ''}`}
       >
-        <div className="bg-[#10101e]/92 border-2 border-dashed border-amber-500/70 rounded-lg p-2 shadow-2xl backdrop-blur">
-          <div className="flex items-center justify-between text-xs font-bold mb-1">
-            <div className="flex items-center space-x-1 text-amber-300">
-              <span className="text-gray-400 text-xs select-none">⠿</span>
-              <span className="font-extrabold text-[11px]">⚡ 玩家技能读条 (按住拖拽定位)</span>
-            </div>
-            <div className="flex items-center space-x-1.5">
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  resetPosition();
-                }}
-                className="text-[9px] text-gray-300 hover:text-white px-1.5 py-0.5 rounded bg-gray-800/80 border border-gray-600 transition"
-                title="重置到屏幕居中默认位置"
-              >
-                重置
-              </button>
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  toggleLock(true);
-                }}
-                className="text-[10px] text-amber-300 font-bold hover:text-amber-200 px-1.5 py-0.5 rounded bg-amber-600/30 border border-amber-500/50 flex items-center space-x-0.5 transition"
-                title="位置满意后锁定 (施法时在此处显示)"
-              >
-                <span>🔒</span>
-                <span>锁定</span>
-              </button>
-            </div>
-          </div>
-          <div className="w-full bg-[#080812] h-2.5 rounded overflow-hidden border border-amber-950/80 relative">
-            <div className="h-full bg-gradient-to-r from-amber-500/60 to-yellow-400/60 w-3/5" />
-          </div>
-          <div className="flex justify-between items-center text-[9px] text-gray-400 mt-1">
-            <span className="text-amber-200/80">按住边框拖拽移动到任意位置</span>
-            <span className="text-gray-400">调整完毕点击锁定</span>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  // Active Cast Bar
-  return (
-    <div
-      style={{ left: `${pos.x}px`, top: `${pos.y}px` }}
-      onMouseDown={handleMouseDown}
-      className={`fixed z-50 w-80 select-none transition-shadow ${
-        isDragging
-          ? 'cursor-grabbing shadow-[0_0_24px_rgba(245,158,11,0.6)] ring-2 ring-amber-400'
-          : isLocked
-          ? 'shadow-2xl'
-          : 'cursor-grab hover:ring-1 hover:ring-amber-400/50 shadow-2xl'
-      }`}
-    >
-      <div className="bg-[#10101e]/95 border-2 border-amber-500/80 rounded-lg p-2 shadow-2xl backdrop-blur animate-in fade-in zoom-in-95 duration-150">
-        <div className="flex items-center justify-between text-xs font-bold mb-1">
-          <div className="flex items-center space-x-1.5 min-w-0">
-            {!isLocked && (
-              <span className="text-gray-400 text-xs cursor-grab select-none mr-0.5" title="拖拽手柄">
-                ⠿
-              </span>
-            )}
-            <div
-              className="w-4 h-4 rounded overflow-hidden flex-shrink-0"
-              dangerouslySetInnerHTML={{ __html: SPELL_ICONS[playerCast.spellId] || '' }}
-            />
-            <span className="text-white font-extrabold truncate">{playerCast.spellName}</span>
-          </div>
-          <div className="flex items-center space-x-2 flex-shrink-0">
-            <span className="font-mono text-[11px] text-amber-300">
-              {(playerCast.elapsedMs / 1000).toFixed(1)}s / {(playerCast.totalMs / 1000).toFixed(1)}s
+        {/* Toolbar when unlocked */}
+        {!isLocked && (
+          <div className="flex items-center justify-between mb-1 px-0.5">
+            <span className="text-[9px] text-amber-300/90 font-bold tracking-wide">
+              {preview ? '⠿ 拖拽定位读条' : '⠿'}
             </span>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                toggleLock();
+            <div className="flex items-center gap-1">
+              {preview && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    resetPosition();
+                  }}
+                  className="text-[8px] text-gray-300 hover:text-white px-1 py-0.5 rounded bg-black/50 border border-gray-600"
+                >
+                  重置
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggleLock(preview ? true : undefined);
+                }}
+                className="text-[8px] text-amber-200 hover:text-amber-100 px-1 py-0.5 rounded bg-black/50 border border-amber-700/60"
+                title={isLocked ? '解锁' : '锁定位置'}
+              >
+                {preview ? '🔒 锁定' : isLocked ? '🔒' : '🔓'}
+              </button>
+            </div>
+          </div>
+        )}
+
+        <div className="flex items-center gap-1.5">
+          {/* Spell icon */}
+          <div
+            className="flex-shrink-0 rounded-sm border-2 border-[#6b6b6b] bg-[#1a1a1a] shadow-[inset_0_0_0_1px_#2a2a2a]"
+            style={{ width: ICON_SIZE, height: ICON_SIZE }}
+            dangerouslySetInnerHTML={{ __html: SPELL_ICONS[spellId] || '' }}
+          />
+
+          {/* Gray metal frame + recessed track */}
+          <div
+            className="relative flex-1 rounded-sm"
+            style={{
+              height: BAR_HEIGHT + 8,
+              padding: 3,
+              background: 'linear-gradient(180deg, #7a7a7a 0%, #4a4a4a 45%, #2e2e2e 100%)',
+              boxShadow: '0 1px 3px rgba(0,0,0,0.65), inset 0 1px 0 rgba(255,255,255,0.25)',
+            }}
+          >
+            <div
+              className="relative w-full h-full overflow-hidden rounded-[1px]"
+              style={{
+                height: BAR_HEIGHT,
+                background: '#0a0a0a',
+                boxShadow: 'inset 0 1px 3px rgba(0,0,0,0.9)',
+                border: '1px solid #1c1c1c',
               }}
-              className="text-[10px] text-gray-400 hover:text-amber-300 px-1 py-0.2 rounded hover:bg-white/10 transition"
-              title={isLocked ? '已锁定位置 (点击解锁可拖拽)' : '未锁定位置 (按住可拖拽)'}
             >
-              {isLocked ? '🔒' : '🔓'}
-            </button>
+              {/* Fill */}
+              <div
+                className="absolute inset-y-0 left-0 transition-[width] duration-75"
+                style={{
+                  width: `${pct}%`,
+                  background:
+                    fillMode === 'interrupted'
+                      ? 'linear-gradient(180deg, #e05555 0%, #cc3333 40%, #991111 100%)'
+                      : fillMode === 'success' || fillMode === 'channel'
+                      ? 'linear-gradient(180deg, #66ee66 0%, #33cc33 40%, #1a991a 100%)'
+                      : 'linear-gradient(180deg, #ffe066 0%, #e6b800 42%, #b8860b 100%)',
+                  boxShadow: `inset 0 1px 0 rgba(255,255,255,0.35), 0 0 6px ${fillColor}55`,
+                }}
+              />
+
+              {/* Spark at leading edge */}
+              {showSpark && pct > 1 && pct < 99.5 && fillMode !== 'interrupted' && fillMode !== 'success' && (
+                <div
+                  className="absolute top-1/2 -translate-y-1/2 pointer-events-none"
+                  style={{
+                    left: `calc(${pct}% - 6px)`,
+                    width: 12,
+                    height: BAR_HEIGHT + 8,
+                    background:
+                      'radial-gradient(ellipse at center, rgba(255,255,220,0.95) 0%, rgba(255,200,80,0.55) 40%, transparent 70%)',
+                    mixBlendMode: 'screen',
+                  }}
+                />
+              )}
+
+              {/* Centered name */}
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none px-8">
+                <span
+                  className="truncate text-center font-bold tracking-wide"
+                  style={{
+                    fontSize: 11,
+                    color: '#fff',
+                    textShadow: '0 1px 2px #000, 0 0 4px #000',
+                    maxWidth: '100%',
+                  }}
+                >
+                  {displayName}
+                </span>
+              </div>
+
+              {/* Remaining time (right) */}
+              <div className="absolute inset-y-0 right-1.5 flex items-center pointer-events-none">
+                <span
+                  className="font-mono font-bold"
+                  style={{
+                    fontSize: 10,
+                    color: '#f5f5f5',
+                    textShadow: '0 1px 2px #000',
+                  }}
+                >
+                  {timerText}
+                </span>
+              </div>
+            </div>
           </div>
         </div>
 
-        <div className="w-full bg-[#080812] h-2.5 rounded overflow-hidden border border-amber-950 relative">
-          <div
-            className={`h-full transition-all duration-75 shadow-inner ${
-              playerCast.isChannel
-                ? 'bg-gradient-to-r from-cyan-500 via-teal-400 to-emerald-300'
-                : 'bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-300'
-            }`}
-            style={{ width: `${Math.min(100, Math.max(0, playerCast.progress * 100))}%` }}
-          />
-        </div>
-
-        <div className="flex justify-between items-center text-[9px] text-gray-400 mt-0.5">
-          <span>{playerCast.isChannel ? '引导法术中...' : '施法读条中...'}</span>
-          {onCancelCast && (
+        {/* ESC hint under bar while casting */}
+        {!preview && !activeFlash && onCancelCast && (
+          <div className="mt-0.5 text-right">
             <button
               type="button"
               onClick={(e) => {
                 e.stopPropagation();
                 onCancelCast();
               }}
-              className="text-red-400 hover:text-red-300 underline"
+              className="text-[8px] text-red-400/80 hover:text-red-300 underline"
             >
-              [按 ESC 打断]
+              ESC 打断
             </button>
-          )}
-        </div>
+          </div>
+        )}
       </div>
+    );
+  };
+
+  // Preview anchor when unlocked & idle
+  if (!playerCast && !activeFlash) {
+    return (
+      <div
+        style={{ left: `${pos.x}px`, top: `${pos.y}px` }}
+        onMouseDown={handleMouseDown}
+        className={shellClass}
+      >
+        {renderClassicBar({
+          spellName: '治疗波',
+          spellId: 'healing_wave',
+          fillPct: 55,
+          fillMode: 'cast',
+          timerText: '1.2',
+          preview: true,
+        })}
+      </div>
+    );
+  }
+
+  // Flash overlay after cast ends
+  if (!playerCast && activeFlash) {
+    const remainFlash = Math.max(0, (activeFlash.until - Date.now()) / 1000);
+    return (
+      <div
+        style={{ left: `${pos.x}px`, top: `${pos.y}px`, opacity: Math.min(1, remainFlash * 2.2) }}
+        onMouseDown={handleMouseDown}
+        className={shellClass}
+      >
+        {renderClassicBar({
+          spellName: activeFlash.spellName,
+          spellId: activeFlash.spellId,
+          fillPct: 100,
+          fillMode: activeFlash.kind === 'success' ? 'success' : 'interrupted',
+          timerText: activeFlash.kind === 'success' ? '0.0' : '',
+          labelOverride: activeFlash.kind === 'interrupted' ? 'Interrupted' : activeFlash.spellName,
+          showSpark: false,
+        })}
+      </div>
+    );
+  }
+
+  if (!playerCast) return null;
+
+  // Active cast / channel — always grow left → right
+  const isChannel = !!playerCast.isChannel;
+  const fillPct = Math.min(100, Math.max(0, playerCast.progress * 100));
+
+  return (
+    <div
+      style={{ left: `${pos.x}px`, top: `${pos.y}px` }}
+      onMouseDown={handleMouseDown}
+      className={shellClass}
+    >
+      {renderClassicBar({
+        spellName: playerCast.spellName,
+        spellId: playerCast.spellId,
+        fillPct,
+        fillMode: isChannel ? 'channel' : 'cast',
+        timerText: formatRemain(playerCast.elapsedMs, playerCast.totalMs, isChannel),
+        showSpark: true,
+      })}
     </div>
   );
 };
