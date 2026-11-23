@@ -93,6 +93,7 @@ test('substituteOutOfCombat inherits HP and buffs from replaced AI', () => {
   assert.equal(unit!.buffs.length, 1);
   assert.equal(unit!.buffs[0].name, '野性印记');
   assert.equal(unit!.position.x, 111);
-  assert.equal(unit!.isPlayer, true);
+  assert.equal(unit!.isPlayer, false);
+  assert.equal(unit!.isHumanControlled, true);
   assert.equal(engine.getUnit(ai!.id), undefined);
 });

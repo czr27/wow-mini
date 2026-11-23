@@ -9,6 +9,8 @@ export interface NetworkUnitSnapshot {
   spec?: string;
   role: string;
   isPlayer: boolean;
+  /** Host marks remote/local humans so guests don't treat them as AI stubs incorrectly */
+  isHumanControlled?: boolean;
   isAi?: boolean;
   isAlive: boolean;
   hp: number;
@@ -43,6 +45,22 @@ export interface NetworkCastTimeline {
   targetId?: string;
   /** When true, guest must clear this cast immediately */
   interrupted?: boolean;
+  interruptible?: boolean;
+}
+
+/** Compact ground FX for host→guest (puddles / cones / totems). */
+export interface NetworkGroundEffectSnapshot {
+  id: string;
+  kind: 'TOTEM' | 'HEAL_ZONE' | 'DAMAGE_ZONE' | 'CONE_WARNING';
+  spellId: string;
+  ownerId: string;
+  x: number;
+  y: number;
+  radius: number;
+  colorHex: string;
+  remainingMs: number;
+  facingRad?: number;
+  coneAngleRad?: number;
 }
 
 /** Spell CD timeline for guest ActionBar overlay. */
@@ -75,6 +93,7 @@ export interface NetworkCombatSnapshot {
   casts?: NetworkCastTimeline[];
   cooldowns?: NetworkCooldownTimeline[];
   gcds?: NetworkGcdTimeline[];
+  groundEffects?: NetworkGroundEffectSnapshot[];
   /** Explicit interrupt events since last snapshot (also mirrored on casts[].interrupted) */
   interrupts?: Array<{ unitId: string; spellId?: string; atMs: number }>;
   wipeVote?: NetworkVoteState;
@@ -102,7 +121,16 @@ export interface PlayerInputPayload {
   spellId?: string;
   targetId?: string | null;
   slotIndex?: number;
-  kind: 'CAST' | 'TARGET' | 'INTERRUPT' | 'MOVE' | 'READY' | 'WIPE_VOTE' | 'SKIP_TRAVEL_VOTE' | 'REQUEST_SKIP_TRAVEL';
+  kind:
+    | 'CAST'
+    | 'TARGET'
+    | 'INTERRUPT'
+    | 'MOVE'
+    | 'DISPEL'
+    | 'READY'
+    | 'WIPE_VOTE'
+    | 'SKIP_TRAVEL_VOTE'
+    | 'REQUEST_SKIP_TRAVEL';
   x?: number;
   y?: number;
   wipeVote?: WipeVoteChoice;

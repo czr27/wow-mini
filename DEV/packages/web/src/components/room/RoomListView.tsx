@@ -295,9 +295,9 @@ export const RoomListView: React.FC<RoomListViewProps> = ({
                           <button
                             onClick={() => onJoinRoom(room.id)}
                             className="px-3 py-1 rounded font-bold text-xs bg-rose-600 hover:bg-rose-500 text-white shadow transition"
-                            title="战斗中可热加入并顶替同职责 AI"
+                            title="战斗中可加入并顶替同职责 AI"
                           >
-                            热加入
+                            加入
                           </button>
                         ) : (
                           <button

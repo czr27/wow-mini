@@ -1257,8 +1257,13 @@ export class RoomManager {
       const matchingAis = room.members.filter(m => m.isAi && m.role === queued.role);
       if (matchingAis.length === 0) continue;
 
-      const randIdx = Math.floor(Math.random() * matchingAis.length);
-      const replacedAi = matchingAis[randIdx];
+      // Prefer AIs that already exist in the combat engine so HP/buff inherit cannot miss
+      const withCombatUnit = combatEngine
+        ? matchingAis.filter((m) => !!combatEngine.getUnit(m.id))
+        : [];
+      const pool = withCombatUnit.length > 0 ? withCombatUnit : matchingAis;
+      const randIdx = Math.floor(Math.random() * pool.length);
+      const replacedAi = pool[randIdx];
 
       const newMember: RoomMember = {
         id: queued.playerId,
@@ -1317,6 +1322,7 @@ export class RoomManager {
     const old = combatEngine.getUnit(aiUnitId);
     if (!old) return undefined;
 
+    // Host engine: joiner is human-controlled but NOT local isPlayer (avoids id/`isPlayer` collisions).
     const inherited: Unit = {
       ...old,
       id: player.id,
@@ -1324,7 +1330,8 @@ export class RoomManager {
       classId: player.classId,
       spec: player.spec,
       role: player.role,
-      isPlayer: true,
+      isPlayer: false,
+      isHumanControlled: true,
       buffs: (old.buffs || []).map((b) => ({ ...b })),
       threatTable: (old.threatTable || []).map((t) => ({ ...t })),
       resources: (old.resources || []).map((r) => ({ ...r })),

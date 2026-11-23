@@ -1825,6 +1825,7 @@ export class CombatEngine {
     spec?: string;
     role: string;
     isPlayer: boolean;
+    isHumanControlled?: boolean;
     isBoss?: boolean;
     isAlive: boolean;
     hp: number;
@@ -1848,6 +1849,7 @@ export class CombatEngine {
       spec: u.spec,
       role: u.role,
       isPlayer: u.isPlayer,
+      isHumanControlled: !!u.isHumanControlled || u.isPlayer,
       isBoss: !!bossId && u.id === bossId,
       isAlive: u.isAlive,
       hp: u.hp,
@@ -1874,6 +1876,7 @@ export class CombatEngine {
       spec?: string;
       role: string;
       isPlayer: boolean;
+      isHumanControlled?: boolean;
       isAlive: boolean;
       hp: number;
       maxHp: number;
@@ -1901,6 +1904,7 @@ export class CombatEngine {
           spec: s.spec,
           role: s.role as Unit['role'],
           isPlayer: s.isPlayer,
+          isHumanControlled: !!s.isHumanControlled || s.isPlayer,
           isAlive: s.isAlive,
           hp: s.hp,
           maxHp: s.maxHp,
@@ -1935,6 +1939,7 @@ export class CombatEngine {
       unit.name = s.name;
       unit.spec = s.spec;
       unit.isAlive = s.isAlive;
+      (unit as any).alive = s.isAlive;
       unit.hp = s.hp;
       unit.maxHp = s.maxHp;
       unit.mp = s.mp;
@@ -1946,6 +1951,7 @@ export class CombatEngine {
       unit.absorb = s.absorb;
       unit.position = { ...s.position };
       unit.buffs = s.buffs.map((b) => ({ ...b }));
+      if (s.isHumanControlled != null) unit.isHumanControlled = !!s.isHumanControlled || s.isPlayer;
       if (s.combatStats) unit.combatStats = { ...s.combatStats };
     }
     for (const id of Array.from(this.units.keys())) {

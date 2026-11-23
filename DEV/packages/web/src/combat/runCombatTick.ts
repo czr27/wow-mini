@@ -135,6 +135,10 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
           ctx.playerCastRef.current = null;
           ctx.setPlayerCast(null);
         }
+      } else if (ctx.playerCastRef.current) {
+        // No host timeline → clear sticky bar (avoid ghosting after resolve)
+        ctx.playerCastRef.current = null;
+        ctx.setPlayerCast(null);
       }
       const gcd = gcdRemainingFromTimelines(ctx.guestGcdTimelinesRef.current, myId, now);
       ctx.setPlayerGcdRemainingMs(gcd.remaining);
@@ -173,11 +177,20 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
   const deltaMs = 50;
   state.tickCount++;
 
-  // Apply remote player inputs on host before simulating
+  // Apply remote player inputs on host before simulating (guests only send intents)
   if (ctx.isNetworkHostRef.current && ctx.pendingGuestInputsRef.current.length > 0) {
     const inputs = ctx.pendingGuestInputsRef.current.splice(0, ctx.pendingGuestInputsRef.current.length);
     for (const input of inputs) {
       if (input.kind === 'TARGET' && input.targetId) {
+        continue;
+      }
+      if (input.kind === 'MOVE' && input.playerId && typeof input.x === 'number' && typeof input.y === 'number') {
+        const mover = engine.getUnit(input.playerId);
+        if (mover && mover.isAlive) {
+          mover.position = { x: input.x, y: input.y };
+          // Moving cancels that player's cast on the host sim
+          engine.interruptCast(input.playerId);
+        }
         continue;
       }
       if (input.kind === 'INTERRUPT' && input.playerId) {
@@ -187,14 +200,54 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
         }
         continue;
       }
+      if (input.kind === 'DISPEL' && input.playerId) {
+        const caster = engine.getUnit(input.playerId);
+        if (caster && caster.isAlive) {
+          const prevFlags = engine.friendlyUnits.map((u) => ({ id: u.id, isPlayer: u.isPlayer }));
+          for (const u of engine.friendlyUnits) u.isPlayer = u.id === input.playerId;
+          try {
+            // Prefer engine dispel if available; otherwise strip one matching debuff
+            const target =
+              (input.targetId ? engine.getUnit(input.targetId) : null) ||
+              caster;
+            if (target) {
+              const debuffIdx = target.buffs.findIndex((b) => b.kind === 'DEBUFF');
+              if (debuffIdx >= 0) {
+                const removed = target.buffs[debuffIdx];
+                target.buffs.splice(debuffIdx, 1);
+                engine.effectsManager?.addFloatingText({
+                  targetId: target.id,
+                  text: `✨ 驱散成功: ${removed.name}`,
+                  category: 'HEAL',
+                  isCrit: true,
+                });
+              }
+            }
+          } finally {
+            for (const f of prevFlags) {
+              const u = engine.getUnit(f.id);
+              if (u) u.isPlayer = f.isPlayer;
+            }
+          }
+        }
+        continue;
+      }
       if (input.kind === 'CAST' && input.spellId && input.playerId) {
         const spell = engine.getSpell(input.spellId);
         const caster = engine.getUnit(input.playerId);
         if (spell && caster && caster.isAlive) {
           const targetId = input.targetId || engine.bossUnit?.id || caster.id;
+          const prevFlags = engine.friendlyUnits.map((u) => ({ id: u.id, isPlayer: u.isPlayer }));
+          for (const u of engine.friendlyUnits) u.isPlayer = u.id === input.playerId;
           try {
             engine.castSpell(caster.id, spell.id, targetId);
-          } catch {}
+          } catch {
+          } finally {
+            for (const f of prevFlags) {
+              const u = engine.getUnit(f.id);
+              if (u) u.isPlayer = f.isPlayer;
+            }
+          }
         }
       }
     }
@@ -231,11 +284,12 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
         totalMs: c.totalMs,
         isChannel: c.mode === 'CHANNELED',
         targetId: c.targetId,
+        interruptible: true,
       }));
-      // Also include local player cast bar if driven outside engine pendingCasts
+      // Host local cast bar (App-driven, outside engine pendingCasts)
       if (ctx.playerCastRef.current && ctx.currentChar) {
         const pc = ctx.playerCastRef.current;
-        if (!casts.some((c) => c.unitId === ctx.currentChar.id)) {
+        if (!casts.some((c) => c.unitId === ctx.currentChar!.id)) {
           casts.push({
             unitId: ctx.currentChar.id,
             spellId: pc.spellId,
@@ -244,8 +298,37 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
             totalMs: pc.totalMs || 1500,
             isChannel: !!pc.isChannel,
             targetId: pc.targetId,
+            interruptible: !pc.isChannel,
           });
         }
+      }
+      // AI companion read-bars
+      for (const [unitId, aiCast] of Object.entries(ctx.aiHealerCastsRef.current || {})) {
+        if (!aiCast || casts.some((c) => c.unitId === unitId)) continue;
+        casts.push({
+          unitId,
+          spellId: aiCast.spellId,
+          spellName: aiCast.spellName,
+          startedAtMs: now - (aiCast.elapsedMs || 0),
+          totalMs: aiCast.totalMs || 1500,
+          isChannel: false,
+          targetId: aiCast.targetId,
+          interruptible: true,
+        });
+      }
+      // Boss cast bar (BossAI is host-only)
+      const bossCast = ctx.bossAiRef.current?.currentCasting;
+      const bossId = engine.bossUnit?.id;
+      if (bossCast && bossId && !casts.some((c) => c.unitId === bossId)) {
+        const totalMs = bossCast.skill.castTimeMs || 1;
+        casts.push({
+          unitId: bossId,
+          spellId: bossCast.skill.id || bossCast.skill.name,
+          spellName: bossCast.skill.name,
+          startedAtMs: now - (bossCast.elapsedMs || 0),
+          totalMs,
+          interruptible: !!bossCast.skill.interruptible,
+        });
       }
       const cooldowns: NetworkCooldownTimeline[] = engine.cooldownManager.getAllActiveCooldowns().map((e) => ({
         unitId: e.unitId,
@@ -265,6 +348,19 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
           });
         }
       }
+      const groundEffects = (engine.effectsManager?.groundEffects || []).map((g) => ({
+        id: g.id,
+        kind: g.kind,
+        spellId: g.spellId,
+        ownerId: g.ownerId,
+        x: g.x,
+        y: g.y,
+        radius: g.radius,
+        colorHex: g.colorHex,
+        remainingMs: g.remainingMs,
+        facingRad: (g as any).facingRad,
+        coneAngleRad: (g as any).coneAngleRad,
+      }));
       netClient.sendCombatState({
         roomId: ctx.activeRoomIdRef.current,
         timeMs: now,
@@ -280,6 +376,7 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
         casts,
         cooldowns,
         gcds,
+        groundEffects,
       });
     }
   }

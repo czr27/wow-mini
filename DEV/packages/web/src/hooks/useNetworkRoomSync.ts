@@ -257,6 +257,18 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
         const engine = d().engineRef.current;
         const rsm = d().rsmRef.current;
         engine.applyNetworkUnitSnapshots(snap.units);
+        // Host snapshots use each member's real id; keep local controllability on this client
+        const myId = d().currentChar?.id;
+        if (myId) {
+          for (const u of engine.friendlyUnits) {
+            const isMe = u.id === myId;
+            u.isPlayer = isMe;
+            if (isMe) u.isHumanControlled = true;
+            else if ((snap.units || []).find((s) => s.id === u.id)?.isHumanControlled) {
+              u.isHumanControlled = true;
+            }
+          }
+        }
         d().setFriendlyUnits([...engine.friendlyUnits]);
         d().setBossUnit(engine.bossUnit ? { ...engine.bossUnit } : undefined);
         if (snap.bossTargetId !== undefined) d().setBossTargetId(snap.bossTargetId ?? null);

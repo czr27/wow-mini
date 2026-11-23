@@ -719,20 +719,29 @@ function drawBossModel(
   const runBob = isMoving ? Math.abs(Math.sin(tickCount * 0.35)) * 4 : 0;
   ctx.translate(pos.x, pos.y - runBob);
 
-  if (isSelected) {
-    ctx.strokeStyle = '#FF4444';
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.arc(0, 0, 54, 0, Math.PI * 2);
-    ctx.stroke();
-  }
-
-  // Shadow
+  // Shadow + selection ring at feet (scaled to boss volume — not a full-body circle)
   ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
   ctx.beginPath();
   const shadowScale = isMoving ? 1 - runBob * 0.05 : 1;
   ctx.ellipse(0, 36, 48 * shadowScale, 18 * shadowScale, 0, 0, Math.PI * 2);
   ctx.fill();
+
+  if (isSelected) {
+    const footRx = 52 * shadowScale;
+    const footRy = 20 * shadowScale;
+    ctx.beginPath();
+    ctx.ellipse(0, 36, footRx, footRy, 0, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255, 68, 68, 0.22)';
+    ctx.fill();
+    ctx.strokeStyle = '#FF4444';
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.ellipse(0, 36, footRx * 0.72, footRy * 0.72, 0, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(255, 180, 180, 0.55)';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+  }
 
   // Subtle dust puffs when boss is running
   if (isMoving && tickCount % 8 < 4) {
@@ -835,15 +844,6 @@ function drawClassCharacter(
     return;
   }
 
-  // Selected Golden Halo
-  if (isSelected) {
-    ctx.strokeStyle = '#FFD700';
-    ctx.lineWidth = 2.5;
-    ctx.beginPath();
-    ctx.arc(0, 0, 24, 0, Math.PI * 2);
-    ctx.stroke();
-  }
-
   const isMelee =
     u.role === 'TANK' ||
     u.classId === 'ROGUE' ||
@@ -853,11 +853,33 @@ function drawClassCharacter(
   const sway = isMelee ? Math.sin(tickCount * 0.12 + idx) * 2.2 : Math.sin(tickCount * 0.06 + idx) * 1.0;
   const classColor = CLASS_COLORS[u.classId as any] || '#888';
 
+  // Footprint scale: pets smaller, player slightly larger, normal companions mid
+  const footScale = u.isPet ? 0.72 : isPlayer ? 1.15 : 1.0;
+  const footY = u.isPet ? 12 : 14;
+  const footRx = (u.isPet ? 11 : 16) * footScale;
+  const footRy = (u.isPet ? 5 : 7) * footScale;
+
   // 1. Shadow underneath
   ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
   ctx.beginPath();
-  ctx.ellipse(0, 14, 14, 6, 0, 0, Math.PI * 2);
+  ctx.ellipse(0, footY, footRx * 0.88, footRy * 0.85, 0, 0, Math.PI * 2);
   ctx.fill();
+
+  // Selection ring at feet only (not a full-body circle)
+  if (isSelected) {
+    ctx.beginPath();
+    ctx.ellipse(0, footY, footRx, footRy, 0, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(255, 215, 0, 0.22)';
+    ctx.fill();
+    ctx.strokeStyle = '#FFD700';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.ellipse(0, footY, footRx * 0.7, footRy * 0.7, 0, 0, Math.PI * 2);
+    ctx.strokeStyle = 'rgba(255, 248, 200, 0.55)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
 
   if (u.isPet) {
     const isWater = u.name.includes('水') || u.name.includes('Water');
