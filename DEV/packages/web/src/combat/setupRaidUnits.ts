@@ -115,28 +115,32 @@ export function setupRaidUnits(params: SetupRaidUnitsParams): Unit[] {
   if (activeRoom && activeRoom.members.length > 0) {
     const party: Unit[] = [];
     activeRoom.members.forEach((member, idx) => {
-      const isPlayer = member.id === char?.id || member.isPlayer;
+      // Only the local character is isPlayer. Never collapse all humans onto `p1_player`
+      // (that Map overwrite dropped the 5th unit when 2+ players joined).
+      const isLocalPlayer = !!char && member.id === char.id;
       const assignedClass = member.classId;
       const assignedRole = member.role;
       const assignedName = member.name;
       const isTankMember = assignedRole === 'TANK';
       const isHealerMember = assignedRole === 'HEALER';
+      const isRemoteHuman = member.isPlayer && !member.isAi && !isLocalPlayer;
 
       const nameSeed = assignedName.split('').reduce((acc, c) => acc + c.charCodeAt(0), idx * 37);
-      const apJitter = isPlayer ? 0 : ((nameSeed % 11) - 5) * 40;
-      const spJitter = isPlayer ? 0 : (((nameSeed >> 2) % 11) - 5) * 40;
-      const critJitter = isPlayer ? 0 : (((nameSeed >> 4) % 7) - 3) * 0.01;
+      const apJitter = isLocalPlayer || isRemoteHuman ? 0 : ((nameSeed % 11) - 5) * 40;
+      const spJitter = isLocalPlayer || isRemoteHuman ? 0 : (((nameSeed >> 2) % 11) - 5) * 40;
+      const critJitter = isLocalPlayer || isRemoteHuman ? 0 : (((nameSeed >> 4) % 7) - 3) * 0.01;
       const baseStats = createLevel80BaseStats(assignedRole);
       const maxHp = isTankMember ? LEVEL_80_STATS.tankBaseHp : LEVEL_80_STATS.dpsHealerBaseHp;
       const maxMp = getLv80MaxMp(assignedClass, assignedRole);
 
       party.push({
-        id: isPlayer ? 'p1_player' : member.id,
+        id: member.id,
         name: assignedName,
         classId: assignedClass,
         spec: member.spec,
         role: assignedRole,
-        isPlayer,
+        isPlayer: isLocalPlayer,
+        isHumanControlled: isLocalPlayer || isRemoteHuman,
         isAlive: true,
         alive: true,
         hp: maxHp,

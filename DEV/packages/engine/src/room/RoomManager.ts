@@ -636,11 +636,26 @@ export class RoomManager {
   ): boolean {
     const room = this.getRoom(roomId);
     if (!room) return false;
+    const difficultyChanged = room.difficulty !== difficulty;
+    const customChanged =
+      !!customDifficulty &&
+      JSON.stringify(room.customDifficulty || null) !== JSON.stringify(customDifficulty);
     room.difficulty = difficulty;
     if (customDifficulty) {
       room.customDifficulty = { ...customDifficulty };
     }
+    // Map/difficulty edits invalidate ready — clients re-sync via ROOM_UPDATE
+    if (difficultyChanged || customChanged) {
+      this.clearHumanReady(room);
+    }
     return true;
+  }
+
+  /** Clear ready flags for human players (AI stays ready). */
+  private clearHumanReady(room: LobbyRoom): void {
+    for (const m of room.members) {
+      if (m.isPlayer && !m.isAi) m.isReady = false;
+    }
   }
 
   /**
@@ -969,6 +984,7 @@ export class RoomManager {
     if (!room) return false;
 
     room.dungeonId = targetDungeonId;
+    this.clearHumanReady(room);
     const targetQuota = this.getQuota(targetDungeonId);
 
     // Reconstruct slots

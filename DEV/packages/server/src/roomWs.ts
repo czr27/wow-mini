@@ -176,34 +176,29 @@ export class RoomWsHub {
         return;
       }
 
-      const usernameKey = auth.username.trim().toLowerCase();
-
-      // Kick every other live session for the same account (even different characters)
-      for (const [pid, other] of Array.from(this.sessionsByPlayer.entries())) {
-        if (other.ws === ws) continue;
-        if ((other.username || '').trim().toLowerCase() !== usernameKey) continue;
-        if (other.disconnectTimer) {
-          clearTimeout(other.disconnectTimer);
-          other.disconnectTimer = undefined;
+      // Allow one PC / multiple browsers / multiple accounts concurrently.
+      // Only replace an existing socket for the *same character (playerId)* —
+      // never kick other accounts or other characters of the same account.
+      const existing = this.sessionsByPlayer.get(auth.playerId);
+      if (existing && existing.ws !== ws) {
+        if (existing.disconnectTimer) {
+          clearTimeout(existing.disconnectTimer);
+          existing.disconnectTimer = undefined;
         }
         try {
-          this.send(other.ws, {
+          this.send(existing.ws, {
             type: 'SESSION_KICKED',
             timeMs: Date.now(),
             payload: {
-              reason: '同账号已在其他客户端登录',
+              reason: '同一角色已在其他窗口重连',
               username: auth.username,
+              playerId: auth.playerId,
             },
           });
-          other.ws.close();
+          existing.ws.close();
         } catch {}
-        this.sessionsByWs.delete(other.ws);
-        this.sessionsByPlayer.delete(pid);
-      }
-
-      // Reconnect same playerId: cancel pending AI replace
-      const existing = this.sessionsByPlayer.get(auth.playerId);
-      if (existing?.disconnectTimer) {
+        this.sessionsByWs.delete(existing.ws);
+      } else if (existing?.disconnectTimer) {
         clearTimeout(existing.disconnectTimer);
         existing.disconnectTimer = undefined;
       }
@@ -418,7 +413,10 @@ export class RoomWsHub {
             break;
           case 'CHANGE_SPEC':
             if (action.memberId && action.spec && action.classId) {
-              this.roomManager.changeMemberSpec(roomId, action.memberId, action.classId, action.spec);
+              // Lobby allows free rearrange; start-game validation enforces quotas
+              this.roomManager.changeMemberSpec(roomId, action.memberId, action.classId, action.spec, {
+                allowOverQuota: true,
+              });
             }
             break;
           case 'SWITCH_MAP':
@@ -511,13 +509,40 @@ export class RoomWsHub {
 
         if (msg.type === 'COMBAT_STATE') {
           const snap = msg.payload as any;
-          const updated = this.roomManager.applyHostCombatSnapshot(msg.roomId, {
-            runPhase: snap?.runPhase,
-            travelRemainingMs: snap?.travelRemainingMs,
-            currentBossIndex: snap?.currentBossIndex,
-            isCleared: snap?.isCleared,
-            units: snap?.units,
-          });
+          // Prefer applyHostCombatSnapshot (engine dist must be rebuilt). Fallback keeps
+          // broadcast alive even if an old RoomManager build is loaded.
+          let updated: LobbyRoom | undefined;
+          const rm = this.roomManager as RoomManager & {
+            applyHostCombatSnapshot?: RoomManager['applyHostCombatSnapshot'];
+            updateCombatBossState?: RoomManager['updateCombatBossState'];
+            getRoom?: RoomManager['getRoom'];
+          };
+          if (typeof rm.applyHostCombatSnapshot === 'function') {
+            updated = rm.applyHostCombatSnapshot(msg.roomId, {
+              runPhase: snap?.runPhase,
+              travelRemainingMs: snap?.travelRemainingMs,
+              currentBossIndex: snap?.currentBossIndex,
+              isCleared: snap?.isCleared,
+              units: snap?.units,
+            });
+          } else {
+            const boss =
+              (snap?.units || []).find((u: any) => u?.isBoss) ||
+              (snap?.units || []).find((u: any) => u?.role === 'ENEMY' || u?.role === 'BOSS');
+            if (boss && typeof boss.hp === 'number' && typeof boss.maxHp === 'number') {
+              rm.updateCombatBossState?.(
+                msg.roomId,
+                boss.name || 'Boss',
+                boss.hp,
+                boss.maxHp,
+                boss.id
+              );
+            }
+            updated = rm.getRoom?.(msg.roomId);
+            console.warn(
+              '[RoomWs] applyHostCombatSnapshot missing — rebuild packages/engine (npm run build --workspace=packages/engine)'
+            );
+          }
           // Auto-start wipe vote when host first reports WIPE_VOTE phase
           if (snap?.runPhase === 'WIPE_VOTE' && !this.votes.get(msg.roomId, 'WIPE')) {
             this.startVote(msg.roomId, 'WIPE');

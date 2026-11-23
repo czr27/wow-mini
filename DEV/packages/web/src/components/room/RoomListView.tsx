@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import type { ClassId, DungeonDifficulty, CustomDifficultySettings } from '@cata-raid-sim/engine';
-import { type LobbyRoom, DUNGEON_ROLE_QUOTAS, DEFAULT_CUSTOM_DIFFICULTY, getRoleBySpec } from '@cata-raid-sim/engine';
+import { type LobbyRoom, DUNGEON_ROLE_QUOTAS, DEFAULT_CUSTOM_DIFFICULTY } from '@cata-raid-sim/engine';
 
 interface RoomListViewProps {
   rooms: LobbyRoom[];
@@ -51,9 +51,6 @@ export const RoomListView: React.FC<RoomListViewProps> = ({
     }
   };
 
-  const playerRole = getRoleBySpec(player.classId, player.spec);
-  const roleBadge = playerRole === 'TANK' ? '🛡️ 坦克' : playerRole === 'HEALER' ? '💚 治疗' : '⚔️ 输出';
-
   // Filtered rooms
   const filteredRooms = rooms.filter(r => {
     const matchesSearch = r.name.toLowerCase().includes(searchTerm.toLowerCase()) || r.id.includes(searchTerm);
@@ -82,34 +79,23 @@ export const RoomListView: React.FC<RoomListViewProps> = ({
             🏰
           </div>
           <div>
-            <h1 className="text-lg font-bold tracking-wider text-amber-300">
-              副本大厅 · 组队房间列表
-            </h1>
+            <h2 className="text-base font-bold tracking-wider text-amber-300">
+              副本大厅
+            </h2>
             <p className="text-xs text-slate-400">
-              魔兽大灾变 4.3 战斗模拟专区 · 集合石组队
+              组队房间列表 · 集合石
             </p>
           </div>
         </div>
 
-        {/* Current Player Status Badge */}
-        <div className="flex items-center space-x-4">
-          <div className="flex items-center space-x-2 bg-slate-900/80 px-3 py-1.5 rounded border border-slate-700 text-xs">
-            <span className="text-slate-400">当前角色:</span>
-            <span className="font-semibold text-amber-200">{player.name}</span>
-            <span className="text-slate-500">({player.classId} - {player.spec})</span>
-            <span className="px-2 py-0.5 rounded bg-amber-500/10 border border-amber-500/30 text-amber-300 font-bold">
-              {roleBadge}
-            </span>
-          </div>
-          {onBackToCharacterSelect && (
-            <button
-              onClick={onBackToCharacterSelect}
-              className="px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600 text-xs transition"
-            >
-              返回角色选择
-            </button>
-          )}
-        </div>
+        {onBackToCharacterSelect && (
+          <button
+            onClick={onBackToCharacterSelect}
+            className="px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600 text-xs transition"
+          >
+            返回角色选择
+          </button>
+        )}
       </div>
 
       {/* Main Content Area — full-bleed; room table scrolls when many rooms */}
@@ -204,7 +190,7 @@ export const RoomListView: React.FC<RoomListViewProps> = ({
                   <th className="py-2.5 px-4">副本地图</th>
                   <th className="py-2.5 px-4 w-28">难度</th>
                   <th className="py-2.5 px-4 w-48">人数 总数(AI)</th>
-                  <th className="py-2.5 px-4 w-28">房间状态</th>
+                  <th className="py-2.5 px-4 w-20 whitespace-nowrap">状态</th>
                   <th className="py-2.5 px-4 w-32 text-center">操作</th>
                 </tr>
               </thead>
@@ -281,22 +267,22 @@ export const RoomListView: React.FC<RoomListViewProps> = ({
                           </span>
                         </div>
                       </td>
-                      <td className="py-3 px-4">
+                      <td className="py-3 px-4 whitespace-nowrap">
                         {isInCombat ? (
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border ${
+                          <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold border whitespace-nowrap ${
                             playersFull
                               ? 'bg-slate-900 text-slate-600 border-slate-700'
                               : 'bg-rose-950/80 text-rose-300 border-rose-700/50 animate-pulse'
                           }`}>
-                            ⚔️ 战斗进行中
+                            战斗中
                           </span>
                         ) : (
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold border ${
+                          <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold border whitespace-nowrap ${
                             playersFull
                               ? 'bg-slate-900 text-slate-600 border-slate-700'
                               : 'bg-emerald-950/80 text-emerald-300 border-emerald-700/50'
                           }`}>
-                            ⏳ 大厅等待中
+                            等待中
                           </span>
                         )}
                       </td>

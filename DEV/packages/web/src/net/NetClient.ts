@@ -19,6 +19,9 @@ function defaultWsUrl(): string {
   return resolveGameWsUrl();
 }
 
+const RECONNECT_BASE_MS = 1000;
+const RECONNECT_MAX_MS = 10000;
+
 export class NetClient {
   private ws: WebSocket | null = null;
   private listeners = new Set<NetListener>();
@@ -30,6 +33,11 @@ export class NetClient {
   private _rooms: LobbyRoom[] = [];
   private _onlinePlayerIds: string[] = [];
   private combatSeq = 0;
+  /** Bumps on each new socket so stale onclose handlers cannot flip UI to offline. */
+  private socketGen = 0;
+  /** Consecutive failed reconnect attempts — drives backoff delay. */
+  private reconnectAttempt = 0;
+  private lastWsUrl = defaultWsUrl();
 
   get connected() {
     return this._connected;
@@ -58,35 +66,85 @@ export class NetClient {
     }
   }
 
+  private detachSocket(ws: WebSocket | null) {
+    if (!ws) return;
+    ws.onopen = null;
+    ws.onmessage = null;
+    ws.onerror = null;
+    ws.onclose = null;
+  }
+
   connect(auth: AuthPayload, url = defaultWsUrl()) {
     this.auth = auth;
+    this.lastWsUrl = url || defaultWsUrl();
     this.intentionalClose = false;
-    if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
+
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      // Already attached — just refresh AUTH (e.g. character switch).
+      this._connected = true;
+      this.clearReconnectTimer();
       this.send({ type: 'AUTH', payload: auth });
       return;
     }
+
+    // Stuck CONNECTING: abandon and open a fresh socket (server may be back).
+    if (this.ws && this.ws.readyState === WebSocket.CONNECTING) {
+      this.detachSocket(this.ws);
+      try {
+        this.ws.close();
+      } catch {}
+      this.ws = null;
+    }
+
+    // Abandon any closing/half-dead socket so its onclose cannot mark us offline later.
+    if (this.ws) {
+      this.detachSocket(this.ws);
+      try {
+        this.ws.close();
+      } catch {}
+      this.ws = null;
+    }
+
+    const gen = ++this.socketGen;
     try {
-      this.ws = new WebSocket(url);
-    } catch (err) {
-      console.warn('[NetClient] WebSocket construct failed', err);
+      this.ws = new WebSocket(this.lastWsUrl);
+    } catch {
       this.scheduleReconnect();
       return;
     }
 
-    this.ws.onopen = () => {
+    const ws = this.ws;
+
+    ws.onopen = () => {
+      if (this.ws !== ws || gen !== this.socketGen) return;
       this._connected = true;
+      this.reconnectAttempt = 0;
+      this.clearReconnectTimer();
+      this.emit({ type: 'CONNECTED', timeMs: Date.now() });
       this.send({ type: 'AUTH', payload: this.auth! });
       if (this.pingTimer) clearInterval(this.pingTimer);
       this.pingTimer = setInterval(() => this.send({ type: 'PING' }), 15000);
     };
 
-    this.ws.onmessage = (ev) => {
+    ws.onmessage = (ev) => {
+      if (this.ws !== ws || gen !== this.socketGen) return;
       const msg = decodeNetMessage(String(ev.data));
       if (!msg) return;
       if (msg.type === 'SESSION_KICKED') {
-        // Prevent auto-reconnect after being kicked by a newer login
+        // Stop auto-reconnect until user logs in again
         this.intentionalClose = true;
         this.auth = null;
+        this.clearReconnectTimer();
+      }
+      if (msg.type === 'AUTH_OK') {
+        this._connected = true;
+        this.reconnectAttempt = 0;
+        this.clearReconnectTimer();
+      }
+      if (msg.type === 'AUTH_FAIL') {
+        this._connected = false;
+        // Keep trying — server may reject briefly during restart
+        this.scheduleReconnect();
       }
       if (msg.type === 'ROOM_LIST_SYNC' && Array.isArray(msg.payload)) {
         this._rooms = msg.payload as LobbyRoom[];
@@ -107,35 +165,76 @@ export class NetClient {
       this.emit(msg);
     };
 
-    this.ws.onclose = () => {
+    ws.onclose = () => {
+      if (this.ws !== ws || gen !== this.socketGen) return;
+      const wasConnected = this._connected;
       this._connected = false;
       if (this.pingTimer) {
         clearInterval(this.pingTimer);
         this.pingTimer = null;
       }
+      this.ws = null;
+      if (wasConnected || !this.intentionalClose) {
+        this.emit({ type: 'DISCONNECTED', timeMs: Date.now() });
+      }
       if (!this.intentionalClose) this.scheduleReconnect();
     };
 
-    this.ws.onerror = () => {
+    ws.onerror = () => {
       // onclose will handle reconnect
     };
   }
 
   disconnect() {
     this.intentionalClose = true;
-    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.clearReconnectTimer();
     if (this.pingTimer) clearInterval(this.pingTimer);
-    this.ws?.close();
+    this.pingTimer = null;
+    const ws = this.ws;
     this.ws = null;
     this._connected = false;
+    this.socketGen++;
+    this.reconnectAttempt = 0;
+    this.detachSocket(ws);
+    try {
+      ws?.close();
+    } catch {}
   }
 
+  private clearReconnectTimer() {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+  }
+
+  /** Silent keep-alive: retry forever while logged in (until logout / session kick). */
   private scheduleReconnect() {
     if (this.intentionalClose || !this.auth) return;
-    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    if (this.reconnectTimer) return; // already queued
+    const delay = Math.min(
+      RECONNECT_BASE_MS * Math.pow(2, Math.min(this.reconnectAttempt, 4)),
+      RECONNECT_MAX_MS
+    );
+    this.reconnectAttempt += 1;
     this.reconnectTimer = setTimeout(() => {
-      if (this.auth) this.connect(this.auth);
-    }, 2000);
+      this.reconnectTimer = null;
+      if (this.intentionalClose || !this.auth) return;
+      this.connect(this.auth, this.lastWsUrl);
+    }, delay);
+  }
+
+  /** Ensure a live session after lobby return / room close (no-op if already up). */
+  ensureConnected() {
+    if (!this.auth) return;
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this._connected = true;
+      this.reconnectAttempt = 0;
+      this.clearReconnectTimer();
+      return;
+    }
+    this.intentionalClose = false;
+    this.connect(this.auth, this.lastWsUrl);
   }
 
   send(msg: NetEnvelope) {

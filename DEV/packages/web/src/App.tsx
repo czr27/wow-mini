@@ -161,6 +161,10 @@ export function App() {
   const [selectedCharId, setSelectedCharId] = useState<string | null>(() => accountMgrRef.current.getCurrentCharacter()?.id || null);
   const [viewingCert, setViewingCert] = useState<DungeonClearCertificate | null>(null);
   const [isLeaderboardOpen, setIsLeaderboardOpen] = useState(false);
+  const [showHeaderDeleteConfirm, setShowHeaderDeleteConfirm] = useState(false);
+  const [headerDeletePassword, setHeaderDeletePassword] = useState('');
+  const [headerDeleteError, setHeaderDeleteError] = useState<string | null>(null);
+  const [headerDeleteBusy, setHeaderDeleteBusy] = useState(false);
   const [isCertClaimed, setIsCertClaimed] = useState(false);
 
   // Combat runtime state
@@ -1150,6 +1154,11 @@ export function App() {
     if (currentChar) {
       setupRaidUnits(currentChar, dungeonTier, dungeonDifficulty, customDifficulty);
     }
+    // Closing a room must not drop the account WebSocket — re-assert link
+    netClient.ensureConnected();
+    if (netClient.connected) {
+      setNetConnected(true);
+    }
   };
 
   const applyWipeVoteResult = (choice: 'RETRY' | 'FINISH') => {
@@ -1387,15 +1396,9 @@ export function App() {
       <header className="h-14 shrink-0 border-b border-[#252542] bg-[#121224]/90 px-6 flex items-center justify-between backdrop-blur z-40">
         <div className="flex items-center space-x-3">
           <span className="text-2xl">🐉</span>
-          <div>
-            <h1 className="font-extrabold text-amber-300 text-sm tracking-wide">
-              Cata Raid Sim — 大地的裂变副本模拟器
-            </h1>
-            <span className="text-[10px] text-gray-400">
-              当前首领流程：{dungeonTier === '20man' ? '巨龙之魂 (20人' : '影牙城堡 (5人'}
-              {dungeonDifficulty === 'HEROIC' ? '英雄模式)' : dungeonDifficulty === 'CUSTOM' ? '自定义难度)' : '普通模式)'}
-            </span>
-          </div>
+          <h1 className="font-extrabold text-amber-300 text-xl sm:text-2xl tracking-wide leading-none">
+            魔兽大灾变模拟器
+          </h1>
         </div>
 
         <div className="flex items-center space-x-3">
@@ -1403,75 +1406,87 @@ export function App() {
             className={`px-2 py-1 text-[10px] rounded border font-bold ${
               netConnected
                 ? 'border-emerald-600/60 text-emerald-300 bg-emerald-950/40'
-                : 'border-slate-600 text-slate-400 bg-slate-900/40'
+                : 'border-amber-700/60 text-amber-200 bg-amber-950/40'
             }`}
-            title={netConnected ? '已连接联机服务器（房间/战斗同步）' : '未连接服务器，房间仅本机有效'}
-          >
-            {netConnected ? '联机中' : '单机'}
-          </div>
-          {currentChar && (
-            <div
-              onClick={() => {
-                if (runPhase !== 'LOBBY') {
-                  handleReturnToLobby();
-                } else if (activeRoomId) {
-                  handleLeaveActiveRoom();
-                }
-                setLobbySubView('AUTH_CHAR');
-              }}
-              className="bg-[#1b1b34] border border-[#3b3b5c] px-3 py-1 rounded-lg text-xs font-bold cursor-pointer hover:border-amber-400 transition flex items-center space-x-2"
-              title="点击返回主页与角色切换"
-            >
-              <span className="text-gray-400">当前冒险者:</span>
-              <span className="text-amber-300">{currentChar.name}</span>
-              <span className="text-[10px] text-gray-400">({currentChar.lastSpec})</span>
-            </div>
-          )}
-
-          <div
-            className={`px-2 py-1 text-[10px] rounded border font-bold ${
+            title={
               netConnected
-                ? 'border-emerald-600/60 text-emerald-300 bg-emerald-950/40'
-                : 'border-slate-600 text-slate-400 bg-slate-900/50'
-            }`}
-            title={netConnected ? '已连接联机服务器（房间与房主战斗同步）' : '未连接服务器，房间为本地模式'}
+                ? '已连接游戏服务器（账号/房间/战斗均由服务端管理，含 localhost）'
+                : '未连接游戏服务器。请用启动脚本打开服务端（:3001）；不存在单机本地模式'
+            }
           >
-            {netConnected ? '联机 · 在线' : '本地模式'}
+            {netConnected ? '服务器已连接' : '未连接服务器'}
           </div>
+          {currentChar && (() => {
+            const role = getRoleBySpec(currentChar.classId, currentChar.lastSpec);
+            const roleIcon = role === 'TANK' ? '🛡️' : role === 'HEALER' ? '💚' : '⚔️';
+            const roleLabel = role === 'TANK' ? '坦克' : role === 'HEALER' ? '治疗' : '输出';
+            return (
+              <div
+                onClick={() => {
+                  if (runPhase !== 'LOBBY') {
+                    handleReturnToLobby();
+                  } else if (activeRoomId) {
+                    handleLeaveActiveRoom();
+                  }
+                  setLobbySubView('AUTH_CHAR');
+                }}
+                className="bg-[#1b1b34] border border-[#3b3b5c] px-3 py-1 rounded-lg text-xs font-bold cursor-pointer hover:border-amber-400 transition flex items-center space-x-1.5"
+                title={`点击返回主页与角色切换（${roleLabel}）`}
+              >
+                <span className="text-gray-400">当前角色:</span>
+                <span style={{ color: CLASS_COLORS[currentChar.classId] || '#fbbf24' }}>
+                  {currentChar.name}
+                </span>
+                <span className="text-[11px] leading-none" aria-label={roleLabel}>
+                  {roleIcon}
+                </span>
+              </div>
+            );
+          })()}
 
-          {/* Locked Read-Only Badge during active combat/travel (R8) */}
-          <button disabled={runPhase !== 'LOBBY' && runPhase !== 'SUMMARY'} className="hidden" aria-hidden="true" tabIndex={-1} />
           {runPhase !== 'LOBBY' && runPhase !== 'SUMMARY' && (
             <div
               className="px-3 py-1.5 text-xs rounded-lg font-bold shadow flex items-center space-x-1.5 border bg-black/60 border-amber-500/50 text-amber-200"
               title="副本进行中，模式与难度已锁定"
             >
               <span>🔒</span>
-              <span>
-                {dungeonTier === '20man' ? '巨龙之魂 (20人' : '影牙城堡 (5人'}
-                {dungeonDifficulty === 'HEROIC' ? '英雄)' : dungeonDifficulty === 'CUSTOM' ? '自定义)' : '普通)'} · 战斗中已锁定
-              </span>
+              <span>战斗中已锁定</span>
             </div>
           )}
 
-          <button
-            onClick={() => {
-              if (runPhase !== 'LOBBY') {
-                handleReturnToLobby();
-              } else if (activeRoomId) {
-                handleLeaveActiveRoom();
-              } else {
-                roomManager.cleanupAiOnlyRooms();
-                setLobbySubView('ROOM_LIST');
-                setRoomsTick(t => t + 1);
-              }
-            }}
-            className="px-3 py-1.5 text-xs bg-amber-500 hover:bg-amber-400 text-slate-950 rounded-lg font-bold shadow flex items-center space-x-1"
-            title="打开副本大厅房间列表"
-          >
-            <span>🏰</span>
-            <span>副本大厅</span>
-          </button>
+          {account && (
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  accountMgrRef.current.logout();
+                  netClient.disconnect();
+                  setAccount(null);
+                  setSelectedCharId(null);
+                  setNetConnected(false);
+                  setActiveRoomId(null);
+                  setLobbySubView('AUTH_CHAR');
+                  setRunPhase('LOBBY');
+                }}
+                className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 rounded-lg transition border border-slate-500 text-slate-200 font-semibold"
+                title="注销当前登录会话"
+              >
+                注销
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setHeaderDeletePassword('');
+                  setHeaderDeleteError(null);
+                  setShowHeaderDeleteConfirm(true);
+                }}
+                className="px-3 py-1.5 text-xs bg-red-950/70 hover:bg-red-900 rounded-lg transition border border-red-700/50 text-red-200 font-semibold"
+                title="从服务器永久删除此账号"
+              >
+                删除账号
+              </button>
+            </>
+          )}
 
           <button
             onClick={() => setIsLeaderboardOpen(true)}
@@ -1479,15 +1494,6 @@ export function App() {
           >
             <span>🏆</span>
             <span>世界排行</span>
-          </button>
-
-          <button
-            onClick={() => setIsSkillBookOpen(true)}
-            className="px-3 py-1.5 text-xs bg-indigo-700 hover:bg-indigo-600 text-white rounded-lg font-bold shadow flex items-center space-x-1"
-            title="查看全部技能、机制说明与自定义三栏动作条"
-          >
-            <span>📖</span>
-            <span>技能书与快捷键</span>
           </button>
 
           {runPhase !== 'LOBBY' && (
@@ -1629,28 +1635,25 @@ export function App() {
                 setAccount({ ...result.account });
                 const nextChar = mgr.getCurrentCharacter();
                 setSelectedCharId(nextChar?.id || null);
-                // WS AUTH kicks any previous live session for this username
-                // (skip when offline fallback — server not reachable)
-                if (!result.offline) {
-                  if (nextChar) {
-                    netClient.connect({
-                      username: result.account.username,
-                      playerId: nextChar.id,
-                      playerName: nextChar.name,
-                      classId: nextChar.classId,
-                      spec: nextChar.lastSpec,
-                      role: getRoleBySpec(nextChar.classId, nextChar.lastSpec),
-                    });
-                  } else {
-                    netClient.connect({
-                      username: result.account.username,
-                      playerId: `acc_session_${result.account.id}`,
-                      playerName: result.account.username,
-                      classId: 'MAGE',
-                      spec: 'FIRE',
-                      role: 'DPS',
-                    });
-                  }
+                // Always open WS after server auth. Same character reconnect replaces that socket only.
+                if (nextChar) {
+                  netClient.connect({
+                    username: result.account.username,
+                    playerId: nextChar.id,
+                    playerName: nextChar.name,
+                    classId: nextChar.classId,
+                    spec: nextChar.lastSpec,
+                    role: getRoleBySpec(nextChar.classId, nextChar.lastSpec),
+                  });
+                } else {
+                  netClient.connect({
+                    username: result.account.username,
+                    playerId: `acc_session_${result.account.id}`,
+                    playerName: result.account.username,
+                    classId: 'MAGE',
+                    spec: 'FIRE',
+                    role: 'DPS',
+                  });
                 }
                 return { success: true };
               } catch (err: any) {
@@ -1843,6 +1846,78 @@ export function App() {
         onClose={() => setIsLeaderboardOpen(false)}
         entries={leaderboardMgrRef.current.getLeaderboard('FAST_KILL')}
       />
+
+      {/* Header: delete account confirm */}
+      {showHeaderDeleteConfirm && account && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-[70] p-4">
+          <div className="bg-[#1a1218] border border-red-600/50 rounded-2xl p-5 max-w-sm w-full space-y-3 shadow-2xl">
+            <h3 className="text-base font-extrabold text-red-300">删除账号</h3>
+            <p className="text-xs text-slate-300 leading-relaxed">
+              将从<strong className="text-amber-300">服务器永久删除</strong>账号「{account.username}」及全部角色、键位与通关记录，且不可恢复。
+            </p>
+            <div>
+              <label className="text-[11px] text-slate-400 block mb-1">输入密码确认</label>
+              <input
+                type="password"
+                value={headerDeletePassword}
+                onChange={(e) => {
+                  setHeaderDeletePassword(e.target.value);
+                  if (headerDeleteError) setHeaderDeleteError(null);
+                }}
+                className="w-full bg-[#10101e] border border-red-900/50 rounded p-2 text-sm text-white focus:border-red-400 outline-none"
+                placeholder="账号密码"
+                disabled={headerDeleteBusy}
+              />
+              {headerDeleteError && (
+                <p className="mt-1.5 text-xs text-red-400 font-semibold">{headerDeleteError}</p>
+              )}
+            </div>
+            <div className="flex justify-end gap-2 pt-1">
+              <button
+                type="button"
+                disabled={headerDeleteBusy}
+                onClick={() => setShowHeaderDeleteConfirm(false)}
+                className="px-3 py-1.5 text-xs rounded-lg border border-slate-600 text-slate-300 hover:bg-slate-800"
+              >
+                取消
+              </button>
+              <button
+                type="button"
+                disabled={headerDeleteBusy || !headerDeletePassword}
+                onClick={async () => {
+                  setHeaderDeleteBusy(true);
+                  setHeaderDeleteError(null);
+                  try {
+                    const result = await accountMgrRef.current.deleteAccountOnServer(
+                      headerDeletePassword,
+                      resolveGameApiBaseUrl()
+                    );
+                    if (result.ok === false) {
+                      setHeaderDeleteError(result.error);
+                      return;
+                    }
+                    netClient.disconnect();
+                    setAccount(null);
+                    setSelectedCharId(null);
+                    setNetConnected(false);
+                    setActiveRoomId(null);
+                    setLobbySubView('AUTH_CHAR');
+                    setRunPhase('LOBBY');
+                    setShowHeaderDeleteConfirm(false);
+                  } catch (err: any) {
+                    setHeaderDeleteError(err?.message || '删除账号失败');
+                  } finally {
+                    setHeaderDeleteBusy(false);
+                  }
+                }}
+                className="px-3 py-1.5 text-xs rounded-lg bg-red-700 hover:bg-red-600 text-white font-bold disabled:opacity-50"
+              >
+                {headerDeleteBusy ? '删除中…' : '确认删除'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Skill Book & Keybinding Center Modal */}
       {isSkillBookOpen && currentChar && (

@@ -32,6 +32,7 @@ export type RoomLobbyDeps = {
   roomFacadeRef: MutableRefObject<NetworkRoomFacade>;
   isNetworkHostRef: MutableRefObject<boolean>;
   isNetworkGuestRef: MutableRefObject<boolean>;
+  /** retained for App wiring / future combat remaps */
   engineRef: MutableRefObject<CombatEngine>;
   startAdventureRef: MutableRefObject<(overrides?: StartAdventureOverrides) => void>;
   setActiveRoomId: (id: string | null) => void;
@@ -46,8 +47,8 @@ export type RoomLobbyDeps = {
 };
 
 /**
- * Offline + networked lobby actions (leave / create / join / queue / quick-join / start).
- * WS subscribe stays in App until a later phase.
+ * Server-authoritative lobby actions (leave / create / join / queue / quick-join / start).
+ * Rooms are never created purely locally — WebSocket to the game server is required.
  */
 export function useRoomLobby(deps: RoomLobbyDeps) {
   const {
@@ -58,16 +59,10 @@ export function useRoomLobby(deps: RoomLobbyDeps) {
     roomFacadeRef,
     isNetworkHostRef,
     isNetworkGuestRef,
-    engineRef,
-    startAdventureRef,
     setActiveRoomId,
     setLobbySubView,
     setRoomsTick,
     setWaitingQueueRoomId,
-    setFriendlyUnits,
-    setDungeonTier,
-    setDungeonDifficulty,
-    setCustomDifficulty,
     onCustomDifficultyChange,
   } = deps;
 
@@ -108,100 +103,50 @@ export function useRoomLobby(deps: RoomLobbyDeps) {
       spec: currentChar.lastSpec,
       role: getRoleBySpec(currentChar.classId, currentChar.lastSpec),
     };
-    if (netClient.connected) {
-      netClient.createRoom({
-        name,
-        dungeonId,
-        difficulty,
-        customDifficulty: difficulty === 'CUSTOM' ? (customDiff || customDifficulty) : undefined,
-        host,
-      });
-      setLobbySubView('ROOM_DETAIL');
-      setRoomsTick(t => t + 1);
+    if (!netClient.connected) {
+      window.alert('尚未连接到游戏服务器。请确认服务端已启动（端口 3001），房间一律由服务器管理。');
       return;
     }
-    const room = roomManager.createRoom({
+    netClient.createRoom({
       name,
       dungeonId,
       difficulty,
       customDifficulty: difficulty === 'CUSTOM' ? (customDiff || customDifficulty) : undefined,
       host,
     });
-    isNetworkHostRef.current = true;
-    isNetworkGuestRef.current = false;
-    setActiveRoomId(room.id);
     setLobbySubView('ROOM_DETAIL');
     setRoomsTick(t => t + 1);
   };
 
   const handleJoinRoom = (roomId: string) => {
     if (!currentChar) return;
-    if (netClient.connected) {
-      netClient.joinRoom(roomId);
-      setActiveRoomId(roomId);
-      setLobbySubView('ROOM_DETAIL');
-      setRoomsTick(t => t + 1);
+    if (!netClient.connected) {
+      window.alert('尚未连接到游戏服务器。请确认服务端已启动（端口 3001），房间一律由服务器管理。');
       return;
     }
-    const room = roomManager.getRoom(roomId);
-    if (!room) return;
-
-    const quota = DUNGEON_ROLE_QUOTAS[room.dungeonId] || DUNGEON_ROLE_QUOTAS.shadowfang_keep;
-    const humans = room.members.filter(m => m.isPlayer && !m.isAi).length;
-    if (humans >= quota.capacity) return;
-
-    const pRole = getRoleBySpec(currentChar.classId, currentChar.lastSpec);
-    const join = roomManager.joinOrHotSwapPlayer(roomId, {
-      id: currentChar.id,
-      name: currentChar.name,
-      classId: currentChar.classId,
-      spec: currentChar.lastSpec,
-      role: pRole,
-    });
-    if (!join.ok || !join.room) return;
-
-    if (
-      join.replacedAiId &&
-      (join.room.status === 'IN_COMBAT' || join.room.status === 'OUT_OF_COMBAT') &&
-      engineRef.current
-    ) {
-      roomManager.inheritCombatUnitFromAi(engineRef.current, join.replacedAiId, {
-        id: currentChar.id,
-        name: currentChar.name,
-        classId: currentChar.classId,
-        spec: currentChar.lastSpec,
-        role: pRole,
-      });
-      setFriendlyUnits([...engineRef.current.friendlyUnits]);
-    }
-
-    isNetworkGuestRef.current = join.room.hostId !== currentChar.id;
-    isNetworkHostRef.current = join.room.hostId === currentChar.id;
-    setActiveRoomId(join.room.id);
+    netClient.joinRoom(roomId);
+    setActiveRoomId(roomId);
     setLobbySubView('ROOM_DETAIL');
     setRoomsTick(t => t + 1);
   };
 
   const handleJoinWaitingQueue = (roomId: string) => {
     if (!currentChar) return;
-    if (netClient.connected) {
-      netClient.joinRoom(roomId);
-      setWaitingQueueRoomId(roomId);
-      setRoomsTick(t => t + 1);
+    if (!netClient.connected) {
+      window.alert('尚未连接到游戏服务器。请确认服务端已启动（端口 3001），房间一律由服务器管理。');
       return;
     }
-    roomManager.joinWaitingQueue(roomId, {
-      id: currentChar.id,
-      name: currentChar.name,
-      classId: currentChar.classId,
-      spec: currentChar.lastSpec,
-    });
+    netClient.joinRoom(roomId);
     setWaitingQueueRoomId(roomId);
     setRoomsTick(t => t + 1);
   };
 
   const handleQuickJoin = () => {
     if (!currentChar) return;
+    if (!netClient.connected) {
+      window.alert('尚未连接到游戏服务器。请确认服务端已启动（端口 3001），房间一律由服务器管理。');
+      return;
+    }
     const pRole = getRoleBySpec(currentChar.classId, currentChar.lastSpec);
     const rooms = roomFacadeRef.current.listRooms();
     for (const r of rooms) {
@@ -232,30 +177,13 @@ export function useRoomLobby(deps: RoomLobbyDeps) {
     if (!validation.canStart) {
       return;
     }
-
-    if (netClient.connected) {
-      isNetworkHostRef.current = true;
-      isNetworkGuestRef.current = false;
-      netClient.startRoom(activeRoomId);
+    if (!netClient.connected) {
+      window.alert('尚未连接到游戏服务器。请确认服务端已启动（端口 3001）。');
       return;
     }
-
-    roomManager.startGame(activeRoomId, currentChar.id);
-
-    const tier: '5man' | '20man' = room.dungeonId === 'dragon_soul' ? '20man' : '5man';
-    const effectiveCustom = room.customDifficulty || customDifficulty;
-    setDungeonTier(tier);
-    setDungeonDifficulty(room.difficulty);
-    if (room.difficulty === 'CUSTOM') {
-      setCustomDifficulty(effectiveCustom);
-    }
-
-    startAdventureRef.current({
-      tier,
-      difficulty: room.difficulty,
-      customDiff: effectiveCustom,
-      activeRoom: room,
-    });
+    isNetworkHostRef.current = true;
+    isNetworkGuestRef.current = false;
+    netClient.startRoom(activeRoomId);
   };
 
   return {

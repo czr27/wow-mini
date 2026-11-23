@@ -385,7 +385,8 @@ export function runFriendlyAiCombatTick(ctx: FriendlyAiCombatTickCtx): void {
   // ── Universal AI Loop across ALL Friendly AI Units (All 10 Classes & 30 Specs) ──
   const nowMs = Date.now();
   for (const u of engine.friendlyUnits) {
-    if ((!u.isAlive && !u.alive) || u.isPlayer || u.isPet) continue;
+    // Skip local player, remote humans, and pets — only bot AI companions
+    if ((!u.isAlive && !u.alive) || u.isPlayer || u.isHumanControlled || u.isPet) continue;
 
     const { tickOffset, individualMod, critMod } = getUnitPersonality(u);
     const aiPersonality = ctx.getUnitAIPersonality(u);

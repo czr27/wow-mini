@@ -609,66 +609,30 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
           <div className="flex items-center space-x-3">
             <span className="text-2xl">⚔️</span>
             <div>
-              <h2 className="text-lg font-bold text-amber-300">魔兽大灾变副本模拟器 — 角色与冒险厅</h2>
+              <h2 className="text-base font-bold text-amber-300">角色与冒险厅</h2>
               <p className="text-xs text-gray-400">
                 当前账号：<span className="text-amber-400 font-semibold">{currentAccountName || '未登录'}</span>
               </p>
             </div>
           </div>
-          <div className="flex items-center space-x-2">
-            {!isLoggedIn ? (
-              <>
-                <button
-                  type="button"
-                  onClick={() => openAuthModal('login')}
-                  className="px-3 py-1.5 text-xs bg-[#1e2a44] hover:bg-[#263556] rounded-lg transition border border-sky-700/50 text-sky-200 font-semibold"
-                >
-                  登录
-                </button>
-                <button
-                  type="button"
-                  onClick={() => openAuthModal('register')}
-                  className="px-3 py-1.5 text-xs bg-emerald-800/80 hover:bg-emerald-700 rounded-lg transition border border-emerald-500/40 text-emerald-100 font-semibold"
-                >
-                  注册
-                </button>
-              </>
-            ) : (
-              <>
-                {onLogout && (
-                  <button
-                    type="button"
-                    onClick={onLogout}
-                    className="px-3 py-1.5 text-xs bg-slate-700 hover:bg-slate-600 rounded-lg transition border border-slate-500 text-slate-200 font-semibold"
-                    title="注销当前登录会话"
-                  >
-                    注销
-                  </button>
-                )}
-                {onDeleteAccount && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setDeletePassword('');
-                      setDeleteError(null);
-                      setShowDeleteConfirm(true);
-                    }}
-                    className="px-3 py-1.5 text-xs bg-red-950/70 hover:bg-red-900 rounded-lg transition border border-red-700/50 text-red-200 font-semibold"
-                    title="从服务器永久删除此账号"
-                  >
-                    删除账号
-                  </button>
-                )}
-              </>
-            )}
-            <button
-              onClick={onOpenLeaderboard}
-              className="px-3 py-1.5 text-xs bg-amber-600 hover:bg-amber-500 text-white rounded-lg font-bold shadow flex items-center space-x-1"
-            >
-              <span>🏆</span>
-              <span>世界排行榜</span>
-            </button>
-          </div>
+          {!isLoggedIn && (
+            <div className="flex items-center space-x-2">
+              <button
+                type="button"
+                onClick={() => openAuthModal('login')}
+                className="px-3 py-1.5 text-xs bg-[#1e2a44] hover:bg-[#263556] rounded-lg transition border border-sky-700/50 text-sky-200 font-semibold"
+              >
+                登录
+              </button>
+              <button
+                type="button"
+                onClick={() => openAuthModal('register')}
+                className="px-3 py-1.5 text-xs bg-emerald-800/80 hover:bg-emerald-700 rounded-lg transition border border-emerald-500/40 text-emerald-100 font-semibold"
+              >
+                注册
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Main Content Area — character UI only when logged in */}
@@ -1491,7 +1455,7 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
 
               <p className="text-[10px] text-slate-500 leading-relaxed">
                 {authMode === 'login'
-                  ? '登录将与服务器校验；同账号其他未断开的客户端会被踢下线。'
+                  ? '登录将与服务器校验；本机可用多浏览器同时登录不同账号。仅同一角色重复连接时会替换旧连接。'
                   : '注册由服务器校验用户名唯一性，已被占用则无法创建。'}
               </p>
 

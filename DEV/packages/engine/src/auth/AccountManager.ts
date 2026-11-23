@@ -281,18 +281,17 @@ export class AccountManager {
   }
 
   /**
-   * Server-authoritative login / register.
+   * Server-authoritative login / register (no offline / local fallback).
    * Register: server rejects duplicate usernames (409).
-   * Login: server validates password; account is merged into local store.
-   * If the server is unreachable within timeout, falls back to local auth
-   * so the UI never hangs on "连接服务器…".
+   * Login: server validates password; account is merged into local cache for UX only.
+   * Localhost and LAN use the same path — accounts & rooms always live on the server.
    */
   public async authWithServer(
     username: string,
     password: string,
     mode: 'login' | 'register',
     serverUrl = AccountManager.defaultApiBase()
-  ): Promise<{ ok: true; account: UserAccount; offline?: boolean } | { ok: false; error: string }> {
+  ): Promise<{ ok: true; account: UserAccount } | { ok: false; error: string }> {
     const key = username.trim().toLowerCase();
     if (!key) return { ok: false, error: '请输入用户名' };
     if (key.length < 2) return { ok: false, error: '用户名至少 2 个字符' };
@@ -338,7 +337,6 @@ export class AccountManager {
       if (!res.ok) return { ok: false, error: body.error || '登录失败，请检查服务器是否启动' };
       const remote = body as UserAccount;
       if (!remote?.username) return { ok: false, error: '服务器返回无效账号数据' };
-      // Ensure password field present for local re-login offline cache
       if (!remote.passwordHash) remote.passwordHash = password;
       const merged = this.mergeRemoteAccount(remote);
       this.currentUsername = key;
@@ -362,23 +360,11 @@ export class AccountManager {
       return { ok: true, account: merged };
     } catch (err: any) {
       const aborted = err?.name === 'AbortError';
-      // Offline / timeout fallback — keep single-player usable
-      if (mode === 'login') {
-        const local = this.tryLogin(username, password);
-        if (local.ok) return { ok: true, account: local.account, offline: true };
-        if (local.error === '密码错误' || local.error === '账号不存在，请先注册') {
-          return local;
-        }
-      } else {
-        const local = this.tryRegister(username, password);
-        if (local.ok) return { ok: true, account: local.account, offline: true };
-        if (local.error === '用户名已被占用') return local;
-      }
       return {
         ok: false,
         error: aborted
-          ? '连接服务器超时（请确认已启动联机服务 :3001），或检查账号密码后重试'
-          : '无法连接服务器，请确认联机服务已启动（端口 3001）',
+          ? '连接服务器超时（请确认已启动服务端 :3001），账号由服务器管理，不支持单机登录'
+          : '无法连接服务器，请确认服务端已启动（端口 3001）。账号与数据一律由服务器管理',
       };
     }
   }
@@ -476,12 +462,12 @@ export class AccountManager {
 
   /**
    * Ask the game server whether a character name is free (all accounts + reserved AI names).
-   * On network failure returns { ok: true, offline: true } so local checks still apply.
+   * Requires a reachable server — no offline / local-only fallback.
    */
   public async checkCharacterNameAvailable(
     name: string,
     serverUrl = AccountManager.defaultApiBase()
-  ): Promise<{ ok: true; available: boolean; offline?: boolean; reason?: string } | { ok: false; error: string }> {
+  ): Promise<{ ok: true; available: boolean; reason?: string } | { ok: false; error: string }> {
     const trimmed = name.trim();
     if (!trimmed) return { ok: false, error: '请输入角色名称' };
     if (isReservedAiName(trimmed)) {
@@ -491,7 +477,7 @@ export class AccountManager {
       return { ok: true, available: false, reason: 'local' };
     }
     if (typeof fetch === 'undefined') {
-      return { ok: true, available: true, offline: true };
+      return { ok: false, error: '当前环境无法连接服务器' };
     }
     const base = (serverUrl || '').replace(/\/$/, '');
     try {
@@ -501,7 +487,7 @@ export class AccountManager {
         6000
       );
       if (!res.ok) {
-        return { ok: true, available: !this.isCharacterNameTaken(trimmed), offline: true };
+        return { ok: false, error: body?.error || '无法校验角色名，请确认服务端已启动' };
       }
       const available = body?.available !== false;
       return {
@@ -510,7 +496,7 @@ export class AccountManager {
         reason: available ? undefined : body?.reason || 'taken',
       };
     } catch {
-      return { ok: true, available: !this.isCharacterNameTaken(trimmed), offline: true };
+      return { ok: false, error: '无法连接服务器校验角色名，请确认服务端已启动（端口 3001）' };
     }
   }
 

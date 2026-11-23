@@ -100,7 +100,13 @@ export interface Unit {
   classId: ClassId | 'BOSS' | 'NPC';
   spec?: string;
   role: RoleId | 'ENEMY';
+  /** Local client controllable character (at most one per engine). */
   isPlayer: boolean;
+  /**
+   * Real human (local or remote). Host AI must skip these so multi-player
+   * roster mates are not bot-driven.
+   */
+  isHumanControlled?: boolean;
   isPet?: boolean;
   ownerId?: string;
   isAlive: boolean;

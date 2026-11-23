@@ -113,6 +113,7 @@ export type NetMessageType =
   | 'PING'
   | 'PONG'
   | 'CONNECTED'
+  | 'DISCONNECTED'
   | 'AUTH'
   | 'AUTH_OK'
   | 'AUTH_FAIL'

@@ -84,10 +84,11 @@ echo 关掉窗口即可停止对应服务。
 echo ----------------------------------------
 echo.
 
-start "Cata Raid Sim - Server" cmd /k "cd /d \"%~dp0DEV\" && npm run dev --workspace=packages/server"
+:: /D 指定工作目录，避免嵌套引号导致「文件名、目录名或卷标语法不正确」
+start "Cata Raid Sim - Server" /D "%~dp0DEV" cmd /k "npm run dev --workspace=packages/server"
 timeout /t 2 /nobreak >nul
 
-start "" "http://127.0.0.1:5173/"
+echo 请手动打开浏览器访问: http://127.0.0.1:5173/
 call npm run dev --workspace=packages/web
 
 echo.

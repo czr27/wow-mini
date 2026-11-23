@@ -76,7 +76,6 @@ export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
   onChangeCustomDifficulty,
   onLeaveRoom,
   onStartGame,
-  onRefreshRoom,
 }) => {
   const [editingMemberId, setEditingMemberId] = useState<string | null>(null);
   const [showCustomConfigModal, setShowCustomConfigModal] = useState(false);
@@ -105,31 +104,26 @@ export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
 
   const handleQuickFillAi = () => {
     roomManager.autoFillAi(room.id);
-    onRefreshRoom();
   };
 
   const handleAddSingleAi = () => {
     if (!isHost) return;
     roomManager.addAiMember(room.id);
-    onRefreshRoom();
   };
 
   const handleKick = (memberId: string) => {
     roomManager.kickMember(room.id, memberId);
-    onRefreshRoom();
   };
 
   const handleToggleReady = () => {
     if (!currentMember) return;
+    // Server applies SET_READY then ROOM_UPDATE; UI waits for that sync
     roomManager.setPlayerReady(room.id, currentPlayerId, !currentMember.isReady);
-    onRefreshRoom();
   };
 
   const handleSwitchMap = (targetDungeonId: string) => {
-    const success = roomManager.switchMap(room.id, targetDungeonId);
-    if (success) {
-      onRefreshRoom();
-    }
+    // Host SWITCH_MAP → server → ROOM_UPDATE to all members
+    roomManager.switchMap(room.id, targetDungeonId);
   };
 
   const handleSwitchDifficulty = (diff: DungeonDifficulty) => {
@@ -137,13 +131,12 @@ export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
     roomManager.setRoomDifficulty(room.id, diff, diff === 'CUSTOM' ? activeCustom : undefined);
     if (diff === 'CUSTOM') setShowCustomConfigModal(true);
     else setShowCustomConfigModal(false);
-    onRefreshRoom();
   };
 
   const handleUpdateCustomSettings = (next: CustomDifficultySettings) => {
+    // Persist prefs locally; authoritative room state comes back via ROOM_UPDATE
     onChangeCustomDifficulty(next);
     roomManager.setRoomDifficulty(room.id, 'CUSTOM', next);
-    onRefreshRoom();
   };
 
   const updateCoeff = (key: keyof CustomDifficultySettings, val: number) => {
@@ -156,10 +149,9 @@ export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
 
   const handleSelectSpec = (classId: ClassId, specId: string) => {
     if (!editingMember) return;
-    // Allow free role/spec rearrangement; final composition is checked before starting the game
+    // Server CHANGE_SPEC → ROOM_UPDATE; start-game validation enforces quotas
     roomManager.changeMemberSpec(room.id, editingMember.id, classId, specId, { allowOverQuota: true });
     setEditingMemberId(null);
-    onRefreshRoom();
   };
 
   const diffLabel =
@@ -514,24 +506,9 @@ export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
           })}
         </div>
 
-        {/* Bottom Control & Start Game Panel */}
+        {/* Bottom Control & Start Game Panel — ready / start share same size & right slot */}
         <div className="bg-slate-900/90 border border-slate-800 rounded-lg p-4 flex flex-wrap items-center justify-between gap-4 mt-auto">
-          {/* Left: Player Ready Toggle */}
-          <div className="flex items-center space-x-3">
-            {!isHost && currentMember && (
-              <button
-                onClick={handleToggleReady}
-                className={`px-5 py-2 rounded-lg font-bold text-xs shadow transition ${
-                  currentMember.isReady
-                    ? 'bg-rose-700 hover:bg-rose-600 text-white'
-                    : 'bg-emerald-600 hover:bg-emerald-500 text-white'
-                }`}
-              >
-                {currentMember.isReady ? '取消准备' : '准备就绪'}
-              </button>
-            )}
-
-            {/* Validation reasons notice */}
+          <div className="flex items-center space-x-3 min-w-0">
             {!startValidation.canStart ? (
               <div className="flex items-center space-x-2 text-xs text-amber-400/90 bg-amber-950/30 px-3 py-2 rounded border border-amber-900/50">
                 <span>⚠️ 阻碍开局:</span>
@@ -544,13 +521,12 @@ export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
             )}
           </div>
 
-          {/* Right: Start Game Button (Host Only) */}
           {isHost ? (
             <div className="relative group">
               <button
                 disabled={!startValidation.canStart}
                 onClick={onStartGame}
-                className={`px-8 py-3 rounded-lg font-black text-sm tracking-widest shadow-xl transition flex items-center space-x-2 ${
+                className={`w-44 px-4 py-3 rounded-lg font-black text-sm tracking-widest shadow-xl transition flex items-center justify-center gap-2 ${
                   startValidation.canStart
                     ? 'bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-500 text-slate-950 hover:brightness-110 animate-pulse'
                     : 'bg-slate-800 text-slate-600 border border-slate-700 cursor-not-allowed opacity-60'
@@ -568,6 +544,17 @@ export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
                 </div>
               )}
             </div>
+          ) : currentMember ? (
+            <button
+              onClick={handleToggleReady}
+              className={`w-44 px-4 py-3 rounded-lg font-black text-sm tracking-widest shadow-xl transition flex items-center justify-center gap-2 ${
+                currentMember.isReady
+                  ? 'bg-gradient-to-r from-rose-600 via-rose-500 to-rose-600 text-white hover:brightness-110'
+                  : 'bg-gradient-to-r from-emerald-500 via-emerald-400 to-emerald-500 text-slate-950 hover:brightness-110 animate-pulse'
+              }`}
+            >
+              <span>{currentMember.isReady ? '取消准备' : '准备就绪'}</span>
+            </button>
           ) : (
             <div className="text-xs text-slate-400">等待房主开启副本战斗...</div>
           )}

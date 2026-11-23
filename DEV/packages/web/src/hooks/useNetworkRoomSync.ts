@@ -90,37 +90,55 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
   const username = deps.account?.username;
 
   useEffect(() => {
-    const currentChar = depsRef.current.currentChar;
     const account = depsRef.current.account;
-    if (!currentChar || !account) return;
+    if (!account) return;
 
     const d = () => depsRef.current;
+    const currentChar = d().currentChar;
 
-    netClient.connect({
-      username: account.username,
-      playerId: currentChar.id,
-      playerName: currentChar.name,
-      classId: currentChar.classId,
-      spec: currentChar.lastSpec,
-      role: getRoleBySpec(currentChar.classId, currentChar.lastSpec),
-    });
+    // Always attach to the game server (incl. localhost). Session id may be
+    // a placeholder until the player has a character.
+    if (currentChar) {
+      netClient.connect({
+        username: account.username,
+        playerId: currentChar.id,
+        playerName: currentChar.name,
+        classId: currentChar.classId,
+        spec: currentChar.lastSpec,
+        role: getRoleBySpec(currentChar.classId, currentChar.lastSpec),
+      });
+    } else {
+      netClient.connect({
+        username: account.username,
+        playerId: `acc_session_${account.id || account.username}`,
+        playerName: account.username,
+        classId: 'MAGE',
+        spec: 'FIRE',
+        role: 'DPS',
+      });
+    }
 
     const unsub = netClient.subscribe((msg) => {
       if (msg.type === 'AUTH_OK' || msg.type === 'CONNECTED') {
         d().setNetConnected(true);
         d().setRoomsTick((t) => t + 1);
       }
+      if (msg.type === 'DISCONNECTED' || msg.type === 'AUTH_FAIL') {
+        // Only mark offline if the socket is truly gone (ignore stale close races)
+        if (!netClient.connected) {
+          d().setNetConnected(false);
+        }
+      }
       if (msg.type === 'SESSION_KICKED') {
-        // Another client logged into the same account — force local logout
-        d().accountMgrRef.current.logout();
+        // Same character reconnected elsewhere — drop this socket only (other accounts on this PC stay fine)
         netClient.disconnect();
-        d().setAccount(null);
-        d().setSelectedCharId(null);
         d().setNetConnected(false);
         d().setActiveRoomId(null);
+        d().isNetworkGuestRef.current = false;
+        d().isNetworkHostRef.current = false;
         d().setLobbySubView('AUTH_CHAR');
         d().setRunPhase('LOBBY');
-        window.alert((msg.payload as any)?.reason || '同账号已在其他客户端登录，本机已被踢下线');
+        window.alert((msg.payload as any)?.reason || '同一角色已在其他窗口登录，本窗口已断开联机');
       }
       if (msg.type === 'ROOM_LIST_SYNC' && Array.isArray(msg.payload)) {
         const list = msg.payload as NetLobbyRoom[];
@@ -147,6 +165,13 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
           d().isNetworkGuestRef.current =
             room.hostId !== d().currentChar.id &&
             room.members.some((m) => m.id === d().currentChar.id && !m.isAi);
+          // Lobby room meta from server (map / difficulty / custom coeffs)
+          const tier: '5man' | '20man' = room.dungeonId === 'dragon_soul' ? '20man' : '5man';
+          d().setDungeonTier(tier);
+          d().setDungeonDifficulty(room.difficulty);
+          if (room.customDifficulty) {
+            d().setCustomDifficulty(room.customDifficulty);
+          }
           const phase = d().rsmRef.current?.phase || 'LOBBY';
           const alreadyInRun = phase !== 'LOBBY' && phase !== 'SUMMARY';
           const roomInCombat = room.status === 'IN_COMBAT' || room.status === 'OUT_OF_COMBAT';
@@ -155,12 +180,6 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
             d().isNetworkGuestRef.current = room.hostId !== d().currentChar.id;
             d().isNetworkHostRef.current = room.hostId === d().currentChar.id;
             d().setWaitingQueueRoomId(null);
-            const tier: '5man' | '20man' = room.dungeonId === 'dragon_soul' ? '20man' : '5man';
-            d().setDungeonTier(tier);
-            d().setDungeonDifficulty(room.difficulty);
-            if (room.difficulty === 'CUSTOM' && room.customDifficulty) {
-              d().setCustomDifficulty(room.customDifficulty);
-            }
             d().setupRaidUnitsRef.current(
               d().currentChar,
               tier,
@@ -204,6 +223,9 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
           d().setPlayerCast(null);
           d().playerCastRef.current = null;
           d().setCompanionCasts({});
+          // Room teardown must not drop the account session
+          netClient.ensureConnected();
+          if (netClient.connected) d().setNetConnected(true);
         }
         d().setRoomsTick((t) => t + 1);
       }
@@ -472,5 +494,5 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
     return () => {
       unsub();
     };
-  }, [charId, username]);
+  }, [charId, username]); // reconnect when account or selected character changes
 }

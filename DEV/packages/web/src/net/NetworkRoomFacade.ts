@@ -12,9 +12,9 @@ import {
 import { netClient } from './NetClient.js';
 
 /**
- * When WebSocket is connected, mutations go to the server; local RoomManager
- * is a mirror updated via ROOM_UPDATE / ROOM_LIST_SYNC.
- * Offline: mutations run on the local RoomManager (single-player).
+ * Mutations go to the game server over WebSocket; local RoomManager is a
+ * mirror updated via ROOM_UPDATE / ROOM_LIST_SYNC.
+ * Callers must require netClient.connected — there is no intentional offline room mode.
  */
 export class NetworkRoomFacade {
   createRoomLocal: RoomManager['createRoom'];
@@ -42,6 +42,11 @@ export class NetworkRoomFacade {
   }
 
   getRoom(roomId: string): LobbyRoom | undefined {
+    // Prefer server-mirrored cache so lobby ready/map/difficulty stay in sync
+    if (this.connected) {
+      const fromNet = netClient.rooms.find((r) => r.id === roomId);
+      if (fromNet) return fromNet;
+    }
     return this.local.getRoom(roomId);
   }
 
