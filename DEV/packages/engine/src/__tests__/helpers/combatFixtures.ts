@@ -295,109 +295,41 @@ export function registerRawSpells(engine: CombatEngine, rawSpells: any[], classI
   }
 }
 
-const LEGACY_CLASS_SPELLS: Partial<Record<ClassId, any[]>> = {
-  SHAMAN: SHAMAN.spells,
-  DRUID: DRUID.spells,
-  DK: DEATH_KNIGHT.spells,
-  MAGE: MAGE.spells,
-  ROGUE: ROGUE.spells,
-  WARRIOR: WARRIOR.spells,
-  PALADIN: PALADIN.spells,
-  HUNTER: HUNTER.spells,
-  PRIEST: PRIEST.spells,
-};
+function collectClassRawSpells(classId: ClassId): any[] {
+  const legacyFlat: Partial<Record<ClassId, any[]>> = {
+    SHAMAN: SHAMAN.spells,
+    DRUID: DRUID.spells,
+    DK: DEATH_KNIGHT.spells,
+    MAGE: MAGE.spells,
+    ROGUE: ROGUE.spells,
+  };
+  if (legacyFlat[classId]?.length) return legacyFlat[classId]!;
 
-function collectModernClassSpells(classId: ClassId): any[] {
-  if (classId !== 'WARLOCK') return [];
+  const modernDefs: Partial<Record<ClassId, { specs: Array<{ spells: any[] }> }>> = {
+    WARRIOR,
+    PALADIN,
+    HUNTER,
+    PRIEST,
+    WARLOCK,
+  };
+  const def = modernDefs[classId];
+  if (!def) return [];
   const out: any[] = [];
-  for (const spec of WARLOCK.specs || []) {
-    for (const sp of spec.spells || []) out.push(sp);
+  const seen = new Set<string>();
+  for (const spec of def.specs || []) {
+    for (const sp of spec.spells || []) {
+      if (seen.has(sp.id)) continue;
+      seen.add(sp.id);
+      out.push(sp);
+    }
   }
   return out;
 }
 
 export function registerClassSpells(engine: CombatEngine, classId: ClassId): void {
-  const legacy = LEGACY_CLASS_SPELLS[classId];
-  if (legacy?.length) {
-    registerRawSpells(engine, legacy, classId);
-    return;
-  }
-  const modern = collectModernClassSpells(classId);
-  if (modern.length) {
-    registerRawSpells(engine, modern, classId);
-    return;
-  }
-  // Fallback: synthesize minimal castable shells from NormalizedSpell metrics
-  const cls = ALL_CLASSES_NORMALIZED[classId];
-  if (!cls) return;
-  for (const n of cls.allSpells) {
-    const effects: any[] = [];
-    if (n.directHeal > 0) effects.push({ type: 'HEAL', baseValue: n.directHeal });
-    if (n.directDamage > 0) {
-      effects.push({
-        type: n.school === 'PHYSICAL' ? 'PHYSICAL_DAMAGE' : 'SPELL_DAMAGE',
-        baseValue: n.directDamage,
-        school: n.school,
-      });
-    }
-    if (n.isHot && n.hotTotalHeal > 0) {
-      effects.push({
-        type: 'HOT',
-        auraId: n.auraId || `${n.shortId}_hot`,
-        baseValue: Math.round(n.hotTotalHeal / Math.max(1, Math.floor((n.durationMs || 15000) / Math.max(1, n.tickIntervalMs || 3000)))),
-        durationMs: n.durationMs || 15_000,
-        tickIntervalMs: n.tickIntervalMs || 3_000,
-      });
-    }
-    if (n.isDot && n.dotTotalDamage > 0) {
-      effects.push({
-        type: 'DOT',
-        auraId: n.auraId || `${n.shortId}_dot`,
-        baseValue: Math.round(n.dotTotalDamage / Math.max(1, Math.floor((n.durationMs || 15000) / Math.max(1, n.tickIntervalMs || 3000)))),
-        durationMs: n.durationMs || 15_000,
-        tickIntervalMs: n.tickIntervalMs || 3_000,
-      });
-    }
-    if (n.isBuff || n.isDefensive) {
-      effects.push({
-        type: 'BUFF',
-        auraId: n.auraId || n.shortId,
-        durationMs: n.durationMs || 15_000,
-        maxStacks: n.maxStacks || 1,
-        baseValue: n.shieldValue || 0,
-      });
-    }
-    if (n.isInterrupt) effects.push({ type: 'INTERRUPT' });
-    if (n.isTaunt) effects.push({ type: 'TAUNT' });
-    if (n.groundKind) {
-      effects.push({
-        type: 'GROUND_EFFECT',
-        groundKind: n.groundKind,
-        groundColorHex: n.groundColorHex,
-        groundRadius: n.groundRadius,
-        durationMs: n.durationMs || 10_000,
-        tickIntervalMs: n.tickIntervalMs,
-        baseValue: n.directHeal || n.directDamage || 0,
-      });
-    }
-    if (effects.length === 0) effects.push({ type: 'BUFF', auraId: n.shortId, durationMs: 1000 });
-    registerRawSpells(engine, [{
-      id: n.id,
-      name: n.name,
-      classId: n.classId,
-      school: n.school,
-      targetType: n.targetType,
-      castTimeMs: n.channelDurationMs > 0 && n.castTimeMs === n.channelDurationMs ? -1 : n.castTimeMs,
-      channelDurationMs: n.channelDurationMs,
-      gcdCategory: n.gcdCategory,
-      cooldownMs: n.cooldownMs,
-      resourceCost: n.resourceKind === 'NONE' ? 'NONE' : n.resourceKind,
-      resourceCostAmount: n.resourceCostAmount,
-      runesRequired: n.runesRequired,
-      travelOnly: n.isOutOfCombatOnly,
-      effects,
-    }], classId);
-  }
+  const raw = collectClassRawSpells(classId);
+  assert.ok(raw.length > 0, `无法加载 ${classId} 原始技能表`);
+  registerRawSpells(engine, raw, classId);
 }
 
 export function pickCastTarget(
