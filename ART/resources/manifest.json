@@ -3,6 +3,7 @@
     "ancestral_guidance.jpg",
     "ancestral_spirit.jpg",
     "ascendance.jpg",
+    "barkskin.jpg",
     "bloodlust.jpg",
     "chain_heal.jpg",
     "chain_lightning.jpg",
@@ -31,6 +32,7 @@
     "rebirth.jpg",
     "regrowth.jpg",
     "rejuvenation.jpg",
+    "remove_corruption.jpg",
     "revive.jpg",
     "riptide.jpg",
     "spirit_link.jpg",
@@ -44,5 +46,5 @@
     "wind_shear.jpg",
     "wrath.jpg"
   ],
-  "updatedAt": 1795418117449
+  "updatedAt": 1795419272234
 }

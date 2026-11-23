@@ -1818,7 +1818,7 @@ export const SPELL_TOOLTIPS: Record<string, SpellTooltipInfo> = {
     description: '解除一名友方目标身上的 1 个诅咒效果。',
   },
   remove_corruption: {
-    name: '解除腐蚀',
+    name: '清除腐蚀',
     cost: '2,200 法力值',
     castTime: '瞬发',
     cooldown: '8 秒',

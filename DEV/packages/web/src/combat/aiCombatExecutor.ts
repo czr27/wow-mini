@@ -209,7 +209,7 @@ export function executeAiNormalizedSpell(
         woundedAllies.forEach((ally, idx) => {
           const bCrit = idx === 0 ? isCrit : Math.random() < ((u.stats.critChance || 0.22) + critMod);
           const amt = Math.round(jumpAmt * (idx === 0 ? 1 : (bCrit ? 1.5 : 1)));
-          engine.healUnit(u, ally, amt, bCrit, idx === 0 ? sp.name : `${sp.name}(第${idx + 1}跳)`);
+          engine.healUnit(u, ally, amt, bCrit, sp.name);
           jumpAmt *= 0.85;
         });
         return;

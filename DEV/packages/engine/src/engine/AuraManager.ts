@@ -210,7 +210,7 @@ export class AuraManager {
           if (buff.spellId === 'lifebloom') {
             const val = buff.tickValue ?? 2400;
             const bloomVal = val * 4 * expiredCount;
-            this.engine.applyHeal(buff.sourceUnitId, unit.id, bloomVal, false, 0, '生命绽放 (大绽放)');
+            this.engine.applyHeal(buff.sourceUnitId, unit.id, bloomVal, false, 0, 'lifebloom');
           }
           buff.stackRemainingMs = buff.stackRemainingMs.filter(ms => ms > 0);
           buff.stacks = buff.stackRemainingMs.length;
@@ -228,7 +228,7 @@ export class AuraManager {
             // 生命绽放 15 秒倒计时自然结束：触发大绽放爆发治疗（层数越多治疗量越高）
             const val = buff.tickValue ?? 2400;
             const bloomVal = val * 4 * buff.stacks;
-            this.engine.applyHeal(buff.sourceUnitId, unit.id, bloomVal, false, 0, '生命绽放 (大绽放)');
+            this.engine.applyHeal(buff.sourceUnitId, unit.id, bloomVal, false, 0, 'lifebloom');
           }
           toRemove.push(buff.id);
         }

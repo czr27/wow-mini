@@ -25,7 +25,7 @@ const balanceDruidDispels = getPlayerDispelCapabilities('DRUID', 'BALANCE');
 assert.deepStrictEqual(
   balanceDruidDispels.sort(),
   ['CURSE', 'POISON'].sort(),
-  '平衡德鲁伊必须能驱散诅咒、中毒 (解除腐蚀)，不能驱散魔法'
+  '平衡德鲁伊必须能驱散诅咒、中毒 (清除腐蚀)，不能驱散魔法'
 );
 
 const restoShamanDispels = getPlayerDispelCapabilities('SHAMAN', 'RESTORATION');

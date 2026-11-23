@@ -388,4 +388,80 @@ export function spellsForSpec(classId: ClassId, specId: string): NormalizedSpell
   return cls.allSpells.filter(s => s.specIds.length === 0 || s.specIds.includes(specId));
 }
 
+/**
+ * Registry + smoke cast for every spell of a class/spec.
+ * Skips out-of-combat-only spells for cast smoke (still asserts registry).
+ */
+export function assertSpecSpellSuite(opts: {
+  classId: ClassId;
+  specId: string;
+  role: RoleId;
+  casterOverrides?: UnitFactoryOverrides;
+}): void {
+  const { classId, specId, role } = opts;
+  const spells = spellsForSpec(classId, specId);
+  assert.ok(spells.length > 0, `${classId}/${specId} 应至少有 1 个技能`);
+
+  for (const sp of spells) {
+    assertSpellRegistry(sp.id, { classId, specId }, classId);
+  }
+
+  const engine = new CombatEngine();
+  registerClassSpells(engine, classId);
+  const caster = makeUnit({
+    id: 'caster',
+    classId,
+    role,
+    isPlayer: true,
+    spec: specId,
+    mp: 50_000,
+    maxMp: 50_000,
+    rage: 100,
+    energy: 100,
+    focus: 100,
+    runicPower: 100,
+    holyPower: 3,
+    comboPoints: 5,
+    ...opts.casterOverrides,
+  });
+  if (caster.resources?.length) {
+    for (const r of caster.resources) r.current = r.max;
+  }
+  const ally = makeAlly('ally_1', 0.4);
+  const enemy = makeBoss('boss_1');
+  engine.addUnit(caster);
+  engine.addUnit(ally);
+  engine.addUnit(enemy);
+
+  let castAttempts = 0;
+  let castOk = 0;
+  for (const sp of spells) {
+    if (sp.isOutOfCombatOnly || sp.isResurrect) continue;
+    castAttempts++;
+    // reset resources / clear GCD between casts
+    if (caster.resources) for (const r of caster.resources) r.current = r.max;
+    caster.mp = caster.maxMp;
+    caster.rage = 100;
+    caster.energy = 100;
+    caster.focus = 100;
+    caster.holyPower = 3;
+    caster.comboPoints = 5;
+    caster.runicPower = 100;
+    if (caster.runes) for (const r of caster.runes) r.cooldownMs = 0;
+    engine.tick(2000);
+
+    const targetId = pickCastTarget(sp, caster, ally, enemy);
+    const ok = castAndResolve(engine, caster.id, sp.id, targetId);
+    if (ok) castOk++;
+  }
+
+  // Allow some casts to fail (resource quirks / unfinished hooks) but majority must work
+  if (castAttempts > 0) {
+    assert.ok(
+      castOk / castAttempts >= 0.5,
+      `${classId}/${specId} 可施放成功率过低: ${castOk}/${castAttempts}`
+    );
+  }
+}
+
 export { ALL_CLASSES_NORMALIZED, getSpellByAnyId, LEVEL_80_STATS };

@@ -2,9 +2,11 @@
   "files": [
     "ancestral_guidance.jpg",
     "ascendance.jpg",
+    "barkskin.jpg",
     "earth_shield.jpg",
     "lifebloom.jpg",
     "mana_tide.jpg",
+    "remove_corruption.jpg",
     "windfury_totem.jpg"
   ],
   "items": [
@@ -103,7 +105,39 @@
       "savedAs": "G:/Desktop/wow_simu/ART/resources/未审计/windfury_totem.jpg",
       "pageUrl": "https://www.wowhead.com/classic/cn/spell=10613/%E9%A3%8E%E6%80%92%E5%9B%BE%E8%85%BE",
       "httpBackend": "curl_cffi:chrome110"
+    },
+    {
+      "filename": "remove_corruption.jpg",
+      "spellId": "remove_corruption",
+      "cnName": "清除腐蚀",
+      "enName": "Remove Corruption",
+      "wowheadSpell": 2782,
+      "flavor": "retail",
+      "iconName": "spell_holy_removecurse",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/spell_holy_removecurse.jpg",
+      "source": "tooltip",
+      "dataEnv": 1,
+      "bytes": 1934,
+      "savedAs": "G:/Desktop/wow_simu/ART/resources/未审计/remove_corruption.jpg",
+      "pageUrl": "https://www.wowhead.com/cn/spell=2782/%E6%B8%85%E9%99%A4%E8%85%90%E8%9A%80",
+      "httpBackend": "curl_cffi:chrome107"
+    },
+    {
+      "filename": "barkskin.jpg",
+      "spellId": "barkskin",
+      "cnName": "树皮术",
+      "enName": "Barkskin",
+      "wowheadSpell": 22812,
+      "flavor": "classic",
+      "iconName": "spell_nature_stoneclawtotem",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/spell_nature_stoneclawtotem.jpg",
+      "source": "tooltip",
+      "dataEnv": 4,
+      "bytes": 2429,
+      "savedAs": "G:/Desktop/wow_simu/ART/resources/未审计/barkskin.jpg",
+      "pageUrl": "https://www.wowhead.com/classic/cn/spell=22812/%E6%A0%91%E7%9A%AE%E6%9C%AF",
+      "httpBackend": "curl_cffi:chrome107"
     }
   ],
-  "updatedAt": 1795389120084
+  "updatedAt": 1795390431668
 }

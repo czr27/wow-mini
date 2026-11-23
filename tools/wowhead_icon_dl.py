@@ -66,6 +66,9 @@ CN_TO_SPELL_ID = {
     "法力之潮": "mana_tide",
     "法力之潮图腾": "mana_tide",
     "风怒图腾": "windfury_totem",
+    "清除腐蚀": "remove_corruption",
+    "解除腐蚀": "remove_corruption",
+    "树皮术": "barkskin",
 }
 
 # 英文 tooltip 名 -> spellId（CN 未命中时）

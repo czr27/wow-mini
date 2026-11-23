@@ -312,7 +312,7 @@ export function resolvePlayerCast(
         .sort((a, b) => (a.hp / a.maxHp) - (b.hp / b.maxHp));
       for (let i = 0; i < Math.min(3, otherAllies.length); i++) {
         healVal = Math.round(healVal * 0.7);
-        engine.healUnit(player, otherAllies[i], healVal, Math.random() < (player.stats.critChance || 0.25), `治疗链(第${i + 2}跳)`);
+        engine.healUnit(player, otherAllies[i], healVal, Math.random() < (player.stats.critChance || 0.25), '治疗链');
       }
     } else if (spellId === 'revive' || spellId === 'ancestral_spirit' || spellId === 'redemption' || spellId === 'resurrection') {
       const deadTarget = engine.friendlyUnits.find(u => (!u.isAlive && !u.alive) || u.hp <= 0);

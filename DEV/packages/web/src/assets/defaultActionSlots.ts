@@ -122,7 +122,7 @@ export function getDefaultActionSlots(classId: ClassId, specId: string): ActionS
       add(4, 'sunfire', '日火术', '日', 0, '#FFA500');
       add(5, 'hurricane', '飓风', '飓', 0, '#38BDF8');
       add(6, 'starfall', '星辰坠落', '坠', 90000, '#A855F7');
-      add(7, 'remove_corruption', '解除腐蚀', '驱', 0, '#22C55E');
+      add(7, 'remove_corruption', '清除腐蚀', '驱', 0, '#22C55E');
       add(8, 'innervate', '激活', '活', 180000, '#00CED1');
       add(9, 'revive', '起死回生', '起', 0, '#FACC15');
       add(10, 'rebirth', '复生', '复', 600000, '#10B981');

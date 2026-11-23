@@ -219,7 +219,7 @@ export const DRUID: ClassSpec = {
 
     {
       id: 'druid_remove_corruption',
-      name: '净化腐蚀',
+      name: '清除腐蚀',
       castTimeMs: 0,
       gcdType: 'normal',
       gcdCategory: 'NORMAL',
