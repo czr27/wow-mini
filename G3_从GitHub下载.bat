@@ -11,7 +11,13 @@ if defined HAS_CHANGES (
     git status -s
     echo.
     echo 建议先运行 "2_上传到GitHub.bat"，防止代码冲突。
-    set /p "CONFIRM=仍要尝试直接拉取吗？输入 y 继续，其他键取消: "
+    echo 【警告】输入 f 会直接丢弃本地所有改动，强制拉远程版本！
+    set /p "CONFIRM=仍要尝试直接拉取吗？输入 y 普通拉取 / f 强制覆盖 / 其他键取消: "
+    if /i "!CONFIRM!"=="f" (
+        echo 正在丢弃本地修改，强制同步远程main分支...
+        git reset --hard origin/main
+        goto finish
+    )
     if /i not "!CONFIRM!"=="y" (
         echo 已取消下载。
         pause
@@ -21,6 +27,7 @@ if defined HAS_CHANGES (
 
 echo 正在从 GitHub 同步最新代码到本地...
 git pull origin main
+:finish
 if errorlevel 1 (
     echo.
     echo 同步失败，请把窗口里的报错发给我帮你处理。
