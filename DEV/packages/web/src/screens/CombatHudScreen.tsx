@@ -101,6 +101,10 @@ export type CombatHudScreenProps = {
   ) => void;
   onAccountRefresh: () => void;
   isPlayerHealer: boolean;
+  /** Networked combat: lerp remote units/boss to host positions */
+  syncRemotePositions?: boolean;
+  /** Guest reports local player position to host */
+  onNetworkMoveReport?: (x: number, y: number) => void;
 };
 
 function resolveUnitCastState(
@@ -194,6 +198,8 @@ export function CombatHudScreen(props: CombatHudScreenProps) {
     onSaveUiLayout,
     onAccountRefresh,
     isPlayerHealer,
+    syncRemotePositions,
+    onNetworkMoveReport,
   } = props;
 
   const allUnits = [...friendlyUnits, ...(bossUnit ? [bossUnit] : [])];
@@ -242,6 +248,8 @@ export function CombatHudScreen(props: CombatHudScreenProps) {
           groundTargetState={groundTargetState}
           onConfirmGroundTarget={onConfirmGroundTarget}
           onCancelGroundTarget={onCancelGroundTarget}
+          syncRemotePositions={syncRemotePositions}
+          onNetworkMoveReport={onNetworkMoveReport}
         />
       </div>
 

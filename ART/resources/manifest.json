@@ -1,15 +1,19 @@
 {
   "files": [
+    "ancestral_guidance.jpg",
     "ancestral_spirit.jpg",
+    "ascendance.jpg",
     "bloodlust.jpg",
     "chain_heal.jpg",
     "chain_lightning.jpg",
     "cleanse_spirit.jpg",
+    "earth_shield.jpg",
     "earth_shock.jpg",
     "efflorescence.jpg",
     "flame_shock.jpg",
     "healing_rain.jpg",
     "healing_surge.jpg",
+    "healing_tide.jpg",
     "healing_touch.jpg",
     "healing_wave.jpg",
     "innervate.jpg",
@@ -17,6 +21,7 @@
     "lava_burst.jpg",
     "lifebloom.jpg",
     "lightning_bolt.jpg",
+    "mana_tide.jpg",
     "mangle.jpg",
     "manifest.json",
     "moonfire.jpg",
@@ -35,9 +40,9 @@
     "swiftmend.jpg",
     "tranquility.jpg",
     "wild_growth.jpg",
+    "windfury_totem.jpg",
     "wind_shear.jpg",
-    "wrath.jpg",
-    "治疗之潮.jpg"
+    "wrath.jpg"
   ],
-  "updatedAt": 1795415854348
+  "updatedAt": 1795418117449
 }

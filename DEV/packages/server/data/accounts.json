@@ -406,7 +406,7 @@
       }
     ],
     "createdAtIso": "2026-11-22T13:33:20.156Z",
-    "updatedAtMs": 1795412254899
+    "updatedAtMs": 1795417946191
   },
   {
     "id": "acc_1795307172004_ze24f",
@@ -874,7 +874,7 @@
         "id": "char_1795307313080_emowk",
         "name": "牛头人万岁",
         "classId": "DRUID",
-        "lastSpec": "RESTORATION",
+        "lastSpec": "BALANCE",
         "specKeybindings": {
           "RESTORATION": {
             "0": "1",
@@ -951,7 +951,7 @@
             "height": 341
           }
         },
-        "updatedAtMs": 1795413895665,
+        "updatedAtMs": 1795417744284,
         "specSlotLayouts": {
           "RESTORATION": {
             "0": "moonfire",
@@ -1095,7 +1095,7 @@
       }
     ],
     "createdAtIso": "2026-11-23T00:06:13.466Z",
-    "updatedAtMs": 1795413895665
+    "updatedAtMs": 1795417744284
   },
   {
     "id": "acc_1795413301351_h51yj",
@@ -1106,9 +1106,23 @@
         "id": "char_1795413314456_2topp",
         "name": "面包人",
         "classId": "MAGE",
-        "lastSpec": "FIRE",
+        "lastSpec": "FROST",
         "specKeybindings": {
           "FIRE": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          },
+          "FROST": {
             "0": "1",
             "1": "2",
             "2": "3",
@@ -1125,7 +1139,54 @@
         },
         "clearCertificates": [],
         "createdAtIso": "2026-11-23T05:55:14.456Z",
-        "updatedAtMs": 1795413314456,
+        "updatedAtMs": 1795417837910,
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {
+          "raidFrames": {
+            "x": 24,
+            "y": 220,
+            "width": 262,
+            "height": 334
+          }
+        }
+      },
+      {
+        "id": "char_1795417718720_vcgbq",
+        "name": "插图腾",
+        "classId": "SHAMAN",
+        "lastSpec": "RESTORATION",
+        "specKeybindings": {
+          "RESTORATION": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-23T07:08:38.721Z",
+        "updatedAtMs": 1795417718720,
         "lastDungeonTier": "5man",
         "lastDungeonDifficulty": "HEROIC",
         "lastCustomDifficulty": {
@@ -1144,6 +1205,55 @@
       }
     ],
     "createdAtIso": "2026-11-23T05:55:01.351Z",
-    "updatedAtMs": 1795413314456
+    "updatedAtMs": 1795417837910
+  },
+  {
+    "id": "acc_1795417946193_ut3p0",
+    "username": "hud_test_user",
+    "passwordHash": "test_hash",
+    "characters": [
+      {
+        "id": "char_1795417946193_o4ngi",
+        "name": "测试德鲁伊",
+        "classId": "DRUID",
+        "lastSpec": "RESTORATION",
+        "specKeybindings": {
+          "RESTORATION": {
+            "0": "1",
+            "1": "2",
+            "2": "3",
+            "3": "4",
+            "4": "5",
+            "5": "6",
+            "6": "Q",
+            "7": "E",
+            "8": "R",
+            "9": "F",
+            "10": "Z",
+            "11": "X"
+          }
+        },
+        "clearCertificates": [],
+        "createdAtIso": "2026-11-23T07:12:26.194Z",
+        "updatedAtMs": 1795417946194,
+        "lastDungeonTier": "5man",
+        "lastDungeonDifficulty": "HEROIC",
+        "lastCustomDifficulty": {
+          "playerDamageCoeff": 1,
+          "playerHealingCoeff": 1,
+          "playerHpCoeff": 1,
+          "playerMpCoeff": 1,
+          "aiDamageCoeff": 1,
+          "aiHealingCoeff": 1,
+          "aiHpCoeff": 1,
+          "aiMpCoeff": 1,
+          "enemyDamageCoeff": 1,
+          "bossHpCoeff": 1
+        },
+        "uiLayout": {}
+      }
+    ],
+    "createdAtIso": "2026-11-23T07:12:26.193Z",
+    "updatedAtMs": 1795417946194
   }
 ]

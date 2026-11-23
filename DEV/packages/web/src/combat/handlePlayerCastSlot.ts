@@ -86,14 +86,21 @@ export function handlePlayerCastSlot(slotIdx: number, ctx: HandlePlayerCastSlotC
   const player = engine.friendlyUnits.find(u => u.isPlayer) || (ctx.currentChar ? engine.getUnit(ctx.currentChar.id) : undefined);
   const boss = engine.bossUnit;
 
-  // Network guest: forward cast intent to host; do not simulate locally
+  // Network guest: forward cast intent to host only — never resolve locally
+  // (HoT/DoT/dmg/heal come back via host COMBAT_STATE; avoids double-apply)
   if (ctx.isNetworkGuest && ctx.netConnected && ctx.activeRoomId && ctx.currentChar) {
+    const targetId =
+      ctx.selectedTargetId ||
+      ctx.bossTargetId ||
+      boss?.id ||
+      player?.id ||
+      null;
     ctx.sendNetworkCast({
       kind: 'CAST',
       playerId: ctx.currentChar.id,
       spellId: slot.spellId,
       slotIndex: slotIdx,
-      targetId: ctx.bossTargetId || boss?.id || player?.id || null,
+      targetId,
     });
     return;
   }

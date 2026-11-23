@@ -1,4 +1,11 @@
-import type { ClassId, RoleId, DungeonDifficulty, CustomDifficultySettings, Buff } from '../types.js';
+import type {
+  ClassId,
+  RoleId,
+  DungeonDifficulty,
+  CustomDifficultySettings,
+  Buff,
+  FloatingCombatText,
+} from '../types.js';
 import type { LobbyRoom, PlayerInfo } from '../room/RoomTypes.js';
 
 /** Compact unit state for host→guest combat sync (server does not tick). */
@@ -94,6 +101,8 @@ export interface NetworkCombatSnapshot {
   cooldowns?: NetworkCooldownTimeline[];
   gcds?: NetworkGcdTimeline[];
   groundEffects?: NetworkGroundEffectSnapshot[];
+  /** Host-authoritative floating combat text — guests mirror for atmosphere numbers */
+  floatingTexts?: FloatingCombatText[];
   /** Explicit interrupt events since last snapshot (also mirrored on casts[].interrupted) */
   interrupts?: Array<{ unitId: string; spellId?: string; atMs: number }>;
   wipeVote?: NetworkVoteState;

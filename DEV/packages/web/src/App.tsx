@@ -175,6 +175,13 @@ export function App() {
   const [bossTargetId, setBossTargetId] = useState<string | null>(null);
   const [groundEffects, setGroundEffects] = useState<GroundEffect[]>([]);
   const [floatingTexts, setFloatingTexts] = useState<FloatingCombatText[]>([]);
+  const [guestBossCasting, setGuestBossCasting] = useState<{
+    spellName: string;
+    elapsedMs: number;
+    castTimeMs: number;
+    interruptible: boolean;
+  } | null>(null);
+  const lastMoveBroadcastMsRef = useRef(0);
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
   const [hoveredTargetId, setHoveredTargetId] = useState<string | null>(null);
   const [playerCooldowns, setPlayerCooldowns] = useState<Record<string, { cdRemainingMs: number; totalCdMs: number }>>({});
@@ -391,6 +398,9 @@ export function App() {
     setSkipTravelVote,
     setMyWipeVote,
     setMySkipVote,
+    setGroundEffects,
+    setFloatingTexts,
+    setGuestBossCasting,
   });
 
   // ── [Game Load] 游戏加载时，技能/Buff 图标优先从 \ART\resources\ 寻找 ──
@@ -512,6 +522,12 @@ export function App() {
         isCrit: false,
       });
       clearPlayerIncomingCast();
+      if (isNetworkGuestRef.current && netClient.connected && activeRoomIdRef.current && currentChar) {
+        netClient.sendPlayerInput(activeRoomIdRef.current, {
+          kind: 'INTERRUPT',
+          playerId: currentChar.id,
+        });
+      }
     }
 
     // Check Lord Walden Red Potion penalty: Moving deals lethal damage!
@@ -599,6 +615,15 @@ export function App() {
   };
 
   const handleDispelUnit = (targetUnitId?: string | null) => {
+    // Guest: report only — host resolves & broadcasts; avoid local double-apply
+    if (isNetworkGuestRef.current && netClient.connected && activeRoomIdRef.current && currentChar) {
+      netClient.sendPlayerInput(activeRoomIdRef.current, {
+        kind: 'DISPEL',
+        playerId: currentChar.id,
+        targetId: targetUnitId || selectedTargetId || currentChar.id,
+      });
+      return;
+    }
     const engine = engineRef.current;
     const player = engine.friendlyUnits.find(u => u.isPlayer);
     if (!player) return;
@@ -613,6 +638,20 @@ export function App() {
       targetUnitId,
       triggerCooldown,
       triggerGcd,
+    });
+  };
+
+  /** Guest WASD/click-move → host (throttled). Host broadcasts positions in COMBAT_STATE. */
+  const handleNetworkMovePosition = (x: number, y: number) => {
+    if (!isNetworkGuestRef.current || !netClient.connected || !activeRoomIdRef.current || !currentChar) return;
+    const now = Date.now();
+    if (now - lastMoveBroadcastMsRef.current < 80) return;
+    lastMoveBroadcastMsRef.current = now;
+    netClient.sendPlayerInput(activeRoomIdRef.current, {
+      kind: 'MOVE',
+      playerId: currentChar.id,
+      x,
+      y,
     });
   };
 
@@ -1747,7 +1786,9 @@ export function App() {
             playerCast={playerCast}
             companionCasts={companionCasts}
             bossCasting={
-              bossAiRef.current?.currentCasting
+              isNetworkGuestRef.current
+                ? guestBossCasting
+                : bossAiRef.current?.currentCasting
                 ? {
                     spellName: bossAiRef.current.currentCasting.skill.name,
                     elapsedMs: bossAiRef.current.currentCasting.elapsedMs,
@@ -1756,6 +1797,10 @@ export function App() {
                   }
                 : null
             }
+            syncRemotePositions={
+              !!(netClient.connected && (isNetworkHostRef.current || isNetworkGuestRef.current))
+            }
+            onNetworkMoveReport={handleNetworkMovePosition}
             deadUnits={deadUnits}
             totalDurationSec={totalDurationSec}
             playerGcdRemainingMs={playerGcdRemainingMs}

@@ -40,6 +40,10 @@ interface Props {
   groundTargetState?: GroundTargetState | null;
   onConfirmGroundTarget?: (slotIdx: number, spellId: string, x: number, y: number) => void;
   onCancelGroundTarget?: () => void;
+  /** When true, remote humans/AI/boss lerp to unit.position from host snapshot */
+  syncRemotePositions?: boolean;
+  /** Guest: report local player xy to host for broadcast */
+  onNetworkMoveReport?: (x: number, y: number) => void;
 }
 
 interface Projectile {
@@ -1834,6 +1838,8 @@ export const CombatCanvas: React.FC<Props> = ({
   groundTargetState = null,
   onConfirmGroundTarget,
   onCancelGroundTarget,
+  syncRemotePositions = false,
+  onNetworkMoveReport,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -2516,6 +2522,9 @@ export const CombatCanvas: React.FC<Props> = ({
           playerUnit.position.y = playerPosRef.current.y;
         }
         if (onPlayerMove) onPlayerMove();
+        if (onNetworkMoveReport) {
+          onNetworkMoveReport(playerPosRef.current.x, playerPosRef.current.y);
+        }
       } else if (autoApproachTarget && canMove) {
         // Auto-approach target when spell distance was insufficient
         const dx = autoApproachTarget.targetX - playerPosRef.current.x;
@@ -2534,6 +2543,9 @@ export const CombatCanvas: React.FC<Props> = ({
             playerUnit.position.y = playerPosRef.current.y;
           }
           if (onPlayerMove) onPlayerMove();
+          if (onNetworkMoveReport) {
+            onNetworkMoveReport(playerPosRef.current.x, playerPosRef.current.y);
+          }
         } else {
           if (onApproachTargetReached) onApproachTargetReached();
         }
@@ -2556,6 +2568,9 @@ export const CombatCanvas: React.FC<Props> = ({
             playerUnit.position.y = playerPosRef.current.y;
           }
           if (onPlayerMove) onPlayerMove();
+          if (onNetworkMoveReport) {
+            onNetworkMoveReport(playerPosRef.current.x, playerPosRef.current.y);
+          }
         } else {
           clickTargetRef.current = null;
         }
@@ -3339,6 +3354,14 @@ export const CombatCanvas: React.FC<Props> = ({
         ctx.restore();
       }
 
+      // Networked: pull boss / remote units toward host-authoritative positions
+      if (syncRemotePositions) {
+        if (bossUnit?.position) {
+          bossPosRef.current.x += (bossUnit.position.x - bossPosRef.current.x) * 0.4;
+          bossPosRef.current.y += (bossUnit.position.y - bossPosRef.current.y) * 0.4;
+        }
+      }
+
       // ── Process AI Companions Pathfinding & Behaviors (Item 5: Perturbation & Micro-stepping) ──
       const bossPos = bossPosRef.current;
       units.forEach((u, idx) => {
@@ -3346,17 +3369,29 @@ export const CombatCanvas: React.FC<Props> = ({
 
         // Missing pose (hot-join etc.): seed on predicted combat formation, slight perturb
         if (!companionPositionsRef.current[u.id]) {
-          const base = getCombatFormationPos(u, idx, bossPos, 1);
+          const seed = u.position || getCombatFormationPos(u, idx, bossPos, 1);
           const perturbX = ((idx * 17) % 21) - 10;
           const perturbY = ((idx * 23) % 21) - 10;
           companionPositionsRef.current[u.id] = {
-            x: base.x + perturbX * 0.35,
-            y: base.y + perturbY * 0.35,
+            x: seed.x + (u.position ? 0 : perturbX * 0.35),
+            y: seed.y + (u.position ? 0 : perturbY * 0.35),
           };
         }
         const pos = companionPositionsRef.current[u.id];
         const isAlive = (u.isAlive ?? u.alive) && u.hp > 0;
         if (!isAlive) return;
+
+        // Network sync: guests follow all remotes; host only follows remote humans (MOVE)
+        // Host AI companions still pathfind locally and write unit.position for broadcast
+        const followHostPos =
+          syncRemotePositions &&
+          !!u.position &&
+          (!!onNetworkMoveReport || !!u.isHumanControlled);
+        if (followHostPos) {
+          pos.x += (u.position.x - pos.x) * 0.4;
+          pos.y += (u.position.y - pos.y) * 0.4;
+          return;
+        }
 
         let targetX = pos.x;
         let targetY = pos.y;
@@ -3474,8 +3509,16 @@ export const CombatCanvas: React.FC<Props> = ({
       });
 
       // ── Process Boss Movement & Pursuit AI (受距离约束，够不着会跑过去) ──
+      // Guests: boss pose already lerped from host snapshot — skip local chase AI
       let bossIsMoving = false;
-      if (runPhase === 'BOSS_COMBAT' && bossUnit && (bossUnit.alive ?? bossUnit.isAlive) && bossUnit.hp > 0) {
+      const guestFollowHostBoss = syncRemotePositions && !!onNetworkMoveReport;
+      if (
+        !guestFollowHostBoss &&
+        runPhase === 'BOSS_COMBAT' &&
+        bossUnit &&
+        (bossUnit.alive ?? bossUnit.isAlive) &&
+        bossUnit.hp > 0
+      ) {
         const isCasting = Boolean((bossUnit as any)?.isCasting);
 
         // 查找当前首领目标（优先仇恨目标，其次存活坦克、玩家或任意活着的队友）
@@ -4007,7 +4050,7 @@ export const CombatCanvas: React.FC<Props> = ({
 
     animId = requestAnimationFrame(render);
     return () => cancelAnimationFrame(animId);
-  }, [units, bossUnit, bossTargetId, groundEffects, floatingTexts, runPhase, screenShake, selectedUnitId, onPlayerMove, onCancelCast, onApproachComplete, onFastForwardTravel, revivingUnitId, reviveProgress, autoApproachTarget, onApproachTargetReached, isCorpseRunning, corpseRunRemainingMs, groundTargetState]);
+  }, [units, bossUnit, bossTargetId, groundEffects, floatingTexts, runPhase, screenShake, selectedUnitId, onPlayerMove, onCancelCast, onApproachComplete, onFastForwardTravel, revivingUnitId, reviveProgress, autoApproachTarget, onApproachTargetReached, isCorpseRunning, corpseRunRemainingMs, groundTargetState, syncRemotePositions, onNetworkMoveReport]);
 
   return (
     <div className="relative w-full h-full min-h-[500px] overflow-hidden bg-[#070710] cursor-crosshair select-none">

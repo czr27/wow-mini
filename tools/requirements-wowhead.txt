@@ -1,0 +1,4 @@
+# Wowhead 图标下载小工具依赖（独立于游戏）
+curl_cffi>=0.5.0
+cloudscraper>=1.2.71
+requests>=2.28.0

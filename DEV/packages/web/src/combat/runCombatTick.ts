@@ -361,6 +361,18 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
         facingRad: (g as any).facingRad,
         coneAngleRad: (g as any).coneAngleRad,
       }));
+      const floatingTexts = (engine.effectsManager?.floatingTexts || []).map((f) => ({
+        id: f.id,
+        targetId: f.targetId,
+        sourceId: f.sourceId,
+        text: f.text,
+        category: f.category,
+        isCrit: f.isCrit,
+        isFromPlayerOrPet: f.isFromPlayerOrPet,
+        isToPlayer: f.isToPlayer,
+        xOffset: f.xOffset,
+        createdAtMs: f.createdAtMs,
+      }));
       netClient.sendCombatState({
         roomId: ctx.activeRoomIdRef.current,
         timeMs: now,
@@ -377,6 +389,7 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
         cooldowns,
         gcds,
         groundEffects,
+        floatingTexts,
       });
     }
   }

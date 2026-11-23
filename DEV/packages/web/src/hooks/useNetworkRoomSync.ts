@@ -17,6 +17,8 @@ import type {
   VoteResultPayload,
   LobbyRoom as NetLobbyRoom,
   AccountManager,
+  GroundEffect,
+  FloatingCombatText,
 } from '@cata-raid-sim/engine';
 import {
   roomManager,
@@ -79,6 +81,16 @@ export type NetworkRoomSyncDeps = {
   setSkipTravelVote: Dispatch<SetStateAction<NetworkVoteState | null>>;
   setMyWipeVote: Dispatch<SetStateAction<'RETRY' | 'FINISH' | null>>;
   setMySkipVote: Dispatch<SetStateAction<'YES' | 'NO' | null>>;
+  setGroundEffects: Dispatch<SetStateAction<GroundEffect[]>>;
+  setFloatingTexts: Dispatch<SetStateAction<FloatingCombatText[]>>;
+  setGuestBossCasting: Dispatch<
+    SetStateAction<{
+      spellName: string;
+      elapsedMs: number;
+      castTimeMs: number;
+      interruptible: boolean;
+    } | null>
+  >;
 };
 
 /** WebSocket connect + room/combat sync subscription (from App). */
@@ -297,9 +309,45 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
         d().guestCdTimelinesRef.current = snap.cooldowns || [];
         d().guestGcdTimelinesRef.current = snap.gcds || [];
 
+        // Ground FX from host (reporter never applies local FX — only this snapshot)
+        if (Array.isArray(snap.groundEffects)) {
+          d().setGroundEffects(
+            snap.groundEffects.map((g) => ({
+              id: g.id,
+              kind: g.kind,
+              spellId: g.spellId,
+              ownerId: g.ownerId,
+              x: g.x,
+              y: g.y,
+              radius: g.radius,
+              colorHex: g.colorHex,
+              remainingMs: g.remainingMs,
+              ...(g.facingRad != null ? { facingRad: g.facingRad } : {}),
+              ...(g.coneAngleRad != null ? { coneAngleRad: g.coneAngleRad } : {}),
+            })) as GroundEffect[]
+          );
+        }
+
+        // Floating combat text from host (guest never sims damage — mirror atmosphere numbers)
+        if (Array.isArray(snap.floatingTexts)) {
+          d().setFloatingTexts(
+            snap.floatingTexts.map((f) => ({
+              id: f.id,
+              targetId: f.targetId,
+              sourceId: f.sourceId,
+              text: f.text,
+              category: f.category,
+              isCrit: !!f.isCrit,
+              isFromPlayerOrPet: f.isFromPlayerOrPet,
+              isToPlayer: f.isToPlayer,
+              xOffset: f.xOffset,
+              createdAtMs: f.createdAtMs,
+            }))
+          );
+        }
+
         // Apply cast timelines to local player cast bar / companion casts
         const now = Date.now();
-        const myId = d().currentChar?.id;
         const myCast = (snap.casts || []).find((c) => c.unitId === myId && !c.interrupted);
         if (myCast) {
           const built = buildCastFromTimeline(myCast, now);
@@ -310,18 +358,37 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
             d().playerCastRef.current = null;
             d().setPlayerCast(null);
           }
-        } else if ((snap.interrupts || []).some((i) => i.unitId === myId) || (snap.casts || []).some((c) => c.unitId === myId && c.interrupted)) {
+        } else {
+          // Always clear when host has no active cast for me (avoid sticky / double-bar)
           d().playerCastRef.current = null;
           d().setPlayerCast(null);
         }
 
         const companion: Record<string, { spellName: string; progress: number }> = {};
+        let bossCasting: {
+          spellName: string;
+          elapsedMs: number;
+          castTimeMs: number;
+          interruptible: boolean;
+        } | null = null;
+        const bossId = engine.bossUnit?.id;
         for (const c of snap.casts || []) {
-          if (c.interrupted || c.unitId === myId) continue;
+          if (c.interrupted) continue;
+          if (c.unitId === myId) continue;
           const built = buildCastFromTimeline(c, now);
-          if (built) companion[c.unitId] = { spellName: built.spellName, progress: built.progress };
+          if (!built) continue;
+          companion[c.unitId] = { spellName: built.spellName, progress: built.progress };
+          if (bossId && c.unitId === bossId) {
+            bossCasting = {
+              spellName: c.spellName,
+              elapsedMs: Math.max(0, now - c.startedAtMs),
+              castTimeMs: c.totalMs || 1,
+              interruptible: c.interruptible !== false,
+            };
+          }
         }
         d().setCompanionCasts(companion);
+        d().setGuestBossCasting(bossCasting);
 
         if (myId) {
           const gcd = gcdRemainingFromTimelines(snap.gcds, myId, now);
