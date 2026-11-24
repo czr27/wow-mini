@@ -54,6 +54,11 @@ import {
   applyCastLifecycleToTimelines,
   companionCastsFromTimelines,
 } from '../combat/castLifecycleNet.js';
+import {
+  getLocalEncounterRecorder,
+  mergeHostEncounterReports,
+  noteGuestCombatSnapshot,
+} from '../combat/localEncounterRecorder.js';
 
 export type NetworkRoomSyncDeps = {
   currentChar: CharacterRecord | null;
@@ -513,9 +518,17 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
             rsm.totalRunDurationSec = snap.totalDurationSec;
             d().setTotalDurationSec(Math.round(snap.totalDurationSec));
           }
+          // Host reports only fill gaps — guests keep local kill deltas for self-register
           if (Array.isArray(snap.encounterReports)) {
-            rsm.encounterReports = snap.encounterReports;
+            mergeHostEncounterReports(rsm, snap.encounterReports);
           }
+          // Record boss kills from mirrored combatStats (no host report required)
+          noteGuestCombatSnapshot({
+            state: getLocalEncounterRecorder(rsm),
+            rsm,
+            engine,
+            nowMs: typeof snap.timeMs === 'number' ? snap.timeMs : Date.now(),
+          });
         }
 
         d().guestCastTimelinesRef.current = snap.casts || [];

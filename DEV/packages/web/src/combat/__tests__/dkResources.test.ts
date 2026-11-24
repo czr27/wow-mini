@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import assert from 'node:assert/strict';
+import { describe, it, beforeEach } from 'node:test';
 import { CombatEngine, getSpellByAnyId } from '@cata-raid-sim/engine';
 import type { Unit } from '@cata-raid-sim/engine';
 import {
@@ -57,54 +58,54 @@ describe('dkResources (Cata model)', () => {
     const u = makeDk(engine);
     u.runes = undefined;
     ensureDkRunes(u);
-    expect(u.runes).toHaveLength(6);
-    expect(u.runes!.map((r) => r.runeType)).toEqual([
-      'BLOOD',
-      'BLOOD',
-      'FROST',
-      'FROST',
-      'UNHOLY',
-      'UNHOLY',
-    ]);
-    expect(u.runes!.every((r) => r.cooldownMs === 0)).toBe(true);
+    assert.equal(u.runes!.length, 6);
+    assert.deepEqual(
+      u.runes!.map((r) => r.runeType),
+      ['BLOOD', 'BLOOD', 'FROST', 'FROST', 'UNHOLY', 'UNHOLY']
+    );
+    assert.ok(u.runes!.every((r) => r.cooldownMs === 0));
   });
 
   it('spending frost+unholy runes grants RP and starts 10s CD', () => {
     const u = makeDk(engine);
     const ok = spendDkResourcesForSpell(engine, u, 'obliterate', getSpellByAnyId('obliterate', 'DK'));
-    expect(ok).toBe(true);
-    expect(u.runicPower).toBe(2 * DK_RP_PER_RUNE);
+    assert.equal(ok, true);
+    assert.equal(u.runicPower, 2 * DK_RP_PER_RUNE);
     const frostCd = u.runes!.filter((r) => r.runeType === 'FROST' && r.cooldownMs > 0);
     const unholyCd = u.runes!.filter((r) => r.runeType === 'UNHOLY' && r.cooldownMs > 0);
-    expect(frostCd).toHaveLength(1);
-    expect(unholyCd).toHaveLength(1);
-    expect(frostCd[0].cooldownMs).toBe(10_000);
+    assert.equal(frostCd.length, 1);
+    assert.equal(unholyCd.length, 1);
+    assert.equal(frostCd[0].cooldownMs, 10_000);
   });
 
   it('Horn of Winter grants +10 RP without runes', () => {
     const u = makeDk(engine);
     const before = u.runes!.map((r) => r.cooldownMs);
     const ok = spendDkResourcesForSpell(engine, u, 'horn_of_winter', getSpellByAnyId('horn_of_winter', 'DK'));
-    expect(ok).toBe(true);
-    expect(u.runicPower).toBe(DK_HORN_RP_GAIN);
-    expect(u.runes!.map((r) => r.cooldownMs)).toEqual(before);
+    assert.equal(ok, true);
+    assert.equal(u.runicPower, DK_HORN_RP_GAIN);
+    assert.deepEqual(
+      u.runes!.map((r) => r.cooldownMs),
+      before
+    );
   });
 
   it('frost strike deducts RP only (no runes)', () => {
     const u = makeDk(engine);
     u.runicPower = 40;
     const ok = deductDkSpellResources(engine, u, 'frost_strike', getSpellByAnyId('frost_strike', 'DK'));
-    expect(ok).toBe(true);
-    expect(u.runicPower).toBe(0);
-    expect(u.runes!.every((r) => r.cooldownMs === 0)).toBe(true);
+    assert.equal(ok, true);
+    assert.equal(u.runicPower, 0);
+    assert.ok(u.runes!.every((r) => r.cooldownMs === 0));
   });
 
   it('rejects cast when runes are on CD', () => {
     const u = makeDk(engine);
     spendDkResourcesForSpell(engine, u, 'howling_blast', getSpellByAnyId('howling_blast', 'DK'));
     spendDkResourcesForSpell(engine, u, 'howling_blast', getSpellByAnyId('howling_blast', 'DK'));
-    expect(hasReadyDkRunes(u, ['FROST'])).toBe(false);
-    expect(spendDkResourcesForSpell(engine, u, 'howling_blast', getSpellByAnyId('howling_blast', 'DK'))).toBe(
+    assert.equal(hasReadyDkRunes(u, ['FROST']), false);
+    assert.equal(
+      spendDkResourcesForSpell(engine, u, 'howling_blast', getSpellByAnyId('howling_blast', 'DK')),
       false
     );
   });

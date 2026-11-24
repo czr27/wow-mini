@@ -39,6 +39,10 @@ import {
 import { useRoomLobby } from './hooks/useRoomLobby.js';
 import { useCombatTick } from './hooks/useCombatTick.js';
 import { useNetworkRoomSync } from './hooks/useNetworkRoomSync.js';
+import {
+  encountersForCertificateClaim,
+  getLocalEncounterRecorder,
+} from './combat/localEncounterRecorder.js';
 
 import { WaitingQueueOverlay } from './components/room/index.js';
 import { netClient } from './net/NetClient.js';
@@ -1296,12 +1300,20 @@ export function App() {
     };
   }, [groundTargetState, runPhase]);
 
-  // Claim Clear Certificate & Submit to World Leaderboards (Strictly requires full clear)
+  // Claim Clear Certificate & Submit to World Leaderboards (Strictly requires full clear).
+  // Guests register from local encounter records — do not require host-broadcast reports.
   const handleClaimCertificate = useCallback(() => {
     const rsm = rsmRef.current;
-    if (!rsm || !currentChar) return;
+    const engine = engineRef.current;
+    if (!rsm || !currentChar || !engine) return;
     if (!rsm.checkIsCleared()) return;
     if (isCertClaimed) return;
+
+    const encounters = encountersForCertificateClaim(
+      rsm,
+      engine,
+      getLocalEncounterRecorder(rsm)
+    );
 
     const cert = reportMgrRef.current.createClearCertificate(
       rsm.dungeon.id,
@@ -1310,11 +1322,11 @@ export function App() {
       currentChar.classId,
       currentChar.lastSpec,
       rsm.totalRunDurationSec,
-      rsm.encounterReports,
+      encounters,
       currentChar.id
     );
 
-    // 1. Add to character records
+    // 1. Add to character records → account sync to server
     accountMgrRef.current.addClearCertificate(currentChar.id, cert);
     // 2. Submit to world rankings
     leaderboardMgrRef.current.submitRunCertificate(cert);

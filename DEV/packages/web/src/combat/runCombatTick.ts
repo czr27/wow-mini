@@ -486,7 +486,7 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
         currentBossIndex: rsm.currentBossIndex,
         isCleared: rsm.isCleared,
         totalDurationSec: rsm.totalRunDurationSec,
-        // Guests need host kill reports for SUMMARY certificates (they do not sim bosses)
+        // Optional for guest UI gap-fill; guests self-register from local records
         encounterReports:
           rsm.encounterReports.length > 0 || rsm.phase === 'SUMMARY'
             ? rsm.encounterReports

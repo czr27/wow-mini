@@ -125,8 +125,9 @@ export function deductDkSpellResources(
   if (required.length > 0 && !hasReadyDkRunes(unit, required)) return false;
 
   const rpCost =
-    rpCostOverride ??
-    (sp?.resourceKind === 'RUNIC_POWER' ? sp.resourceCostAmount : 0);
+    sp?.resourceKind === 'RUNIC_POWER'
+      ? (rpCostOverride ?? sp.resourceCostAmount)
+      : 0;
   if (rpCost > 0 && (unit.runicPower ?? 0) < rpCost) return false;
 
   if (!spendDkResourcesForSpell(engine, unit, spellId, sp)) return false;
