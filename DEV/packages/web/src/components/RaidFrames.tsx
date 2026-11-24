@@ -85,6 +85,9 @@ export const DEBUFF_REGISTRY: Record<string, DebuffMeta> = {
   ice_chains: { dispelType: 'MAGIC', priority: 80, label: '链', color: '#38BDF8', border: 'border-cyan-400' },
   living_bomb: { dispelType: 'MAGIC', priority: 80, label: '炸', color: '#F97316', border: 'border-orange-500' },
   mortal_wound: { priority: 70, label: '伤', color: '#EF4444', border: 'border-red-600' },
+  // 嗜血/英勇/时间扭曲后的共享疲惫（不可驱散）
+  exhaustion: { priority: 40, label: '惫', color: '#F87171', border: 'border-red-400' },
+  temporal_displacement: { priority: 40, label: '惫', color: '#C084FC', border: 'border-purple-400' },
 };
 
 const BUFF_ICONS_CONFIG: Record<string, { label: string; color: string; border: string }> = {
@@ -97,6 +100,9 @@ const BUFF_ICONS_CONFIG: Record<string, { label: string; color: string; border: 
   vampiric_blood: { label: '血', color: '#EF4444', border: 'border-red-500' },
   slice_and_dice: { label: '切', color: '#FFF569', border: 'border-yellow-400' },
   time_warp: { label: '嗜', color: '#E0A3FF', border: 'border-purple-400' },
+  bloodlust: { label: '嗜', color: '#DC143C', border: 'border-red-500' },
+  heroism: { label: '嗜', color: '#DC143C', border: 'border-red-500' },
+  exhaustion: { label: '惫', color: '#F87171', border: 'border-red-400' },
   horn_of_winter: { label: '号', color: '#67E8F9', border: 'border-cyan-400' },
   mark_of_the_wild: { label: '爪', color: '#F59E0B', border: 'border-amber-400' },
   arcane_brilliance: { label: '智', color: '#93C5FD', border: 'border-blue-400' },

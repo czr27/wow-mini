@@ -19,6 +19,7 @@ import { DEFAULT_SPELL_COOLDOWNS } from '../assets/defaultActionSlots.js';
 import type { ActionSlot, PlayerCastState } from '../components/ActionBar.js';
 import { syncUnitResources } from './unitResources.js';
 import { emitLocalAoePulse } from './emitLocalAoePulse.js';
+import { applyRaidLustBuff } from './raidLustBuff.js';
 
 export type InstantEffectsCtx = {
   engine: CombatEngine;
@@ -604,29 +605,12 @@ export function executePlayerInstantEffects(ctx: InstantEffectsCtx): boolean {
       }
       return true;
     } else if (slot.spellId === 'bloodlust') {
-      for (const u of engine.friendlyUnits) {
-        if (u.alive) {
-          engine.applyBuff(u, {
-            id: `bl_${u.id}`,
-            spellId: 'bloodlust',
-            name: '嗜血 (+30%急速)',
-            kind: 'BUFF',
-            tags: ['BLOODLUST'],
-            sourceUnitId: player.id,
-            targetUnitId: u.id,
-            stacks: 1,
-            maxStacks: 1,
-            durationMs: 40000,
-            remainingMs: 40000,
-            school: 'PHYSICAL',
-          });
-        }
-      }
+      const n = applyRaidLustBuff(engine, player, 'bloodlust');
       engine.effectsManager?.addFloatingText({
         targetId: player.id,
-        text: '嗜血！全团急速+30%',
-        category: 'CRIT',
-        isCrit: true,
+        text: n > 0 ? '嗜血！全团急速+30%' : '全员已疲惫，嗜血无效',
+        category: n > 0 ? 'CRIT' : 'STATUS',
+        isCrit: n > 0,
       });
       triggerSlotCooldown();
       return true;
@@ -665,24 +649,13 @@ export function executePlayerInstantEffects(ctx: InstantEffectsCtx): boolean {
       }
       return true;
     } else if (slot.spellId === 'time_warp') {
-      for (const u of engine.friendlyUnits) {
-        if (u.alive) {
-          engine.applyBuff(u, {
-            id: `tw_${u.id}`,
-            spellId: 'time_warp',
-            name: '时间扭曲 (+30%急速)',
-            kind: 'BUFF',
-            tags: ['BLOODLUST'],
-            sourceUnitId: player.id,
-            targetUnitId: u.id,
-            stacks: 1,
-            maxStacks: 1,
-            durationMs: 40000,
-            remainingMs: 40000,
-            school: 'ARCANE',
-          });
-        }
-      }
+      const n = applyRaidLustBuff(engine, player, 'time_warp');
+      engine.effectsManager?.addFloatingText({
+        targetId: player.id,
+        text: n > 0 ? '时间扭曲！全团急速+30%' : '全员已疲惫，时间扭曲无效',
+        category: n > 0 ? 'CRIT' : 'STATUS',
+        isCrit: n > 0,
+      });
       triggerSlotCooldown();
       return true;
     } else if (slot.spellId === 'ice_lance') {
@@ -977,21 +950,39 @@ export function executePlayerInstantEffects(ctx: InstantEffectsCtx): boolean {
           shortId === 'time_warp' ||
           normSlotSpell.id.includes('heroism') ||
           normSlotSpell.id.includes('time_warp');
-        const durationMs = isLust
-          ? Math.max(1_000, normSlotSpell.durationMs || 40_000)
-          : Math.max(
-              normSlotSpell.isRaidBuff ? 3_600_000 : 10000,
-              normSlotSpell.durationMs || 15000
-            );
 
         if (isUnleashLife || (normSlotSpell.isHeal && normSlotSpell.directHeal > 0 && !isSelfBuff)) {
           const healVal = Math.round((normSlotSpell.directHeal || 8500) + (player.stats.spellPower || 3200) * 0.35);
           engine.healUnit(player, effectiveFriendly, healVal, Math.random() < (player.stats.critChance || 0.25), normSlotSpell.name);
         }
 
-        // Raid buffs (MotW / Arcane Brilliance / 嗜血…): apply to whole raid (or caster 30yd for shouts)
+        // 嗜血/时间扭曲：跳过疲惫单位并上疲惫
+        if (isLust) {
+          applyRaidLustBuff(
+            engine,
+            player,
+            shortId || auraSpellId || normSlotSpell.id,
+            Math.max(1_000, normSlotSpell.durationMs || 40_000)
+          );
+          const floatTarget = player;
+          engine.effectsManager?.addFloatingText({
+            targetId: floatTarget.id,
+            text: normSlotSpell.name,
+            category: 'STATUS',
+            isCrit: false,
+          });
+          triggerSlotCooldown();
+          return true;
+        }
+
+        const durationMs = Math.max(
+          normSlotSpell.isRaidBuff ? 3_600_000 : 10000,
+          normSlotSpell.durationMs || 15000
+        );
+
+        // Raid buffs (MotW / Arcane Brilliance …): apply to whole raid (or caster 30yd for shouts)
         const auraTargets =
-          normSlotSpell.isRaidBuff || normSlotSpell.aoeCenterMode === 'RAID' || isLust
+          normSlotSpell.isRaidBuff || normSlotSpell.aoeCenterMode === 'RAID'
             ? selectRaidBuffTargets({
                 spellId: normSlotSpell.id,
                 allies: engine.friendlyUnits,
@@ -1006,7 +997,7 @@ export function executePlayerInstantEffects(ctx: InstantEffectsCtx): boolean {
             spellId: auraSpellId,
             name: isEarthShield ? `${normSlotSpell.name} (${stacks}层)` : normSlotSpell.name,
             kind: 'BUFF',
-            tags: isEarthShield ? ['SHIELD'] : isLust ? ['BLOODLUST', 'STAT'] : ['STAT'],
+            tags: isEarthShield ? ['SHIELD'] : ['STAT'],
             sourceUnitId: player.id,
             targetUnitId: auraTarget.id,
             stacks,

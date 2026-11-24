@@ -391,21 +391,29 @@ export class NetClient {
     return this.combatInputEpochMs;
   }
 
-  /** Build unique reliable-intent id: epoch + seq + send time */
-  nextClientInputId(nowMs = Date.now()): string {
+  /**
+   * Build unique reliable-intent id: player + epoch + seq + send time.
+   * playerId namespaces guests so same-ms ROOM_START + same seq cannot collide
+   * on the host's global processedGuestInputIds set.
+   */
+  nextClientInputId(nowMs = Date.now(), playerId?: string): string {
     if (!this.combatInputEpochMs) {
       this.combatInputEpochMs = Math.max(1, nowMs);
     }
+    const who = String(playerId || this.auth?.playerId || 'anon')
+      .replace(/[^a-zA-Z0-9_-]/g, '')
+      .slice(0, 24) || 'anon';
     const epoch = this.combatInputEpochMs.toString(36);
     const seq = (++this.clientInputSeq).toString(36);
     const t = nowMs.toString(36);
-    return `ci_${epoch}_${seq}_${t}`;
+    return `ci_${who}_${epoch}_${seq}_${t}`;
   }
 
   sendPlayerInput(roomId: string, payload: PlayerInputPayload) {
     let body = payload;
     if (RELIABLE_INPUT_KINDS.has(payload.kind)) {
-      const clientInputId = payload.clientInputId || this.nextClientInputId();
+      const clientInputId =
+        payload.clientInputId || this.nextClientInputId(Date.now(), payload.playerId);
       const now = Date.now();
       const attempt = 1;
       body = { ...payload, clientInputId, clientInputAttempt: attempt };

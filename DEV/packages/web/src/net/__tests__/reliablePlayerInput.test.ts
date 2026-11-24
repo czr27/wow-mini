@@ -38,19 +38,35 @@ describe('联机可靠意图与快照 ack', () => {
   it('1b. clientInputId 含进副本 epoch：离开关再进不会撞上旧 id', () => {
     const net = new NetClient();
     net.beginCombatInputEpoch(1_000_000);
-    const first = net.nextClientInputId(1_000_100);
+    const first = net.nextClientInputId(1_000_100, 'p1');
     assert.match(first, /^ci_/);
+    assert.ok(first.includes('p1'));
     assert.ok(first.includes((1_000_000).toString(36)));
     assert.equal(net.shouldApplyGuestInput(first), true);
 
     // Leave & rejoin: new dungeon epoch → new id namespace
     net.beginCombatInputEpoch(2_000_000);
-    const second = net.nextClientInputId(2_000_100);
+    const second = net.nextClientInputId(2_000_100, 'p1');
     assert.notEqual(second, first);
     assert.ok(second.includes((2_000_000).toString(36)));
     // Host still remembering first visit id must not block second-visit cast
     assert.equal(net.shouldApplyGuestInput(first), false);
     assert.equal(net.shouldApplyGuestInput(second), true);
+  });
+
+  it('1c. 同进本两人：即使 epoch/seq/时间相同，playerId 不同也不会撞车', () => {
+    const a = new NetClient();
+    const b = new NetClient();
+    a.beginCombatInputEpoch(9_000_000);
+    b.beginCombatInputEpoch(9_000_000);
+    const idA = a.nextClientInputId(9_000_050, 'char_alice');
+    const idB = b.nextClientInputId(9_000_050, 'char_bob');
+    assert.notEqual(idA, idB);
+    assert.ok(idA.includes('char_alice'));
+    assert.ok(idB.includes('char_bob'));
+    const host = new NetClient();
+    assert.equal(host.shouldApplyGuestInput(idA), true);
+    assert.equal(host.shouldApplyGuestInput(idB), true);
   });
 
   it('2. 无 clientInputId 的 MOVE 类始终可应用', () => {

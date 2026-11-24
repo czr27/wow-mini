@@ -102,6 +102,14 @@ describe('guest bloodlust / CD aliases', () => {
     assert.ok(allyBuff, '队友应有嗜血');
     assert.ok((guestBuff!.remainingMs || 0) <= 40_000 + 100);
     assert.ok((guestBuff!.remainingMs || 0) >= 30_000);
+    assert.ok(
+      (guest.buffs || []).some((b) => b.spellId === 'exhaustion' && b.kind === 'DEBUFF'),
+      '施法者应有疲惫 debuff'
+    );
+    assert.ok(
+      (ally.buffs || []).some((b) => b.spellId === 'exhaustion' && b.kind === 'DEBUFF'),
+      '队友应有疲惫 debuff'
+    );
 
     const beforeHaste = createLevel80BaseStats('HEALER').haste ?? 0;
     const eff = getEffectiveUnitStats(guest);

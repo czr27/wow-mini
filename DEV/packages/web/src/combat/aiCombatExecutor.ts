@@ -39,6 +39,7 @@ import {
 import type { IncomingHealCast } from '../components/RaidFrames.js';
 import { syncUnitResources, deductAiResource } from './unitResources.js';
 import { emitLocalAoePulse } from './emitLocalAoePulse.js';
+import { applyRaidLustBuff } from './raidLustBuff.js';
 
 /** Active AI read-bar / channel state (per-unit). */
 export type AiActiveCast = {
@@ -131,14 +132,17 @@ export function executeAiNormalizedSpell(
       Boolean(sp.auraId);
     const finalAuraTarget = nextHealAmpOnCaster ? u : buffTarget;
     const isLust = isBloodlustSpellId(sp.id) || isBloodlustSpellId(sp.shortId) || isBloodlustSpellId(auraSpellId);
-    // 嗜血/时间扭曲用真实 duration（40s）；MotW 等长效团 buff 默认 1h
-    const durationMs = isLust
-      ? Math.max(1_000, sp.durationMs || 40_000)
-      : Math.max(sp.isRaidBuff ? 3_600_000 : 8000, sp.durationMs || 15000);
+    // 嗜血/时间扭曲：走统一入口（跳过已疲惫单位，并上 10min 疲惫）
+    if (isLust) {
+      applyRaidLustBuff(engine, u, sp.shortId || sp.id, Math.max(1_000, sp.durationMs || 40_000));
+      return;
+    }
+    // MotW 等长效团 buff 默认 1h
+    const durationMs = Math.max(sp.isRaidBuff ? 3_600_000 : 8000, sp.durationMs || 15000);
 
-    // MotW / Arcane Brilliance / Fort / Kings / 嗜血 → 全团；号角/怒吼 → 自身 30 码
+    // MotW / Arcane Brilliance / Fort / Kings → 全团；号角/怒吼 → 自身 30 码
     const auraTargets =
-      !isEnemyBuff && (sp.isRaidBuff || isLust)
+      !isEnemyBuff && sp.isRaidBuff
         ? selectRaidBuffTargets({
             spellId: sp.id,
             allies: livingAllies.length ? livingAllies : engine.friendlyUnits,
@@ -154,7 +158,7 @@ export function executeAiNormalizedSpell(
         spellId: auraSpellId,
         name: isStackedShield ? `${sp.name} (${stacks}层)` : sp.name,
         kind: isEnemyBuff ? 'DEBUFF' : 'BUFF',
-        tags: isStackedShield ? ['SHIELD'] : isLust ? ['BLOODLUST', 'STAT'] : ['STAT'],
+        tags: isStackedShield ? ['SHIELD'] : ['STAT'],
         sourceUnitId: u.id,
         targetUnitId: t.id,
         stacks,
