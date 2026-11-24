@@ -30,9 +30,12 @@ import type { IncomingHealCast } from '../components/RaidFrames.js';
 import { DEFAULT_SPELL_COOLDOWNS } from '../assets/defaultActionSlots.js';
 import { syncUnitResources } from './unitResources.js';
 import { checkCastSlotResources } from './castResourceGates.js';
+import { spendDkResourcesForSpell } from './dkResources.js';
 import { executePlayerInstantEffects } from './executePlayerInstantEffects.js';
 import { startPlayerCastBranches } from './startPlayerCastBranches.js';
 import { computePlayerGcdMs } from './playerGcd.js';
+import { withNetworkVitals } from './withNetworkVitals.js';
+import { publishCastStart } from './castLifecycleNet.js';
 
 /** Local CD map + shared-CD aliases — action-bar / cast gates. */
 function asPlayerClassId(
@@ -103,6 +106,19 @@ export function resolveGuestOutboundTargetId(opts: {
     );
 
   if (isFriendlySpell) {
+    const isRez = Boolean(norm?.isResurrect);
+    if (isRez) {
+      if (selectedTargetId) {
+        const selected = engine.friendlyUnits.find((u) => u.id === selectedTargetId);
+        if (selected && !isTotemUnit(selected) && ((!selected.isAlive && !selected.alive) || selected.hp <= 0)) {
+          return selected.id;
+        }
+      }
+      const dead = engine.friendlyUnits.find(
+        (u) => !isTotemUnit(u) && ((!u.isAlive && !u.alive) || u.hp <= 0)
+      );
+      return dead?.id || null;
+    }
     if (selectedTargetId) {
       const ally = engine.friendlyUnits.find((u) => u.id === selectedTargetId);
       if (ally && !isTotemUnit(ally)) return ally.id;
@@ -196,11 +212,9 @@ export function handlePlayerCastSlot(slotIdx: number, ctx: HandlePlayerCastSlotC
     return;
   }
 
-  // Network guest: ground spells still open local reticle; other casts → host only
-  // (HoT/DoT/dmg/heal come back via host COMBAT_STATE; avoids double-apply)
+  // Network guest: ground reticle stays local; spells resolve locally (sharded authority).
+  // No CAST intent to host — EFFECTS are published via withNetworkVitals / bus.
   if (ctx.isNetworkGuest && ctx.netConnected && ctx.activeRoomId && ctx.currentChar) {
-    // Gate on slot UI CD + local map + host timelines (aliases). UI can show timeline CD
-    // while playerCooldowns[slot] is still 0 — must not send CAST in that case.
     const guestCdRem = getEffectivePlayerCooldownMs(slot.spellId, {
       slotCdRemainingMs: slot.cdRemainingMs,
       playerCooldowns: ctx.playerCooldowns,
@@ -233,96 +247,7 @@ export function handlePlayerCastSlot(slotIdx: number, ctx: HandlePlayerCastSlotC
       });
       return;
     }
-    // Ignore re-press while a casted read-bar is already running (channels may clip).
-    // Prefer ref — React state can lag one frame after optimistic setPlayerCast.
-    const activeGuestCast = ctx.playerCastRef.current || ctx.playerCast;
-    if (activeGuestCast && !activeGuestCast.isChannel) {
-      return;
-    }
-    const isOffGcdGuest = isOffGcdSpell(slot.spellId);
-    if (!isOffGcdGuest && ctx.playerGcdRemainingMs > 0) {
-      engine.effectsManager?.addFloatingText({
-        targetId: player?.id || ctx.currentChar.id,
-        text: '公共冷却中！',
-        category: 'STATUS',
-        isCrit: false,
-      });
-      return;
-    }
-    // Friendly heals/HoTs/buffs must NOT fall back to bossTargetId/boss — that
-    // hijacked guest heals onto the boss and made cast-heals/HoTs look broken.
-    const targetId = resolveGuestOutboundTargetId({
-      spellId: slot.spellId,
-      classId: ctx.currentChar.classId,
-      selectedTargetId: ctx.selectedTargetId,
-      bossTargetId: ctx.bossTargetId,
-      playerId: player?.id || ctx.currentChar.id,
-      bossId: boss?.id || null,
-      engine,
-    });
-    const totalCdMs =
-      (slot.totalCdMs && slot.totalCdMs > 0
-        ? slot.totalCdMs
-        : DEFAULT_SPELL_COOLDOWNS[slot.spellId]) ||
-      getSpellByAnyId(slot.spellId, ctx.currentChar.classId)?.cooldownMs ||
-      0;
-    if (totalCdMs > 0) ctx.triggerCooldown(slot.spellId, totalCdMs);
-    if (!isOffGcdGuest) {
-      const gcdMs = computePlayerGcdMs(
-        slot.spellId,
-        ctx.currentChar.classId,
-        getUnitHaste(player, LEVEL_80_MAX_HASTE)
-      );
-      if (gcdMs > 0) {
-        ctx.setPlayerGcdRemainingMs(gcdMs);
-        ctx.setPlayerGcdTotalMs(gcdMs);
-      }
-    }
-    // Guest owns their cast bar locally (wall clock). Host only resolves effects / interrupt.
-    const guestNorm =
-      getSpellByAnyId(slot.spellId, ctx.currentChar.classId) || getSpellByAnyId(slot.spellId);
-    const guestCastMode = classifySpellCastMode({
-      spellId: slot.spellId,
-      castTimeMs: guestNorm?.castTimeMs,
-      channelDurationMs: guestNorm?.channelDurationMs,
-    });
-    if (guestCastMode === 'CASTED' || guestCastMode === 'CHANNELED') {
-      const haste = getUnitHaste(player, LEVEL_80_MAX_HASTE);
-      const rawMs =
-        guestCastMode === 'CHANNELED'
-          ? Math.max(
-              1,
-              guestNorm?.channelDurationMs || guestNorm?.castTimeMs || 4000
-            )
-          : Math.max(1, guestNorm?.castTimeMs || 1500);
-      // Must use ESM import — browser Vite has no `require`, which threw and
-      // skipped both local cast-bar setup and sendNetworkCast for 读条技能.
-      const totalMs = getHastedCastTimeMs(rawMs, haste);
-      const isHarmful = !!(guestNorm?.isDamage || guestNorm?.isDot) && !guestNorm?.isHeal;
-      const nowMs = Date.now();
-      const optimistic: PlayerCastState = {
-        spellId: slot.spellId,
-        spellName: slot.name,
-        totalMs,
-        elapsedMs: 0,
-        progress: 0,
-        startedAtMs: nowMs,
-        targetId: targetId || undefined,
-        isChannel: guestCastMode === 'CHANNELED',
-        isHarmful,
-      };
-      ctx.playerCastRef.current = optimistic;
-      ctx.setPlayerCast(optimistic);
-    }
-    ctx.sendNetworkCast({
-      kind: 'CAST',
-      playerId: ctx.currentChar.id,
-      spellId: slot.spellId,
-      spellName: slot.name,
-      slotIndex: slotIdx,
-      targetId,
-    });
-    return;
+    // Fall through to the same local cast path as host/solo (CD/GCD/bar/resolve).
   }
 
   if (!player || (!player.isAlive && !player.alive)) return;
@@ -698,6 +623,12 @@ export function handlePlayerCastSlot(slotIdx: number, ctx: HandlePlayerCastSlotC
 
   if (castLifecycle.deductResourceOnStart) {
     deductPlayerResources(player, spellCostBundle, syncUnitResources);
+    if (player.classId === 'DK') {
+      if (!spendDkResourcesForSpell(engine, player, slot.spellId, normSlotSpell)) {
+        // Should be gated above; refund RP cost if runes somehow failed
+        return;
+      }
+    }
   }
 
   if (!isOffGcd && castLifecycle.triggerGcdOnStart) {
@@ -764,43 +695,58 @@ export function handlePlayerCastSlot(slotIdx: number, ctx: HandlePlayerCastSlotC
         visualTone: 'HEAL',
       });
     }
+    publishCastStart({
+      unitId: player.id,
+      spellId: castStateWithLifecycle.spellId,
+      spellName: castStateWithLifecycle.spellName,
+      targetId: castStateWithLifecycle.targetId || player.id,
+      totalMs: castStateWithLifecycle.totalMs,
+      isChannel: !!castStateWithLifecycle.isChannel,
+      isHarmful: !!castStateWithLifecycle.isHarmful,
+    });
   };
 
   if (
-    startPlayerCastBranches({
-      engine,
-      player,
-      slot,
-      effectiveFriendly,
-      effectiveTarget,
-      isInstantViaNs,
-      maxAllowedRange,
-      triggerSlotCooldown,
-      startPlayerCast,
-      onFriendlyUnitsChanged: ctx.onFriendlyUnitsChanged,
-    })
+    withNetworkVitals(engine, () =>
+      startPlayerCastBranches({
+        engine,
+        player,
+        slot,
+        effectiveFriendly,
+        effectiveTarget,
+        isInstantViaNs,
+        maxAllowedRange,
+        triggerSlotCooldown,
+        startPlayerCast,
+        onFriendlyUnitsChanged: ctx.onFriendlyUnitsChanged,
+      })
+    )
   ) {
     return;
   }
 
-
-  const handledInstant = executePlayerInstantEffects({
-    engine,
-    player,
-    boss,
-    slot,
-    normSlotSpell,
-    effectiveFriendly,
-    effectiveTarget,
-    isFriendlySpell,
-    selectedTargetId: ctx.selectedTargetId,
-    bossAi: ctx.bossAi,
-    triggerSlotCooldown,
-    startPlayerCast,
-    handleDispelUnit: ctx.handleDispelUnit,
-    onScreenShake: ctx.onScreenShake,
-    onFriendlyUnitsChanged: ctx.onFriendlyUnitsChanged,
-  });
-  if (handledInstant) return;
+  const handledInstant = withNetworkVitals(engine, () =>
+    executePlayerInstantEffects({
+      engine,
+      player,
+      boss,
+      slot,
+      normSlotSpell,
+      effectiveFriendly,
+      effectiveTarget,
+      isFriendlySpell,
+      selectedTargetId: ctx.selectedTargetId,
+      bossAi: ctx.bossAi,
+      triggerSlotCooldown,
+      startPlayerCast,
+      handleDispelUnit: ctx.handleDispelUnit,
+      onScreenShake: ctx.onScreenShake,
+      onFriendlyUnitsChanged: ctx.onFriendlyUnitsChanged,
+    })
+  );
+  if (handledInstant) {
+    // Instants: no cast bar; CAST_LAND optional for FX sync — skip HUD bar noise
+    return;
+  }
 
 }

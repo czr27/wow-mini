@@ -13,6 +13,7 @@ import {
   createLevel80BaseStats,
   getRoleBySpec,
 } from '@cata-raid-sim/engine';
+import { ensureDkRunes } from './dkResources.js';
 
 export type SetupRaidUnitsParams = {
   engine: CombatEngine;
@@ -76,7 +77,9 @@ function finalizeUnit(
     u.focus = u.focus ?? 100;
     u.resources.push({ kind: 'FOCUS', current: u.focus, max: 100 });
   } else if (u.classId === 'DK') {
-    u.runicPower = u.runicPower ?? 20;
+    // Cata: start at 0 RP; RP comes from spending runes / Horn of Winter
+    u.runicPower = u.runicPower ?? 0;
+    ensureDkRunes(u);
     u.resources.push({ kind: 'RUNIC_POWER', current: u.runicPower, max: 100 });
   } else if (u.classId === 'PALADIN') {
     u.holyPower = u.holyPower ?? 1;
@@ -150,7 +153,7 @@ export function setupRaidUnits(params: SetupRaidUnitsParams): Unit[] {
         energy: assignedClass === 'ROGUE' ? 100 : 0,
         rage: assignedClass === 'WARRIOR' || (assignedClass === 'DRUID' && isTankMember) ? 40 : 0,
         focus: assignedClass === 'HUNTER' ? 100 : 0,
-        runicPower: assignedClass === 'DK' ? 20 : 0,
+        runicPower: 0,
         holyPower: assignedClass === 'PALADIN' ? 1 : 0,
         absorb: 0,
         resources: [],
@@ -250,7 +253,7 @@ export function setupRaidUnits(params: SetupRaidUnitsParams): Unit[] {
         energy: assignedClass === 'ROGUE' ? 100 : 0,
         rage: assignedClass === 'WARRIOR' || (assignedClass === 'DRUID' && isTankMember) ? 40 : 0,
         focus: assignedClass === 'HUNTER' ? 100 : 0,
-        runicPower: assignedClass === 'DK' ? 20 : 0,
+        runicPower: 0,
         holyPower: assignedClass === 'PALADIN' ? 1 : 0,
         absorb: 0,
         resources: [],
@@ -325,7 +328,7 @@ export function setupRaidUnits(params: SetupRaidUnitsParams): Unit[] {
       energy: pClass === 'ROGUE' ? 100 : 0,
       rage: pClass === 'WARRIOR' || (pClass === 'DRUID' && pRole === 'TANK') ? 40 : 0,
       focus: pClass === 'HUNTER' ? 100 : 0,
-      runicPower: pClass === 'DK' ? 20 : 0,
+      runicPower: 0,
       holyPower: pClass === 'PALADIN' ? 1 : 0,
       absorb: 0,
       resources: [],
@@ -391,7 +394,7 @@ export function setupRaidUnits(params: SetupRaidUnitsParams): Unit[] {
       mp: tMaxMp,
       maxMp: tMaxMp,
       rage: aiTank.classId === 'WARRIOR' || aiTank.classId === 'DRUID' ? 40 : 0,
-      runicPower: aiTank.classId === 'DK' ? 20 : 0,
+      runicPower: 0,
       holyPower: aiTank.classId === 'PALADIN' ? 1 : 0,
       absorb: 0,
       resources: [],
@@ -454,7 +457,7 @@ export function setupRaidUnits(params: SetupRaidUnitsParams): Unit[] {
       energy: dps.classId === 'ROGUE' ? 100 : 0,
       rage: dps.classId === 'WARRIOR' ? 40 : 0,
       focus: dps.classId === 'HUNTER' ? 100 : 0,
-      runicPower: dps.classId === 'DK' ? 20 : 0,
+      runicPower: 0,
       holyPower: dps.classId === 'PALADIN' ? 1 : 0,
       absorb: 0,
       resources: [],

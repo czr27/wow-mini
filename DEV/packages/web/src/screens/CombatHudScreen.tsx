@@ -17,6 +17,7 @@ import { RaidFrames, IncomingHealCast } from '../components/RaidFrames.js';
 import { StatsPanel } from '../components/StatsPanel.js';
 import { TargetUnitFrame } from '../components/TargetUnitFrame.js';
 import { TravelRecovery } from '../components/TravelRecovery.js';
+import { dkRunesForHud } from '../combat/dkResources.js';
 
 export type CombatHudRunPhase =
   | 'LOBBY'
@@ -314,18 +315,7 @@ export function CombatHudScreen(props: CombatHudScreenProps) {
             <PlayerUnitFrame
               player={playerUnit}
               isInCombat={runPhase === 'BOSS_COMBAT'}
-              dkRunes={
-                currentChar?.classId === 'DK'
-                  ? [
-                      { type: 'BLOOD', cdMs: 0 },
-                      { type: 'BLOOD', cdMs: 0 },
-                      { type: 'FROST', cdMs: 0 },
-                      { type: 'FROST', cdMs: 0 },
-                      { type: 'UNHOLY', cdMs: 0 },
-                      { type: 'UNHOLY', cdMs: 0 },
-                    ]
-                  : undefined
-              }
+              dkRunes={dkRunesForHud(playerUnit)}
               onSelect={() => onSelectUnit(playerUnit.id)}
               onSetFocus={() => onSetFocus(playerUnit.id)}
             />
@@ -448,18 +438,7 @@ export function CombatHudScreen(props: CombatHudScreenProps) {
             outOfRangeSpells={outOfRangeSpells}
             insufficientResourceSpells={insufficientResourceSpells}
             spellResourceErrors={spellResourceErrors}
-            dkRunes={
-              currentChar?.classId === 'DK'
-                ? [
-                    { type: 'BLOOD', cdMs: 0 },
-                    { type: 'BLOOD', cdMs: 2500 },
-                    { type: 'FROST', cdMs: 0 },
-                    { type: 'FROST', cdMs: 0 },
-                    { type: 'UNHOLY', cdMs: 0 },
-                    { type: 'UNHOLY', cdMs: 6000 },
-                  ]
-                : undefined
-            }
+            dkRunes={dkRunesForHud(playerUnit)}
             comboPoints={currentChar?.classId === 'ROGUE' ? 4 : 0}
             holyPower={
               currentChar?.classId === 'PALADIN'

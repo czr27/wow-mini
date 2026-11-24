@@ -38,8 +38,23 @@ import {
 } from '@cata-raid-sim/engine';
 import type { IncomingHealCast } from '../components/RaidFrames.js';
 import { syncUnitResources, deductAiResource } from './unitResources.js';
+import { deductDkSpellResources, hasReadyDkRunes } from './dkResources.js';
 import { emitLocalAoePulse } from './emitLocalAoePulse.js';
 import { applyRaidLustBuff } from './raidLustBuff.js';
+import { publishCastInterrupt, publishCastLand, publishCastStart } from './castLifecycleNet.js';
+import { publishCastInterrupt, publishCastLand, publishCastStart } from './castLifecycleNet.js';
+
+function deductCasterSpellResources(
+  engine: CombatEngine,
+  unit: Unit,
+  sp: NormalizedSpell,
+  costOverride?: number
+): boolean {
+  if (unit.classId === 'DK') {
+    return deductDkSpellResources(engine, unit, sp.shortId || sp.id, sp, costOverride);
+  }
+  return deductAiResource(unit, sp.resourceKind, costOverride ?? sp.resourceCostAmount);
+}
 
 /** Active AI read-bar / channel state (per-unit). */
 export type AiActiveCast = {
@@ -90,15 +105,41 @@ export function executeAiNormalizedSpell(
     return;
   }
 
-  // Resource builders (Paladin Holy Power / Warrior Rage / DK Runic Power)
+  // Resource builders (Paladin Holy Power / Warrior Rage). DK RP comes from runes/Horn.
   if (u.classId === 'PALADIN' && sp.resourceKind !== 'HOLY_POWER' && !sp.isDefensive && !sp.isTaunt && !sp.isInterrupt) {
     u.holyPower = Math.min(3, (u.holyPower ?? 0) + 1);
   } else if (u.classId === 'WARRIOR' && sp.resourceCostAmount === 0) {
     u.rage = Math.min(100, (u.rage ?? 0) + 15);
-  } else if (u.classId === 'DK' && sp.resourceKind !== 'RUNIC_POWER') {
-    u.runicPower = Math.min(100, (u.runicPower ?? 0) + 15);
   }
   syncUnitResources(u);
+
+  // Resurrect (battle-rez / OOC revive) — must run before heal/damage fallthrough
+  if (sp.isResurrect) {
+    const deadPool = engine.friendlyUnits.filter(
+      (a) => (!a.isAlive && !a.alive) || a.hp <= 0
+    );
+    let rezTarget =
+      targetUnit && ((!targetUnit.isAlive && !targetUnit.alive) || targetUnit.hp <= 0)
+        ? targetUnit
+        : deadPool[0] || null;
+    if (!rezTarget) return;
+    // Out-of-combat-only (revive / ancestral spirit): block while boss fight is live
+    if (sp.isOutOfCombatOnly) {
+      const bossLive = boss && (boss.isAlive ?? boss.alive) && boss.hp > 0;
+      if (bossLive) return;
+    }
+    const hpFrac = sp.isOutOfCombatOnly ? 0.4 : 0.6;
+    const mpFrac = sp.isOutOfCombatOnly ? 0.4 : 0.6;
+    if (engine.resurrectUnit(rezTarget.id, hpFrac, mpFrac)) {
+      engine.effectsManager?.addFloatingText({
+        targetId: rezTarget.id,
+        text: sp.isOutOfCombatOnly ? `✨ ${sp.name}` : `⚡ ${sp.name}！(战斗复活)`,
+        category: 'HEAL',
+        isCrit: true,
+      });
+    }
+    return;
+  }
 
   // 通用 Buff / Buff+Heal（数据驱动：大地之盾、生命释放、升腾、先祖指引、圣光道标等）
   // 新技能只要在 ClassRegistry 标 isBuff/targetType/maxStacks/directHeal，即可自动执行，无需再写 spellId 分支
@@ -397,6 +438,8 @@ export function executeAiNormalizedSpell(
         ? primaryTarget.buffs.find(b => b.spellId === 'lifebloom' && b.sourceUnitId === u.id)
         : undefined;
       const stacks = sp.shortId === 'lifebloom' ? Math.min(3, (existingLb?.stacks || 0) + 1) : 1;
+      const lbDuration = sp.shortId === 'lifebloom' ? 15000 : 12000;
+      const lbTick = sp.shortId === 'lifebloom' ? 2000 : 3000;
       engine.applyBuff(primaryTarget, {
         id: `${sp.shortId}_ai_${Date.now()}_${primaryTarget.id}_${u.id}`,
         spellId: sp.shortId,
@@ -407,12 +450,18 @@ export function executeAiNormalizedSpell(
         targetUnitId: primaryTarget.id,
         stacks,
         maxStacks: sp.shortId === 'lifebloom' ? 3 : 1,
-        durationMs: 12000,
-        remainingMs: 12000,
+        durationMs: lbDuration,
+        remainingMs: lbDuration,
         school: sp.school,
-        tickIntervalMs: 3000,
+        tickIntervalMs: lbTick,
         tickValue: Math.round((sp.hotTotalHeal / 4) * individualMod),
       });
+      if (sp.shortId === 'lifebloom') {
+        const lb = primaryTarget.buffs.find(
+          (b) => b.spellId === 'lifebloom' && b.sourceUnitId === u.id
+        );
+        if (lb) delete lb.stackRemainingMs;
+      }
     }
     return;
   }
@@ -766,6 +815,12 @@ export function runFriendlyAiCombatTick(ctx: FriendlyAiCombatTickCtx): void {
         ? engine.enemyUnits.find(e => e.id === activeAiCast.targetId) || boss
         : engine.friendlyUnits.find(a => a.id === activeAiCast.targetId);
       if (!targetUnit || (!targetUnit.alive && !targetUnit.isAlive) || targetUnit.hp <= 0) {
+        publishCastInterrupt({
+          unitId: u.id,
+          spellId: activeAiCast.spellId,
+          spellName: activeAiCast.spellName,
+          targetId: activeAiCast.targetId,
+        });
         delete ctx.aiCasts[u.id];
         activeAiCast = undefined as any;
       }
@@ -775,17 +830,25 @@ export function runFriendlyAiCombatTick(ctx: FriendlyAiCombatTickCtx): void {
       activeAiCast.elapsedMs += ctx.deltaMs;
       const progress = Math.min(1, activeAiCast.elapsedMs / Math.max(100, activeAiCast.totalMs));
       if (progress >= 1) {
+        const finished = activeAiCast;
         delete ctx.aiCasts[u.id];
-        const sp = activeAiCast.normalizedSpell || getSpellByAnyId(activeAiCast.spellId, u.classId);
-        const targetUnit = activeAiCast.isHarmful
-          ? engine.enemyUnits.find(e => e.id === activeAiCast.targetId) || boss
-          : engine.friendlyUnits.find(a => a.id === activeAiCast.targetId);
+        const sp = finished.normalizedSpell || getSpellByAnyId(finished.spellId, u.classId);
+        const targetUnit = finished.isHarmful
+          ? engine.enemyUnits.find(e => e.id === finished.targetId) || boss
+          : engine.friendlyUnits.find(a => a.id === finished.targetId);
         if (sp && targetUnit && (targetUnit.alive || targetUnit.isAlive) && targetUnit.hp > 0) {
-          if (deductAiResource(u, activeAiCast.resourceKind || sp.resourceKind, activeAiCast.manaCost)) {
+          if (deductCasterSpellResources(engine, u, sp, finished.manaCost)) {
             if (sp.cooldownMs > 0) ctx.markAiCdUsed(u.id, sp.shortId);
             executeAiNormalizedSpell(engine, ctx.livingEnemies, boss, u, sp, targetUnit, individualMod, critMod, tankPauseThreat);
           }
         }
+        publishCastLand({
+          unitId: u.id,
+          spellId: finished.spellId,
+          spellName: finished.spellName,
+          targetId: finished.targetId,
+          isHarmful: !!finished.isHarmful,
+        });
       } else {
         ctx.currentCasts[u.id] = {
           spellName: activeAiCast.spellName,
@@ -822,6 +885,20 @@ export function runFriendlyAiCombatTick(ctx: FriendlyAiCombatTickCtx): void {
       (sp) => ctx.isAiCdReady(u.id, sp.shortId, sp.cooldownMs),
       { roleFilter, useShortId: true }
     );
+    // DK: drop spells whose runes / RP are not available this tick
+    if (u.classId === 'DK') {
+      usableCandidates = usableCandidates.filter((c) => {
+        const sp = getSpellByAnyId(c.spellId, u.classId);
+        if (!sp) return false;
+        const req = (sp.runesRequired || []) as Array<'BLOOD' | 'FROST' | 'UNHOLY'>;
+        if (req.length > 0 && !hasReadyDkRunes(u, req)) return false;
+        if (sp.resourceKind === 'RUNIC_POWER' && (u.runicPower ?? 0) < sp.resourceCostAmount) {
+          return false;
+        }
+        return true;
+      });
+      if (usableCandidates.length === 0) continue;
+    }
     // While pathing: only instant skills (melee OT keep swinging; no cast→cancel GCD waste)
     if (isMovingNow) {
       usableCandidates = usableCandidates.filter((c) => (c.castMs || 0) <= 0);
@@ -852,7 +929,7 @@ export function runFriendlyAiCombatTick(ctx: FriendlyAiCombatTickCtx): void {
       ctx.aiCooldowns[`${u.id}_gcd`] = nowMs;
 
       if (hastedCastMs <= 0) {
-        if (deductAiResource(u, normSp.resourceKind, chosen.cost)) {
+        if (deductCasterSpellResources(engine, u, normSp, chosen.cost)) {
           if (normSp.cooldownMs > 0) ctx.markAiCdUsed(u.id, normSp.shortId);
           executeAiNormalizedSpell(engine, ctx.livingEnemies, boss, u, normSp, targetUnit, individualMod, critMod, tankPauseThreat);
         }
@@ -880,6 +957,15 @@ export function runFriendlyAiCombatTick(ctx: FriendlyAiCombatTickCtx): void {
           progress: 0,
           spellId: chosen.spellId,
         };
+        publishCastStart({
+          unitId: u.id,
+          spellId: chosen.spellId,
+          spellName: chosen.spellName,
+          targetId: targetUnit.id,
+          totalMs: hastedCastMs,
+          isChannel: false,
+          isHarmful,
+        });
         if (!isHarmful) {
           ctx.addIncomingCast(targetUnit.id, {
             casterId: u.id,

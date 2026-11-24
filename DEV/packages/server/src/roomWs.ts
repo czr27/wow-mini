@@ -937,6 +937,27 @@ export class RoomWsHub {
         break;
       }
 
+      case 'COMBAT_EFFECT':
+      case 'OWNER_SNAPSHOT': {
+        // Guests/host authors → relay to room (host gathers; peers may ignore)
+        if (!msg.roomId && session.roomId) msg.roomId = session.roomId;
+        if (!msg.roomId) break;
+        if (session.roomId && session.roomId !== msg.roomId) break;
+        this.broadcastRoom(msg.roomId, msg, session.playerId);
+        break;
+      }
+
+      case 'COMBAT_BATCH': {
+        // Host → all: fan-out gathered effects (original effectIds preserved)
+        if (!msg.roomId && session.roomId) msg.roomId = session.roomId;
+        if (!msg.roomId) break;
+        if (session.roomId && session.roomId !== msg.roomId) break;
+        const room = this.roomManager.getRoom(msg.roomId);
+        if (room && room.hostId !== session.playerId) break;
+        this.broadcastRoom(msg.roomId, msg, session.playerId);
+        break;
+      }
+
       case 'COMBAT_STATE':
       case 'MEMBER_HOT_SWAP':
       case 'CAST_INTERRUPT':

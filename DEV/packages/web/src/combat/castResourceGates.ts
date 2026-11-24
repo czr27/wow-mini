@@ -6,6 +6,7 @@ import {
   SPELL_RAGE_COSTS,
   SPELL_RUNIC_COSTS,
 } from './spellCosts.js';
+import { getDkRunesRequired, hasReadyDkRunes } from './dkResources.js';
 
 /** Build a resource cost bundle from UI tables + ClassRegistry fallback. */
 export function buildSpellCostBundle(
@@ -45,5 +46,20 @@ export function checkCastSlotResources(
 ): { ok: boolean; errorText?: string; floatText?: string; costs: SpellResourceCostBundle } {
   const costs = buildSpellCostBundle(spellId, normSpell);
   const check = hasSufficientPlayerResources(player, costs);
+  if (!check.ok) return { ...check, costs };
+
+  if (player.classId === 'DK') {
+    const required =
+      (normSpell?.runesRequired as Array<'BLOOD' | 'FROST' | 'UNHOLY'> | undefined) ||
+      getDkRunesRequired(spellId, player.classId);
+    if (required.length > 0 && !hasReadyDkRunes(player, required)) {
+      return {
+        ok: false,
+        errorText: '符文不足',
+        floatText: '⚠️ 符文不足！',
+        costs,
+      };
+    }
+  }
   return { ...check, costs };
 }

@@ -17,7 +17,6 @@ export interface PlayerCastBarProps {
  * - Gray metal border, dark recessed track
  * - Cast & channel both fill L→R (yellow cast / green channel)
  * - Centered spell name + remaining seconds on the right
- * - Spark rides the leading edge
  * - Successful finish → snap full green briefly
  * - Interrupt / fail → snap red with "Interrupted"
  */
@@ -261,7 +260,6 @@ export const PlayerCastBar: React.FC<PlayerCastBarProps> = ({
     fillMode: 'cast' | 'channel' | 'success' | 'interrupted';
     timerText: string;
     labelOverride?: string;
-    showSpark?: boolean;
     preview?: boolean;
   }) => {
     const {
@@ -271,14 +269,8 @@ export const PlayerCastBar: React.FC<PlayerCastBarProps> = ({
       fillMode,
       timerText,
       labelOverride,
-      showSpark = true,
       preview = false,
     } = opts;
-
-    let fillColor = '#E6B800'; // classic yellow
-    if (fillMode === 'channel') fillColor = '#2ECC71';
-    if (fillMode === 'success') fillColor = '#33CC33';
-    if (fillMode === 'interrupted') fillColor = '#CC3333';
 
     const pct = Math.min(100, Math.max(0, fillPct));
     const displayName = labelOverride || spellName;
@@ -328,24 +320,9 @@ export const PlayerCastBar: React.FC<PlayerCastBarProps> = ({
                       : fillMode === 'success' || fillMode === 'channel'
                       ? 'linear-gradient(180deg, #66ee66 0%, #33cc33 40%, #1a991a 100%)'
                       : 'linear-gradient(180deg, #ffe066 0%, #e6b800 42%, #b8860b 100%)',
-                  boxShadow: `inset 0 1px 0 rgba(255,255,255,0.35), 0 0 6px ${fillColor}55`,
+                  boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.35)',
                 }}
               />
-
-              {/* Spark at leading edge */}
-              {showSpark && pct > 1 && pct < 99.5 && fillMode !== 'interrupted' && fillMode !== 'success' && (
-                <div
-                  className="absolute top-1/2 -translate-y-1/2 pointer-events-none"
-                  style={{
-                    left: `calc(${pct}% - 6px)`,
-                    width: 12,
-                    height: BAR_HEIGHT + 8,
-                    background:
-                      'radial-gradient(ellipse at center, rgba(255,255,220,0.95) 0%, rgba(255,200,80,0.55) 40%, transparent 70%)',
-                    mixBlendMode: 'screen',
-                  }}
-                />
-              )}
 
               {/* Centered name */}
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none px-8">
@@ -431,7 +408,6 @@ export const PlayerCastBar: React.FC<PlayerCastBarProps> = ({
           fillMode: activeFlash.kind === 'success' ? 'success' : 'interrupted',
           timerText: activeFlash.kind === 'success' ? '0.0' : '',
           labelOverride: activeFlash.kind === 'interrupted' ? '打断' : activeFlash.spellName,
-          showSpark: false,
         })}
       </div>
     );
@@ -455,7 +431,6 @@ export const PlayerCastBar: React.FC<PlayerCastBarProps> = ({
         fillPct,
         fillMode: isChannel ? 'channel' : 'cast',
         timerText: formatRemain(playerCast.elapsedMs, playerCast.totalMs, isChannel),
-        showSpark: true,
       })}
     </div>
   );

@@ -2276,6 +2276,7 @@ export class CombatEngine {
     rage?: number;
     runicPower?: number;
     focus?: number;
+    runes?: Unit['runes'];
     absorb: number;
     position: { x: number; y: number };
     buffs: Buff[];
@@ -2312,6 +2313,7 @@ export class CombatEngine {
         rage: u.rage,
         runicPower: u.runicPower,
         focus: u.focus,
+        runes: u.runes ? u.runes.map((r) => ({ ...r })) : undefined,
         absorb: u.absorb,
         position: { ...u.position },
         buffs: u.buffs.map((b) => ({ ...b })),
@@ -2343,6 +2345,7 @@ export class CombatEngine {
       rage?: number;
       runicPower?: number;
       focus?: number;
+      runes?: Unit['runes'];
       absorb: number;
       position: { x: number; y: number };
       buffs: Buff[];
@@ -2375,6 +2378,7 @@ export class CombatEngine {
           rage: s.rage,
           runicPower: s.runicPower,
           focus: s.focus,
+          runes: s.runes ? s.runes.map((r) => ({ ...r })) : undefined,
           resources: [],
           stats: {
             attackPower: 0,
@@ -2412,6 +2416,7 @@ export class CombatEngine {
       unit.rage = s.rage;
       unit.runicPower = s.runicPower;
       unit.focus = s.focus;
+      if (s.runes) unit.runes = s.runes.map((r) => ({ ...r }));
       unit.absorb = s.absorb;
       unit.position = { ...s.position };
       unit.buffs = s.buffs.map((b) => ({ ...b }));

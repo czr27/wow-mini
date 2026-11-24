@@ -2,10 +2,13 @@ import {
   decodeNetMessage,
   encodeNetMessage,
   type AuthPayload,
+  type CombatBatch,
+  type CombatEffect,
   type LobbyRoom,
   type NetEnvelope,
   type NetMessageType,
   type NetworkCombatSnapshot,
+  type OwnerSnapshot,
   type PlayerInputPayload,
   type RoomActionPayload,
   type RoomCreatePayload,
@@ -573,6 +576,38 @@ export class NetClient {
         seq,
         ...(ackedInputIds.length ? { ackedInputIds } : {}),
       },
+    });
+  }
+
+  /** Guest/host → host gather: single effect (reliable via clientInputId when set). */
+  sendCombatEffect(roomId: string, effect: CombatEffect) {
+    this.send({
+      type: 'COMBAT_EFFECT',
+      roomId,
+      timeMs: effect.atMs ?? Date.now(),
+      payload: effect,
+    });
+  }
+
+  /** Authority owner → host gather: unit/pets/CD slice (~200ms). */
+  sendOwnerSnapshot(roomId: string, snap: OwnerSnapshot) {
+    this.send({
+      type: 'OWNER_SNAPSHOT',
+      roomId,
+      timeMs: snap.timeMs,
+      payload: snap,
+    });
+  }
+
+  /** Host → all: gathered effects + snapshots (preserve original effectIds). */
+  sendCombatBatch(batch: Omit<CombatBatch, 'seq'> & { seq?: number }) {
+    const seq = batch.seq ?? ++this.combatSeq;
+    this.send({
+      type: 'COMBAT_BATCH',
+      roomId: batch.roomId,
+      seq,
+      timeMs: batch.timeMs,
+      payload: { ...batch, seq },
     });
   }
 

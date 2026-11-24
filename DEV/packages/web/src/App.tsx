@@ -73,6 +73,7 @@ import {
   SPELL_RUNIC_COSTS,
 } from './combat/spellCosts.js';
 import { syncUnitResources } from './combat/unitResources.js';
+import { getDkRunesRequired, hasReadyDkRunes } from './combat/dkResources.js';
 import { setupRaidUnits as setupRaidUnitsCore } from './combat/setupRaidUnits.js';
 import {
   assignRaidSquads,
@@ -99,6 +100,7 @@ import {
   getOrCreateUnitAIPersonality,
   notifyOom as notifyOomCore,
 } from './combat/aiUnitHelpers.js';
+import { publishCastInterrupt } from './combat/castLifecycleNet.js';
 import { LobbyScreen, CombatHudScreen } from './screens/index.js';
 
 export function App() {
@@ -602,20 +604,30 @@ export function App() {
     lastPlayerMoveMsRef.current = Date.now();
     // Moving immediately cancels any active player cast or channel
     if (playerCastRef.current) {
+      const cancelled = playerCastRef.current;
       playerCastRef.current = null;
       setPlayerCast(null);
       pendingCastSlotRef.current = null;
       engineRef.current.effectsManager?.addFloatingText({
-        targetId: 'p1_player',
+        targetId: currentChar?.id || 'p1_player',
         text: '移动打断施法',
         category: 'STATUS',
         isCrit: false,
       });
       clearPlayerIncomingCast();
+      if (currentChar) {
+        publishCastInterrupt({
+          unitId: currentChar.id,
+          spellId: cancelled.spellId,
+          spellName: cancelled.spellName,
+          targetId: cancelled.targetId || currentChar.id,
+        });
+      }
       if (isNetworkGuestRef.current && netClient.connected && activeRoomIdRef.current && currentChar) {
         netClient.sendPlayerInput(activeRoomIdRef.current, {
           kind: 'INTERRUPT',
           playerId: currentChar.id,
+          spellId: cancelled.spellId,
         });
       }
     }
@@ -638,11 +650,18 @@ export function App() {
   const handleCancelPlayerCast = () => {
     pendingCastSlotRef.current = null;
     if (playerCastRef.current) {
-      const spellId = playerCastRef.current.spellId;
+      const cancelled = playerCastRef.current;
+      const spellId = cancelled.spellId;
       playerCastRef.current = null;
       setPlayerCast(null);
       if (currentChar) {
         engineRef.current.interruptCast(currentChar.id);
+        publishCastInterrupt({
+          unitId: currentChar.id,
+          spellId,
+          spellName: cancelled.spellName,
+          targetId: cancelled.targetId || currentChar.id,
+        });
         if (netClient.connected && activeRoomIdRef.current) {
           if (isNetworkGuestRef.current) {
             netClient.sendPlayerInput(activeRoomIdRef.current, {
@@ -1009,6 +1028,16 @@ export function App() {
         errors[spId] = '符能不足';
         continue;
       }
+      if (player.classId === 'DK') {
+        const runeReq =
+          (norm?.runesRequired as Array<'BLOOD' | 'FROST' | 'UNHOLY'> | undefined) ||
+          getDkRunesRequired(spId, player.classId);
+        if (runeReq.length > 0 && !hasReadyDkRunes(player, runeReq)) {
+          insufficient[spId] = true;
+          errors[spId] = '符文不足';
+          continue;
+        }
+      }
       const hpCost = norm?.resourceKind === 'HOLY_POWER' ? norm.resourceCostAmount : 0;
       if (hpCost > 0 && player.classId === 'PALADIN' && curHolyPower < hpCost) {
         insufficient[spId] = true;
@@ -1281,7 +1310,8 @@ export function App() {
       currentChar.classId,
       currentChar.lastSpec,
       rsm.totalRunDurationSec,
-      rsm.encounterReports
+      rsm.encounterReports,
+      currentChar.id
     );
 
     // 1. Add to character records

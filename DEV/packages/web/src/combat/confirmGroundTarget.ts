@@ -4,6 +4,9 @@ import type { ActionSlot } from '../components/ActionBar.js';
 import { isOffGcdSpell } from '../components/ActionBar.js';
 import { SPELL_MANA_COSTS } from './spellCosts.js';
 import { getEffectivePlayerCooldownMs } from './handlePlayerCastSlot.js';
+import { spendDkResourcesForSpell } from './dkResources.js';
+import { getSpellByAnyId } from '@cata-raid-sim/engine';
+import { publishCombatEffectAlreadyApplied } from './networkCombatAuthority.js';
 
 export type ConfirmGroundTargetCtx = {
   engine: CombatEngine;
@@ -44,8 +47,8 @@ export function confirmGroundTarget(ctx: ConfirmGroundTargetCtx): void {
     ctx;
   const totalCdMs = slot?.totalCdMs || 0;
 
-  // Guest: only send intent + local CD/GCD UX; host resolves FX/heal
-  if (ctx.isNetworkGuest && ctx.netConnected && ctx.activeRoomId && ctx.playerId && ctx.sendGroundCast) {
+  // Guest: resolve locally (sharded authority) — ground/totems owned by caster
+  if (ctx.isNetworkGuest && ctx.netConnected && ctx.activeRoomId && ctx.playerId) {
     const cdRem = getEffectivePlayerCooldownMs(spellId, {
       slotCdRemainingMs: slot?.cdRemainingMs,
       playerCooldowns: ctx.playerCooldowns || {},
@@ -63,24 +66,25 @@ export function confirmGroundTarget(ctx: ConfirmGroundTargetCtx): void {
       clearGroundTarget();
       return;
     }
-    ctx.sendGroundCast({
-      kind: 'GROUND_CAST',
-      playerId: ctx.playerId,
-      spellId,
-      spellName: slot?.name,
-      x,
-      y,
-      targetId: boss?.id ?? null,
-    });
-    if (totalCdMs > 0) triggerCooldown(spellId, totalCdMs);
-    if (!isOffGcdSpell(spellId)) triggerGcd(spellId);
-    clearGroundTarget();
-    return;
+    // Fall through to local placeAndLog path below
   }
 
   const manaCost = SPELL_MANA_COSTS[spellId] || 0;
   if (manaCost > 0 && player.maxMp && player.maxMp > 0) {
     player.mp = Math.max(0, (player.mp ?? 0) - manaCost);
+  }
+  if (player.classId === 'DK') {
+    const norm = getSpellByAnyId(spellId, player.classId);
+    if (!spendDkResourcesForSpell(engine, player, spellId, norm)) {
+      engine.effectsManager?.addFloatingText({
+        targetId: player.id,
+        text: '⚠️ 符文不足！',
+        category: 'STATUS',
+        isCrit: false,
+      });
+      clearGroundTarget();
+      return;
+    }
   }
 
   const triggerSlotCooldown = () => {
@@ -122,6 +126,16 @@ export function confirmGroundTarget(ctx: ConfirmGroundTargetCtx): void {
       y,
       groundEffectId: id,
       targetId: boss?.id ?? null,
+    });
+    publishCombatEffectAlreadyApplied({
+      sourceId: player.id,
+      targetId: player.id,
+      spellId: opts.spellId,
+      spellName: slot?.name,
+      kind: 'GROUND_PLACE',
+      x,
+      y,
+      radius: opts.radius,
     });
   };
 

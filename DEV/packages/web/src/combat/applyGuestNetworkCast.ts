@@ -13,6 +13,18 @@ import {
 } from '@cata-raid-sim/engine';
 import { executeAiNormalizedSpell, type AiActiveCast } from './aiCombatExecutor.js';
 import { deductAiResource } from './unitResources.js';
+import { deductDkSpellResources } from './dkResources.js';
+
+function deductGuestSpellResources(
+  engine: CombatEngine,
+  caster: Unit,
+  norm: NormalizedSpell
+): boolean {
+  if (caster.classId === 'DK') {
+    return deductDkSpellResources(engine, caster, norm.shortId || norm.id, norm);
+  }
+  return deductAiResource(caster, norm.resourceKind, norm.resourceCostAmount);
+}
 
 function startGuestSpellCooldown(
   engine: CombatEngine,
@@ -129,7 +141,7 @@ export function applyGuestNetworkCast(
 
   if (castMode === 'INSTANT') {
     if (lifecycle.deductResourceOnStart) {
-      if (!deductAiResource(caster, norm.resourceKind, norm.resourceCostAmount)) {
+      if (!deductGuestSpellResources(engine, caster, norm)) {
         return { startedCast: false, resolvedInstant: false };
       }
     }
@@ -149,7 +161,7 @@ export function applyGuestNetworkCast(
 
   if (castMode === 'CHANNELED') {
     if (lifecycle.deductResourceOnStart) {
-      if (!deductAiResource(caster, norm.resourceKind, norm.resourceCostAmount)) {
+      if (!deductGuestSpellResources(engine, caster, norm)) {
         return { startedCast: false, resolvedInstant: false };
       }
     }
@@ -220,7 +232,7 @@ export function tickGuestNetworkCasts(
       (cast.isHarmful ? boss : unit);
     if (!target || (!(target.isAlive ?? target.alive) && !sp.isResurrect)) continue;
 
-    if (!deductAiResource(unit, cast.resourceKind || sp.resourceKind, cast.manaCost || sp.resourceCostAmount)) {
+    if (!deductGuestSpellResources(engine, unit, sp)) {
       continue;
     }
     if (sp.cooldownMs > 0) {
@@ -319,6 +331,17 @@ export function resolveGuestCastTarget(
   }
 
   if (wantsFriend) {
+    if (norm.isResurrect) {
+      if (targetId) {
+        const explicit = engine.getUnit(targetId);
+        if (explicit && ((!explicit.isAlive && !explicit.alive) || explicit.hp <= 0)) {
+          return explicit;
+        }
+      }
+      return (
+        engine.friendlyUnits.find((a) => (!a.isAlive && !a.alive) || a.hp <= 0) || null
+      );
+    }
     const allies = engine.friendlyUnits.filter((a) => (a.isAlive ?? a.alive) && a.hp > 0);
     return allies.sort((a, b) => a.hp / a.maxHp - b.hp / b.maxHp)[0] || caster;
   }

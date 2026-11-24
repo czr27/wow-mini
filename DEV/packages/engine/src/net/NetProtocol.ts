@@ -33,6 +33,13 @@ export interface NetworkUnitSnapshot {
   rage?: number;
   runicPower?: number;
   focus?: number;
+  /** DK rune slots (host→guest HUD / resource sync) */
+  runes?: Array<{
+    index: number;
+    runeType: 'BLOOD' | 'FROST' | 'UNHOLY';
+    cooldownMs: number;
+    totalCdMs: number;
+  }>;
   absorb: number;
   position: { x: number; y: number };
   buffs: Buff[];
@@ -122,6 +129,13 @@ export interface NetworkCombatSnapshot {
   totalTravelMs?: number;
   currentBossIndex?: number;
   isCleared?: boolean;
+  /** Host run clock — guests need this for clear certificates */
+  totalDurationSec?: number;
+  /**
+   * Host-authoritative boss encounter reports.
+   * Guests do not sim kills — without this, SUMMARY certificates are empty/incomplete.
+   */
+  encounterReports?: import('../types.js').EncounterReport[];
   bossTargetId?: string | null;
   units: NetworkUnitSnapshot[];
   casts?: NetworkCastTimeline[];
@@ -238,6 +252,97 @@ export interface InputAckPayload {
   ackedInputIds?: string[];
 }
 
+/**
+ * Sharded-authority combat effect: caster computes values; target authority applies HP/buffs.
+ * effectId = `${sourceId}_${epoch}_${seq}` — idempotent across local apply + batch echo.
+ */
+export type CombatEffectKind =
+  | 'DAMAGE'
+  | 'HEAL'
+  | 'APPLY_BUFF'
+  | 'REMOVE_BUFF'
+  | 'RESOURCE'
+  | 'RESURRECT'
+  | 'INTERRUPT'
+  | 'SUMMON_SPAWN'
+  | 'SUMMON_DESPAWN'
+  | 'CAST_START'
+  | 'CAST_LAND'
+  | 'AOE_PULSE'
+  | 'GROUND_PLACE'
+  | 'DISPEL';
+
+export interface CombatEffectBuffPayload {
+  spellId: string;
+  name: string;
+  kind?: 'BUFF' | 'DEBUFF';
+  tags?: string[];
+  stacks?: number;
+  maxStacks?: number;
+  durationMs?: number;
+  remainingMs?: number;
+  school?: string;
+  tickIntervalMs?: number;
+  tickValue?: number;
+  /** When true, lifebloom-style shared timer (no per-stack peel). */
+  sharedTimer?: boolean;
+}
+
+export interface CombatEffect {
+  effectId: string;
+  sourceId: string;
+  targetId: string;
+  spellId: string;
+  spellName?: string;
+  kind: CombatEffectKind;
+  amount?: number;
+  isCrit?: boolean;
+  buff?: CombatEffectBuffPayload;
+  removeSpellId?: string;
+  x?: number;
+  y?: number;
+  radius?: number;
+  spawnedUnitId?: string;
+  resourceKind?: string;
+  resourceDelta?: number;
+  visualTone?: 'HEAL' | 'FRIENDLY' | 'ENEMY';
+  /** Reliable retry id (optional; same RTO path as CAST intents). */
+  clientInputId?: string;
+  clientInputAttempt?: number;
+  atMs?: number;
+  /** CAST_START: full cast/channel duration for remote action bars */
+  totalMs?: number;
+  isChannel?: boolean;
+  interruptible?: boolean;
+}
+
+/** Authority owner's unit + pets/totems slice (~200ms). */
+export interface OwnerSnapshot {
+  ownerId: string;
+  timeMs: number;
+  units: NetworkUnitSnapshot[];
+  casts?: NetworkCastTimeline[];
+  cooldowns?: NetworkCooldownTimeline[];
+  gcds?: NetworkGcdTimeline[];
+  groundEffects?: NetworkGroundEffectSnapshot[];
+}
+
+/**
+ * Host gathers EFFECTS + OWNER_SNAPSHOTs and fans out ~200ms.
+ * Clients unpack by original effectId (no re-id).
+ */
+export interface CombatBatch {
+  roomId: string;
+  seq: number;
+  timeMs: number;
+  effects: CombatEffect[];
+  snapshots: OwnerSnapshot[];
+  /** Optional host world slice (boss/AI/maze) — may still use NetworkCombatSnapshot fields. */
+  world?: Partial<NetworkCombatSnapshot>;
+  ackedEffectIds?: string[];
+  ackedInputIds?: string[];
+}
+
 export type NetMessageType =
   | 'PING'
   | 'PONG'
@@ -260,6 +365,9 @@ export type NetMessageType =
   | 'PLAYER_INPUT'
   | 'INPUT_ACK'
   | 'COMBAT_STATE'
+  | 'COMBAT_EFFECT'
+  | 'OWNER_SNAPSHOT'
+  | 'COMBAT_BATCH'
   | 'MEMBER_LEFT'
   | 'MEMBER_REPLACE_AI'
   | 'MEMBER_HOT_SWAP'

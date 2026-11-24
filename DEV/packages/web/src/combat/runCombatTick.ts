@@ -18,14 +18,9 @@ import {
   BossAI,
   roomManager,
   LEVEL_80_MAX_HASTE,
-  spawnTimedSummons,
-  isTimedSummonSpellId,
-  GROUND_TARGET_SPELL_DEFS,
   RANGE_40YD_PX,
   AUTO_ATTACK_RANGE_PX,
-  getSpellByAnyId,
   getUnitHaste,
-  resolveCooldownSpellIds,
 } from '@cata-raid-sim/engine';
 import { advanceLocalPlayerCast, type PlayerCastState } from '../components/ActionBar.js';
 import type { IncomingHealCast } from '../components/RaidFrames.js';
@@ -39,12 +34,23 @@ import {
 } from '../hooks/usePlayerCastController.js';
 import { syncUnitResources } from './unitResources.js';
 import { runFriendlyAiCombatTick, type AiActiveCast } from './aiCombatExecutor.js';
-import {
-  applyGuestNetworkCast,
-  clearGuestNetworkCast,
-  tickGuestNetworkCasts,
-} from './applyGuestNetworkCast.js';
+import { clearGuestNetworkCast } from './applyGuestNetworkCast.js';
 import { takeHostMazeSyncForBroadcast } from './mazeSyncBridge.js';
+import { withNetworkVitals } from './withNetworkVitals.js';
+import {
+  buildLocalOwnerSnapshot,
+  hostFlushCombatBatch,
+  publishOwnerSnapshot,
+} from './networkCombatAuthority.js';
+import {
+  companionCastsFromTimelines,
+  publishCastInterrupt,
+  publishCastLand,
+  publishCastStart,
+} from './castLifecycleNet.js';
+
+/** Host: last published boss cast key `bossId:spellId` for CAST_START/LAND/INTERRUPT */
+let lastPublishedBossCastKey = '';
 
 export type CombatTickMutableState = {
   tickCount: number;
@@ -127,42 +133,113 @@ export type CombatTickCtx = {
  * One 20Hz combat frame (host sim + guest HUD timelines + sync).
  * tickCount / reviveTimerMs live in mutable state so the owning interval can reset them.
  */
+/** Host-tracked boss cast key for CAST_START / LAND / INTERRUPT publish */
+let lastPublishedBossCastKey = '';
+
 export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableState): void {
   const rsm = ctx.rsmRef.current;
   const engine = ctx.engineRef.current;
   if (!rsm || ctx.runPhase === 'LOBBY' || ctx.runPhase === 'SUMMARY') return;
 
-  // Network guests: no combat sim — own cast bar is local; companions/GCD/CD from host
+  // Network guests: own skills/pets authority — resolve local cast; world from host batch/state
   if (ctx.isNetworkGuestRef.current) {
-    // 未收到房主 ack 的技能意图重传（MOVE 不重传；血量/位置靠后续 COMBAT_STATE 补齐）
     netClient.flushReliableInputRetries();
     const now = Date.now();
     const myId = ctx.currentChar?.id;
     if (myId) {
-      // Own read-bar: advance on wall clock. Never clear just because host timeline is late —
-      // that caused hitching and made later casted spells feel "unfireable".
       const localCast = ctx.playerCastRef.current;
       if (localCast) {
+        const player = engine.friendlyUnits.find((u) => u.isPlayer || u.id === myId);
+        // Channel ticks under network vitals
+        if (localCast.isChannel && player) {
+          const elapsed = Math.min(
+            localCast.totalMs,
+            now - (localCast.startedAtMs || now - localCast.elapsedMs)
+          );
+          withNetworkVitals(engine, () => {
+            processPlayerChannelTick(
+              { ...localCast, elapsedMs: elapsed },
+              elapsed,
+              engine,
+              player,
+              syncUnitResources
+            );
+          });
+        }
         const next = advanceLocalPlayerCast(localCast, now);
         if (next) {
           ctx.playerCastRef.current = next;
           ctx.setPlayerCast(next);
         } else {
+          // Cast complete → local resolve + EFFECT publish
+          if (player) {
+            if (!localCast.isChannel) {
+              withNetworkVitals(engine, () => {
+                ctx.resolvePlayerCast(localCast.spellId, localCast.totalCdMs);
+              });
+            }
+            publishCastLand({
+              unitId: myId,
+              spellId: localCast.spellId,
+              spellName: localCast.spellName,
+              targetId: localCast.targetId || myId,
+              isHarmful: !!localCast.isHarmful,
+            });
+          }
           ctx.playerCastRef.current = null;
           ctx.setPlayerCast(null);
+          ctx.clearPlayerIncomingCast();
         }
       }
-      // Own GCD/CD: local clock only. Host timelines cause rewind/skip under latency.
       ctx.setPlayerGcdRemainingMs((prev) => Math.max(0, prev - 50));
       ctx.setPlayerCooldowns((prev) => {
-        const next: Record<string, { cdRemainingMs: number; totalCdMs: number }> = {};
+        const nextCd: Record<string, { cdRemainingMs: number; totalCdMs: number }> = {};
         const guestDeltaMs = 50;
         for (const [id, cd] of Object.entries(prev)) {
           const rem = Math.max(0, (cd.cdRemainingMs || 0) - guestDeltaMs);
-          if (rem > 0) next[id] = { ...cd, cdRemainingMs: rem };
+          if (rem > 0) nextCd[id] = { ...cd, cdRemainingMs: rem };
         }
-        return next;
+        return nextCd;
       });
+      // Tick own auras / pets / ground (HoTs, LB bloom, totem ticks) under effect bus
+      withNetworkVitals(engine, () => {
+        engine.tick(50);
+      });
+      // Owner snapshot ~200ms (pets/totems/self)
+      if (ctx.activeRoomIdRef.current && state.tickCount % 4 === 0) {
+        const pc = ctx.playerCastRef.current;
+        publishOwnerSnapshot(
+          buildLocalOwnerSnapshot(engine, myId, {
+            casts: pc
+              ? [
+                  {
+                    unitId: myId,
+                    spellId: pc.spellId,
+                    spellName: pc.spellName,
+                    startedAtMs: pc.startedAtMs || now - (pc.elapsedMs || 0),
+                    totalMs: pc.totalMs,
+                    isChannel: !!pc.isChannel,
+                    targetId: pc.targetId,
+                  },
+                ]
+              : [],
+            groundEffects: (engine.effectsManager?.groundEffects || [])
+              .filter((g) => g.ownerId === myId)
+              .map((g) => ({
+                id: g.id,
+                kind: g.kind,
+                spellId: g.spellId,
+                ownerId: g.ownerId,
+                x: g.x,
+                y: g.y,
+                radius: g.radius,
+                colorHex: g.colorHex,
+                remainingMs: g.remainingMs,
+              })),
+          })
+        );
+      }
+      state.tickCount++;
     }
     const companion: Record<string, { spellName: string; progress: number; spellId?: string }> = {};
     for (const c of ctx.guestCastTimelinesRef.current) {
@@ -180,6 +257,8 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
     if (ctx.wipeNetworkVote && !ctx.wipeNetworkVote.resolved) {
       ctx.setWipeVoteTimerMs(Math.max(0, ctx.wipeNetworkVote.timeoutMs - (now - ctx.wipeNetworkVote.startedAtMs)));
     }
+    ctx.setFriendlyUnits([...engine.friendlyUnits]);
+    ctx.setFloatingTexts([...(engine.effectsManager?.floatingTexts || [])]);
     return;
   }
 
@@ -250,168 +329,22 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
         }
         continue;
       }
-      if (input.kind === 'GROUND_CAST' && input.spellId && input.playerId && typeof input.x === 'number' && typeof input.y === 'number') {
-        const caster = engine.getUnit(input.playerId);
-        if (caster && caster.isAlive) {
-          const spellId = input.spellId;
-          const onCd = resolveCooldownSpellIds(spellId, caster.classId).some(
-            (id) => !engine.cooldownManager.isSpellReady(caster.id, id)
-          );
-          if (onCd) continue;
-          const norm = getSpellByAnyId(spellId, caster.classId) || getSpellByAnyId(spellId);
-          const cdMs = norm?.cooldownMs || 0;
-          if (cdMs > 0) {
-            for (const id of resolveCooldownSpellIds(spellId, caster.classId)) {
-              engine.cooldownManager.startSpellCooldownOnly(caster.id, id, {
-                id,
-                cooldownMs: cdMs,
-              } as any);
-            }
-          }
-          const x = input.x;
-          const y = input.y;
-          const totemRadius = 80; // 10 码默认图腾
-          const healingTideRadius = GROUND_TARGET_SPELL_DEFS.healing_tide?.radius ?? RANGE_40YD_PX;
-          const rainRadius = 60;
-          let placedId: string | undefined;
-          if (spellId === 'death_and_decay' || spellId === 'dnd' || spellId === 'dk_dnd') {
-            placedId = `dnd_${Date.now()}_${caster.id}`;
-            engine.effectsManager?.addGroundEffect({
-              id: placedId, kind: 'DAMAGE_ZONE', spellId: 'death_and_decay', ownerId: caster.id,
-              x, y, radius: rainRadius, colorHex: '#8B0000', remainingMs: 10000,
-              tickIntervalMs: 1000, tickElapsedMs: 0, tickValue: 3200,
-            });
-          } else if (spellId === 'healing_rain') {
-            placedId = `hrain_${Date.now()}_${caster.id}`;
-            engine.effectsManager?.addGroundEffect({
-              id: placedId, kind: 'HEAL_ZONE', spellId: 'healing_rain', ownerId: caster.id,
-              x, y, radius: rainRadius, colorHex: '#10B981', remainingMs: 10000,
-              tickIntervalMs: 1000, tickElapsedMs: 0, tickValue: 3400,
-            });
-          } else if (spellId === 'lightwell' || spellId === 'priest_lightwell') {
-            placedId = `lw_${Date.now()}_${caster.id}`;
-            engine.effectsManager?.addGroundEffect({
-              id: placedId, kind: 'TOTEM', spellId: 'lightwell', ownerId: caster.id,
-              x, y, radius: GROUND_TARGET_SPELL_DEFS.lightwell?.radius ?? 80, colorHex: '#10B981',
-              remainingMs: 180_000, tickIntervalMs: 2000, tickElapsedMs: 0, tickValue: 2800,
-            });
-          } else if (spellId === 'blizzard' || spellId === 'mage_blizzard') {
-            placedId = `bliz_${Date.now()}_${caster.id}`;
-            engine.effectsManager?.addGroundEffect({
-              id: placedId, kind: 'DAMAGE_ZONE', spellId: 'blizzard', ownerId: caster.id,
-              x, y, radius: GROUND_TARGET_SPELL_DEFS.blizzard?.radius ?? 80, colorHex: '#EF4444',
-              remainingMs: 8000, tickIntervalMs: 1000, tickElapsedMs: 0, tickValue: 2100,
-            });
-          } else if (spellId === 'spirit_link' || spellId === 'spirit_link_totem') {
-            placedId = `slt_${Date.now()}_${caster.id}`;
-            engine.effectsManager?.addGroundEffect({
-              id: placedId, kind: 'TOTEM', spellId: 'spirit_link', ownerId: caster.id,
-              x, y, radius: totemRadius, colorHex: '#EAB308', remainingMs: 6000,
-              tickIntervalMs: 1000, tickElapsedMs: 0, tickValue: 0,
-            });
-          } else if (
-            spellId === 'healing_tide' ||
-            spellId === 'healing_tide_totem' ||
-            spellId === 'shaman_healing_tide_totem'
-          ) {
-            placedId = `htt_${Date.now()}_${caster.id}`;
-            engine.effectsManager?.addGroundEffect({
-              id: placedId, kind: 'TOTEM', spellId: 'healing_tide', ownerId: caster.id,
-              x, y, radius: healingTideRadius, colorHex: '#10B981', remainingMs: 10000,
-              tickIntervalMs: 2000, tickElapsedMs: 0, tickValue: 5200,
-            });
-          } else if (spellId === 'mana_tide' || spellId === 'mana_tide_totem') {
-            placedId = `mtt_${Date.now()}_${caster.id}`;
-            engine.effectsManager?.addGroundEffect({
-              id: placedId, kind: 'TOTEM', spellId: 'mana_tide', ownerId: caster.id,
-              x, y, radius: totemRadius, colorHex: '#EAB308', remainingMs: 12000,
-              tickIntervalMs: 5000, tickElapsedMs: 0, tickValue: 0,
-            });
-          } else if (spellId === 'windfury_totem' || spellId === 'windfury') {
-            placedId = `wft_${Date.now()}_${caster.id}`;
-            engine.effectsManager?.addGroundEffect({
-              id: placedId, kind: 'TOTEM', spellId: 'windfury_totem', ownerId: caster.id,
-              x, y, radius: totemRadius, colorHex: '#EAB308', remainingMs: 300000,
-              tickIntervalMs: 1000, tickElapsedMs: 0, tickValue: 0,
-            });
-          }
-          engine.logCombatAction({
-            actorId: caster.id,
-            spellId,
-            spellName: input.spellName,
-            kind: 'GROUND_PLACE',
-            x, y,
-            groundEffectId: placedId,
-            targetId: input.targetId ?? null,
-          });
-        }
+      if (input.kind === 'GROUND_CAST') {
+        // Guests place ground/totems locally (OWNER_SNAPSHOT + EFFECTS)
         continue;
       }
-      if (input.kind === 'SUMMON' && input.spellId && input.playerId) {
-        const caster = engine.getUnit(input.playerId);
-        if (caster && caster.isAlive) {
-          const pets = isTimedSummonSpellId(input.spellId)
-            ? spawnTimedSummons(engine, caster, input.spellId, {
-                x: typeof input.x === 'number' ? input.x : undefined,
-                y: typeof input.y === 'number' ? input.y : undefined,
-              })
-            : [];
-          if (pets.length === 0) {
-            engine.logCombatAction({
-              actorId: caster.id,
-              spellId: input.spellId,
-              spellName: input.spellName,
-              kind: 'SUMMON',
-              targetId: input.targetId ?? null,
-              x: input.x,
-              y: input.y,
-            });
-          } else {
-            for (const pet of pets) {
-              engine.logCombatAction({
-                actorId: caster.id,
-                spellId: input.spellId,
-                spellName: input.spellName,
-                kind: 'SUMMON',
-                spawnedUnitId: pet.id,
-                targetId: input.targetId ?? null,
-                x: pet.position?.x,
-                y: pet.position?.y,
-              });
-            }
-            ctx.setFriendlyUnits(engine.friendlyUnits.slice());
-          }
-        }
+      if (input.kind === 'SUMMON') {
+        // Guests spawn pets locally; host mirrors via OWNER_SNAPSHOT
         continue;
       }
-      if (input.kind === 'CAST' && input.spellId && input.playerId) {
-        const result = applyGuestNetworkCast(
-          engine,
-          {
-            playerId: input.playerId,
-            spellId: input.spellId,
-            spellName: input.spellName,
-            targetId: input.targetId,
-            x: input.x,
-            y: input.y,
-          },
-          ctx.aiHealerCastsRef.current
-        );
-        // Reject = no effect on host. Do not CAST_INTERRUPT the guest: their CD/GCD/bar
-        // are local; a nack echo under latency can interrupt a newer cast.
-        if (result.resolvedInstant || result.startedCast) {
-          ctx.setFriendlyUnits([...engine.friendlyUnits]);
-        }
+      if (input.kind === 'CAST') {
+        // Guests resolve casts locally and publish COMBAT_EFFECT
+        continue;
       }
     }
     if (immediateAcks.length > 0 && ctx.activeRoomIdRef.current) {
       netClient.sendInputAck(ctx.activeRoomIdRef.current, immediateAcks);
     }
-  }
-
-  // Remote-human cast bars (stored alongside AI casts for COMBAT_STATE sync)
-  if (ctx.isNetworkHostRef.current) {
-    tickGuestNetworkCasts(engine, ctx.aiHealerCastsRef.current, deltaMs);
   }
 
   rsm.tick(deltaMs);
@@ -544,7 +477,7 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
         );
       }
       const maze = rsm.phase === 'TRAVEL_RECOVERY' ? takeHostMazeSyncForBroadcast() : null;
-      netClient.sendCombatState({
+      const worldSnap = {
         roomId: ctx.activeRoomIdRef.current,
         timeMs: now,
         runPhase: rsm.phase,
@@ -552,6 +485,12 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
         totalTravelMs: rsm.totalTravelMs,
         currentBossIndex: rsm.currentBossIndex,
         isCleared: rsm.isCleared,
+        totalDurationSec: rsm.totalRunDurationSec,
+        // Guests need host kill reports for SUMMARY certificates (they do not sim bosses)
+        encounterReports:
+          rsm.encounterReports.length > 0 || rsm.phase === 'SUMMARY'
+            ? rsm.encounterReports
+            : undefined,
         bossTargetId: engine.bossUnit
           ? engine.threatManager.getCurrentTarget?.(engine.bossUnit.id) ?? null
           : null,
@@ -572,7 +511,13 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
               mazeSctEvents: maze.sctEvents,
             }
           : {}),
-      });
+      };
+      netClient.sendCombatState(worldSnap);
+      // Sharded-authority batch (~200ms gather): effects + owner snapshots
+      if (ctx.currentChar?.id) {
+        publishOwnerSnapshot(buildLocalOwnerSnapshot(engine, ctx.currentChar.id));
+      }
+      hostFlushCombatBatch(ctx.activeRoomIdRef.current, worldSnap);
     }
   }
 
@@ -765,9 +710,20 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
     // 注意：引导技能的资源与冷却均在起手瞬间已触发，中断后依然保持冷却；自然结束绝不重复触发冷却。
     if (prev.isChannel) {
       if (player) {
-        processPlayerChannelTick(prev, newElapsed, engine, player, syncUnitResources);
+        withNetworkVitals(engine, () => {
+          processPlayerChannelTick(prev, newElapsed, engine, player, syncUnitResources);
+        });
       }
       if (progress >= 1) {
+        if (ctx.currentChar?.id) {
+          publishCastLand({
+            unitId: ctx.currentChar.id,
+            spellId: prev.spellId,
+            spellName: prev.spellName,
+            targetId: prev.targetId || ctx.currentChar.id,
+            isHarmful: !!prev.isHarmful,
+          });
+        }
         const pending = ctx.pendingCastSlotRef.current;
         ctx.pendingCastSlotRef.current = null;
         if (pending !== null) {
@@ -790,13 +746,24 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
           ? hasSufficientPlayerResources(player, prev.deferredCosts)
           : { ok: true };
         if (resCheck.ok) {
-          castSuccess = ctx.resolvePlayerCast(prev.spellId, prev.totalCdMs);
+          castSuccess = withNetworkVitals(engine, () =>
+            ctx.resolvePlayerCast(prev.spellId, prev.totalCdMs)
+          );
           if (castSuccess) {
             if (prev.deferredCosts) {
               deductPlayerResources(player, prev.deferredCosts, syncUnitResources);
             }
             if (prev.totalCdMs && prev.totalCdMs > 0) {
               ctx.triggerCooldown(prev.spellId, prev.totalCdMs);
+            }
+            if (ctx.currentChar?.id) {
+              publishCastLand({
+                unitId: ctx.currentChar.id,
+                spellId: prev.spellId,
+                spellName: prev.spellName,
+                targetId: prev.targetId || ctx.currentChar.id,
+                isHarmful: !!prev.isHarmful,
+              });
             }
           }
         } else if (resCheck.errorText) {
@@ -914,9 +881,9 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
         } else if (u.classId === 'HUNTER') {
           const focusRate = 6.5 * (1 + haste);
           u.focus = Math.min(100, (u.focus ?? 100) + (focusRate * deltaMs) / 1000);
-        } else if (u.classId === 'DK') {
-          u.runicPower = Math.min(100, (u.runicPower ?? 20) + (5.5 * deltaMs) / 1000);
         }
+        // DK: no passive runic-power regen (Cata). RP comes from spending runes /
+        // Horn of Winter; runes tick via engine.resourceManager in engine.tick.
         syncUnitResources(u);
       }
     }
@@ -947,6 +914,45 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
       // Tick authentic Boss AI abilities
       if (ctx.bossAiRef.current) {
         ctx.bossAiRef.current.tick(deltaMs, boss, engine);
+      }
+      // Publish boss cast lifecycle for remote action bars
+      {
+        const after = ctx.bossAiRef.current?.currentCasting;
+        const afterKey =
+          after && after.skill.castTimeMs > 0
+            ? `${boss.id}:${after.skill.id || after.skill.name}`
+            : '';
+        if (afterKey && afterKey !== lastPublishedBossCastKey && after) {
+          publishCastStart({
+            unitId: boss.id,
+            spellId: after.skill.id || after.skill.name,
+            spellName: after.skill.name,
+            targetId: engine.getBossTargetId() || boss.id,
+            totalMs: after.skill.castTimeMs,
+            isChannel: false,
+            interruptible: !!after.skill.interruptible,
+            isHarmful: true,
+          });
+        } else if (!afterKey && lastPublishedBossCastKey) {
+          const [uid, sid] = lastPublishedBossCastKey.split(':');
+          const alive = (boss.isAlive ?? boss.alive) && boss.hp > 0;
+          if (alive) {
+            publishCastLand({
+              unitId: uid || boss.id,
+              spellId: sid || 'boss_cast',
+              spellName: sid,
+              targetId: engine.getBossTargetId() || boss.id,
+              isHarmful: true,
+            });
+          } else {
+            publishCastInterrupt({
+              unitId: uid || boss.id,
+              spellId: sid || 'boss_cast',
+              targetId: boss.id,
+            });
+          }
+        }
+        lastPublishedBossCastKey = afterKey;
       }
 
       // Resolve authentic boss target (OT detection)
@@ -1131,8 +1137,13 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
     }
   }
 
-  // Sync active casts & incoming heal prediction bars across frames
-  ctx.setCompanionCasts(currentCasts);
+  // Sync active casts: AI currentCasts + remote human timelines from EFFECTS
+  const myId = ctx.currentChar?.id;
+  const fromTimelines = companionCastsFromTimelines(
+    ctx.guestCastTimelinesRef.current,
+    myId
+  );
+  ctx.setCompanionCasts({ ...fromTimelines, ...currentCasts });
   ctx.setIncomingHeals(currentHeals);
   ctx.setIncomingCasts(currentIncomingCasts);
 

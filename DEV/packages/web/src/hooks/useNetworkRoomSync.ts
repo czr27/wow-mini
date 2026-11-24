@@ -19,6 +19,9 @@ import type {
   AccountManager,
   GroundEffect,
   FloatingCombatText,
+  CombatEffect,
+  CombatBatch,
+  OwnerSnapshot,
 } from '@cata-raid-sim/engine';
 import {
   roomManager,
@@ -36,6 +39,21 @@ import {
   type StartAdventureOverrides,
 } from './useRoomLobby.js';
 import { applyGuestMazeSync } from '../combat/mazeSyncBridge.js';
+import {
+  applyCombatBatch,
+  beginCombatEffectEpoch,
+  configureCombatAuthority,
+  hostReceiveCombatEffect,
+  hostReceiveOwnerSnapshot,
+  makeGuestAuthorityPredicate,
+  makeHostAuthorityPredicate,
+  mergeOwnerSnapshotUnits,
+  setHostEffectHudHook,
+} from '../combat/networkCombatAuthority.js';
+import {
+  applyCastLifecycleToTimelines,
+  companionCastsFromTimelines,
+} from '../combat/castLifecycleNet.js';
 
 export type NetworkRoomSyncDeps = {
   currentChar: CharacterRecord | null;
@@ -150,6 +168,25 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
       });
     }
 
+    const applyCastHud = (e: import('@cata-raid-sim/engine').CombatEffect) => {
+      const myId = d().currentChar?.id || null;
+      if (e.kind !== 'CAST_START' && e.kind !== 'CAST_LAND' && e.kind !== 'INTERRUPT') return;
+      d().guestCastTimelinesRef.current = applyCastLifecycleToTimelines(
+        d().guestCastTimelinesRef.current,
+        e,
+        myId
+      );
+      d().setCompanionCasts((prev) => {
+        const next = {
+          ...prev,
+          ...companionCastsFromTimelines(d().guestCastTimelinesRef.current, myId),
+        };
+        if (e.kind === 'CAST_LAND' || e.kind === 'INTERRUPT') delete next[e.sourceId];
+        return next;
+      });
+    };
+    setHostEffectHudHook(applyCastHud);
+
     const unsub = netClient.subscribe((msg) => {
       if (msg.type === 'AUTH_OK' || msg.type === 'CONNECTED') {
         d().setNetConnected(true);
@@ -262,6 +299,7 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
             d().isNetworkHostRef.current = room.hostId === d().currentChar.id;
             d().setWaitingQueueRoomId(null);
             netClient.beginCombatInputEpoch();
+            beginCombatEffectEpoch();
             d().setupRaidUnitsRef.current(
               d().currentChar,
               tier,
@@ -269,6 +307,19 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
               room.customDifficulty || d().customDifficultyRef.current,
               room
             );
+            {
+              const meId = d().currentChar.id;
+              const eng = d().engineRef.current;
+              configureCombatAuthority({
+                localPlayerId: meId,
+                isNetworkHost: d().isNetworkHostRef.current,
+                isNetworkGuest: d().isNetworkGuestRef.current,
+                activeRoomId: room.id,
+                isUnitLocalAuthority: d().isNetworkHostRef.current
+                  ? makeHostAuthorityPredicate(eng, meId)
+                  : makeGuestAuthorityPredicate(eng, meId),
+              });
+            }
             d().setFriendlyUnits([...d().engineRef.current.friendlyUnits]);
             if (d().rsmRef.current) {
               d().rsmRef.current.dungeon = cfg;
@@ -355,10 +406,22 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
         // New dungeon visit → fresh cast-id epoch (leave/rejoin must not reuse old ids)
         netClient.beginCombatInputEpoch();
         netClient.clearHostInputAckState();
+        beginCombatEffectEpoch();
         d().roomFacadeRef.current.upsertRoom(room);
         d().setActiveRoomId(room.id);
         d().isNetworkHostRef.current = !!(d().currentChar && room.hostId === d().currentChar.id);
         d().isNetworkGuestRef.current = !!(d().currentChar && room.hostId !== d().currentChar.id);
+        const meId = d().currentChar?.id || null;
+        const engine = d().engineRef.current;
+        configureCombatAuthority({
+          localPlayerId: meId,
+          isNetworkHost: d().isNetworkHostRef.current,
+          isNetworkGuest: d().isNetworkGuestRef.current,
+          activeRoomId: room.id,
+          isUnitLocalAuthority: d().isNetworkHostRef.current
+            ? makeHostAuthorityPredicate(engine, meId || '')
+            : makeGuestAuthorityPredicate(engine, meId || ''),
+        });
         const cfg = getDungeonConfig(room.dungeonId, room.difficulty);
         const tier = cfg.tier;
         const effectiveCustom = room.customDifficulty || d().customDifficultyRef.current;
@@ -445,6 +508,13 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
           }
           if (typeof snap.isCleared === 'boolean') {
             rsm.isCleared = snap.isCleared;
+          }
+          if (typeof snap.totalDurationSec === 'number') {
+            rsm.totalRunDurationSec = snap.totalDurationSec;
+            d().setTotalDurationSec(Math.round(snap.totalDurationSec));
+          }
+          if (Array.isArray(snap.encounterReports)) {
+            rsm.encounterReports = snap.encounterReports;
           }
         }
 
@@ -571,6 +641,42 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
       }
       if (msg.type === 'PLAYER_INPUT' && msg.payload && d().isNetworkHostRef.current) {
         d().pendingGuestInputsRef.current.push(msg.payload as PlayerInputPayload);
+      }
+      if (msg.type === 'COMBAT_EFFECT' && msg.payload && d().isNetworkHostRef.current) {
+        hostReceiveCombatEffect(d().engineRef.current, msg.payload as CombatEffect);
+      }
+      if (msg.type === 'OWNER_SNAPSHOT' && msg.payload && d().isNetworkHostRef.current) {
+        const snap = msg.payload as OwnerSnapshot;
+        hostReceiveOwnerSnapshot(snap);
+        mergeOwnerSnapshotUnits(d().engineRef.current, snap);
+        d().setFriendlyUnits([...d().engineRef.current.friendlyUnits]);
+      }
+      if (msg.type === 'COMBAT_BATCH' && msg.payload) {
+        const batch = msg.payload as CombatBatch;
+        const engine = d().engineRef.current;
+        // Host already applied host-authority effects on receive; still merge foreign snapshots / HUD
+        applyCombatBatch(engine, batch, {
+          mergeOwnerSnapshot: (snap) => mergeOwnerSnapshotUnits(engine, snap),
+          onHudEffect: applyCastHud,
+        });
+        if (batch.world?.units && d().isNetworkGuestRef.current) {
+          // Merge host world units but keep local player / pets from guest authority
+          const me = d().currentChar?.id;
+          const worldUnits = batch.world.units.filter(
+            (u) => u.id !== me && u.ownerId !== me && !(u.isPet && u.ownerId === me)
+          );
+          const mine = engine
+            .buildNetworkUnitSnapshots()
+            .filter((u) => u.id === me || u.ownerId === me || (u.isPet && u.ownerId === me));
+          engine.applyNetworkUnitSnapshots([...worldUnits, ...mine]);
+          if (batch.world.runPhase) {
+            const rsm = d().rsmRef.current;
+            if (rsm) rsm.phase = batch.world.runPhase as RunPhase;
+            d().setRunPhase(batch.world.runPhase as RunPhase);
+          }
+        }
+        d().setFriendlyUnits([...engine.friendlyUnits]);
+        d().setBossUnit(engine.bossUnit ? { ...engine.bossUnit } : undefined);
       }
       if (msg.type === 'MEMBER_HOT_SWAP' && msg.payload) {
         const body = msg.payload as {
@@ -814,6 +920,7 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
     });
 
     return () => {
+      setHostEffectHudHook(null);
       unsub();
     };
   }, [charId, charSpec, charClassId, username]); // refresh AUTH on char / spec switch

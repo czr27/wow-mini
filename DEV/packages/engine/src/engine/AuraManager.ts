@@ -58,28 +58,17 @@ export class AuraManager {
 
     if (existing) {
       if (existing.spellId === 'lifebloom') {
-        const duration = partial.durationMs || 10000;
-        if (!existing.stackRemainingMs || existing.stackRemainingMs.length === 0) {
-          existing.stackRemainingMs = [existing.remainingMs];
-        }
+        // Shared timer (Cata): stacks amplify ticks/bloom; all stacks expire together.
+        const duration = partial.durationMs || 15000;
         if (existing.stacks < existing.maxStacks) {
           existing.stacks++;
-          existing.stackRemainingMs.push(duration);
-        } else {
-          // 已叠满三层：重置倒计时最少的那一层的时长
-          let minIdx = 0;
-          let minVal = existing.stackRemainingMs[0] ?? duration;
-          for (let i = 1; i < existing.stackRemainingMs.length; i++) {
-            if (existing.stackRemainingMs[i] < minVal) {
-              minVal = existing.stackRemainingMs[i];
-              minIdx = i;
-            }
-          }
-          existing.stackRemainingMs[minIdx] = duration;
         }
-        existing.remainingMs = Math.min(...existing.stackRemainingMs);
+        existing.remainingMs = duration;
         existing.durationMs = duration;
+        delete existing.stackRemainingMs;
         existing.name = `生命绽放 (${existing.stacks}层)`;
+        if (partial.tickIntervalMs != null) existing.tickIntervalMs = partial.tickIntervalMs;
+        if (partial.tickValue != null) existing.tickValue = partial.tickValue;
         this.engine.emitEvent({
           kind: 'BUFF_APPLIED',
           sourceId: partial.sourceUnitId,
@@ -106,7 +95,7 @@ export class AuraManager {
       }
     } else {
       const isLifebloom = partial.spellId === 'lifebloom';
-      const duration = partial.durationMs || 10000;
+      const duration = partial.durationMs || (isLifebloom ? 15000 : 10000);
       const buff: Buff = {
         ...partial,
         id: `${partial.spellId}_${target.id}_${Date.now()}`,
@@ -114,10 +103,11 @@ export class AuraManager {
         remainingMs: duration,
         durationMs: duration,
         tickElapsedMs: 0,
-        tickIntervalMs: partial.tickIntervalMs || 1000,
+        tickIntervalMs: partial.tickIntervalMs || (isLifebloom ? 2000 : 1000),
         tickValue: partial.tickValue,
         name: isLifebloom ? `生命绽放 (${partial.stacks ?? 1}层)` : partial.name,
-        stackRemainingMs: isLifebloom ? [duration] : undefined,
+        // Lifebloom uses shared remainingMs only — no per-stack peel
+        stackRemainingMs: undefined,
       };
       target.buffs.push(buff);
       this.engine.emitEvent({
@@ -172,19 +162,10 @@ export class AuraManager {
     if (!isValidLifebloomTarget(target, this.engine)) return false;
     const lb = target.buffs.find(b => b.spellId === 'lifebloom' && (!sourceId || b.sourceUnitId === sourceId));
     if (!lb) return false;
-    const dur = lb.durationMs || 10000;
-    if (lb.stackRemainingMs && lb.stackRemainingMs.length > 0) {
-      let minIdx = 0;
-      for (let i = 1; i < lb.stackRemainingMs.length; i++) {
-        if (lb.stackRemainingMs[i] < lb.stackRemainingMs[minIdx]) {
-          minIdx = i;
-        }
-      }
-      lb.stackRemainingMs[minIdx] = dur;
-      lb.remainingMs = Math.min(...lb.stackRemainingMs);
-    } else {
-      lb.remainingMs = dur;
-    }
+    const dur = lb.durationMs || 15000;
+    // Shared timer: refresh whole aura, keep stacks
+    lb.remainingMs = dur;
+    delete lb.stackRemainingMs;
     this.engine.emitEvent({
       kind: 'BUFF_APPLIED',
       sourceId: lb.sourceUnitId,
@@ -208,18 +189,16 @@ export class AuraManager {
     const toRemove: string[] = [];
 
     for (const buff of unit.buffs) {
+      // Lifebloom always uses shared remainingMs (migrate legacy per-stack timers)
+      if (buff.spellId === 'lifebloom' && buff.stackRemainingMs?.length) {
+        delete buff.stackRemainingMs;
+      }
       if (buff.stackRemainingMs && buff.stackRemainingMs.length > 0) {
         buff.stackRemainingMs = buff.stackRemainingMs.map(ms => ms - deltaMs);
         const expiredCount = buff.stackRemainingMs.filter(ms => ms <= 0).length;
         if (expiredCount > 0) {
-          if (buff.spellId === 'lifebloom') {
-            const val = buff.tickValue ?? 2400;
-            const bloomVal = val * 4 * expiredCount;
-            this.engine.applyHeal(buff.sourceUnitId, unit.id, bloomVal, false, 0, 'lifebloom');
-          }
           buff.stackRemainingMs = buff.stackRemainingMs.filter(ms => ms > 0);
           buff.stacks = buff.stackRemainingMs.length;
-          buff.name = `生命绽放 (${buff.stacks}层)`;
         }
         if (buff.stackRemainingMs.length <= 0) {
           toRemove.push(buff.id);
@@ -230,7 +209,7 @@ export class AuraManager {
         buff.remainingMs -= deltaMs;
         if (buff.remainingMs <= 0) {
           if (buff.spellId === 'lifebloom') {
-            // 生命绽放 15 秒倒计时自然结束：触发大绽放爆发治疗（层数越多治疗量越高）
+            // 生命绽放自然结束：整组层数一次绽放
             const val = buff.tickValue ?? 2400;
             const bloomVal = val * 4 * buff.stacks;
             this.engine.applyHeal(buff.sourceUnitId, unit.id, bloomVal, false, 0, 'lifebloom');

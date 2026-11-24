@@ -107,7 +107,9 @@ export class ReportManager {
     characterClass: ClassId,
     characterSpec: string,
     totalDurationSec: number,
-    encounters: EncounterReport[]
+    encounters: EncounterReport[],
+    /** Multiplayer: prefer this seat id (guest is never isPlayer on host reports) */
+    characterUnitId?: string | null
   ): DungeonClearCertificate {
     let aggDamage = 0;
     let aggHealing = 0;
@@ -117,7 +119,10 @@ export class ReportManager {
     let aggDeaths = 0;
 
     for (const enc of encounters) {
-      const charStat = enc.unitStats.find(u => u.name === characterName || u.isPlayer);
+      const charStat =
+        enc.unitStats.find((u) => characterUnitId && u.unitId === characterUnitId) ||
+        enc.unitStats.find((u) => u.name === characterName) ||
+        enc.unitStats.find((u) => u.isPlayer);
       if (charStat) {
         aggDamage += charStat.totalDamage;
         aggHealing += charStat.totalHealing;

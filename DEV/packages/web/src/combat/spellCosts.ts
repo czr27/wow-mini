@@ -67,9 +67,10 @@ export const SPELL_RAGE_COSTS: Record<string, number> = {
   maul: 30,
 };
 
-/** Death Knight runic power cost matrix. */
+/** Death Knight runic power cost matrix (Cata 4.3 base). */
 export const SPELL_RUNIC_COSTS: Record<string, number> = {
-  frost_strike: 32,
+  frost_strike: 40,
   rune_strike: 30,
   death_coil: 40,
+  summon_gargoyle: 60,
 };
