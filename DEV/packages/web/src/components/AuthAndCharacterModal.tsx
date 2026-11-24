@@ -1377,12 +1377,14 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
                         </div>
                         <div>
                           <div className="text-[10px] text-amber-400/80 font-bold mb-1.5">地形光圈</div>
-                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-3 gap-y-1.5">
+                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-3 gap-y-1.5">
                             <Check label="治疗地形" k="showHealTerrain" />
                             <Check label="加成地形" k="showBuffTerrain" />
                             <Check label="伤害地形" k="showDamageTerrain" />
-                            <Check label="白色描边" k="terrainWhiteOutline" />
                           </div>
+                          <p className="text-[10px] text-slate-500 mt-1">
+                            填充：治疗绿 / 增益黄 / 伤害红；描边强制：友方白 / 敌方红
+                          </p>
                         </div>
                         <div>
                           <div className="text-[10px] text-amber-400/80 font-bold mb-1.5">团队框架</div>

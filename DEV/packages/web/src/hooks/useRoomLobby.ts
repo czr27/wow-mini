@@ -101,6 +101,10 @@ export function useRoomLobby(deps: RoomLobbyDeps) {
     } else if (activeRoomId) {
       roomFacadeRef.current.closeRoom(activeRoomId, 'destroyed');
     }
+    // Also tear down any other rooms still listed under this host (stale combat ghosts)
+    if (currentChar) {
+      roomFacadeRef.current.closeHostedRooms(currentChar.id, 'host_left');
+    }
     roomManager.cleanupAiOnlyRooms();
     isNetworkGuestRef.current = false;
     isNetworkHostRef.current = false;
@@ -200,10 +204,19 @@ export function useRoomLobby(deps: RoomLobbyDeps) {
       window.alert('尚未连接到游戏服务器。请确认服务端已启动（端口 3001），房间一律由服务器管理。');
       return;
     }
+    // Leave / destroy leftover self-hosted combat rooms before picking a target
+    if (activeRoomId) {
+      handleLeaveActiveRoom();
+    } else {
+      roomFacadeRef.current.closeHostedRooms(currentChar.id, 'host_left');
+    }
     const pRole = getRoleBySpec(currentChar.classId, currentChar.lastSpec);
     const rooms = roomFacadeRef.current.listRooms();
     // Prefer mid-run rooms that still have human capacity (hot-join / swap AI).
+    // Never rejoin your own ghost host room or a seat you already occupy.
     const hotJoinable = rooms.filter((r) => {
+      if (r.hostId === currentChar.id) return false;
+      if (r.members.some((m) => m.id === currentChar.id && m.isPlayer && !m.isAi)) return false;
       const quota = DUNGEON_ROLE_QUOTAS[r.dungeonId] || DUNGEON_ROLE_QUOTAS.shadowfang_keep;
       const humans = r.members.filter((m) => m.isPlayer && !m.isAi).length;
       if (humans >= quota.capacity) return false;
@@ -266,8 +279,16 @@ export function useRoomLobby(deps: RoomLobbyDeps) {
       roomFacadeRef.current.validateStartGameRoom?.(room) ??
       roomFacadeRef.current.validateStartGame(activeRoomId);
 
-    // 与界面「AI 补齐后可开局」对齐：本地镜像若仍显示未满，再乐观补一次后再校验
-    if (!validation.canStart && validation.reasons.some((r) => r.includes('未满'))) {
+    const quota = DUNGEON_ROLE_QUOTAS[room.dungeonId] || DUNGEON_ROLE_QUOTAS.shadowfang_keep;
+    const localHasAi = room.members.some((m) => m.isAi);
+    const underfilled = room.members.length < quota.capacity;
+    // 普通/英雄未满，或自定义已点过 AI：开局前再补一次并先发 AUTO_FILL，
+    // 保证 START 到达服务端时名册已齐（覆盖乐观补齐竞态）。
+    const shouldSyncFill =
+      underfilled &&
+      (room.difficulty !== 'CUSTOM' || localHasAi || validation.reasons.some((r) => r.includes('未满')));
+
+    if (shouldSyncFill || (!validation.canStart && validation.reasons.some((r) => r.includes('未满')))) {
       roomFacadeRef.current.autoFillAi(activeRoomId);
       setRoomsTick((t) => t + 1);
       room = roomFacadeRef.current.getRoom(activeRoomId) || roomManager.getRoom(activeRoomId);
@@ -283,7 +304,7 @@ export function useRoomLobby(deps: RoomLobbyDeps) {
     }
     isNetworkHostRef.current = true;
     isNetworkGuestRef.current = false;
-    // 服务端 startGame 也会再 autoFill，覆盖「START 早于 AUTO_FILL 到达」的竞态
+    // 服务端 startGame：非自定义必补；自定义若已有 AI 也会补齐剩余空位
     netClient.startRoom(activeRoomId);
   };
 

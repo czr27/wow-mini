@@ -44,11 +44,6 @@ import { WaitingQueueOverlay } from './components/room/index.js';
 import { netClient } from './net/NetClient.js';
 import { resolveGameApiBaseUrl } from './net/apiBase.js';
 import { NetworkRoomFacade } from './net/NetworkRoomFacade.js';
-import {
-  buildCastFromTimeline,
-  cooldownRemainingFromTimelines,
-  gcdRemainingFromTimelines,
-} from './net/netTimeline.js';
 import type {
   LobbyRoom as NetLobbyRoom,
   NetworkCastTimeline,
@@ -95,6 +90,7 @@ import { type AiActiveCast } from './combat/aiCombatExecutor.js';
 import { confirmGroundTarget } from './combat/confirmGroundTarget.js';
 import { clearMazeSync, setMazeSyncRoomId } from './combat/mazeSyncBridge.js';
 import { dispelUnit } from './combat/dispelUnit.js';
+import { pickNearestHostileExcluding } from './combat/tabTargetHostile.js';
 import {
   getPredictedHealAmount as getPredictedHealAmountCore,
   isAiCdReady as isAiCdReadyCore,
@@ -227,6 +223,8 @@ export function App() {
   const [corpseRunTimerMs, setCorpseRunTimerMs] = useState(0);
   const [groundTargetState, setGroundTargetState] = useState<GroundTargetState | null>(null);
   const [customSlotLayout, setCustomSlotLayout] = useState<ActionSlot[] | null>(null);
+  /** Which char+spec `customSlotLayout` belongs to — prevents stale skills after character switch. */
+  const customSlotOwnerRef = useRef<string | null>(null);
   const [isSkillBookOpen, setIsSkillBookOpen] = useState(false);
   const [dungeonTier, setDungeonTier] = useState<'5man' | '20man'>(() => {
     const initChar = accountMgrRef.current.getCurrentCharacter();
@@ -781,11 +779,20 @@ export function App() {
     return null;
   };
 
+  const slotOwnerKey = (charId: string, specId: string) => `${charId}|${specId}`;
+
+  /** Reload action-bar cache for a character/spec (must run on character select, not only on spec click). */
+  const reloadCustomSlotLayout = (charId: string, specId: string, classId: ClassId) => {
+    customSlotOwnerRef.current = slotOwnerKey(charId, specId);
+    setCustomSlotLayout(loadSpecCustomSlots(charId, specId, classId));
+  };
+
   // Helper to persist custom slots to both memory state, localStorage and AccountManager
   const persistCustomSlots = (newSlots: ActionSlot[], targetCharId?: string, targetSpecId?: string) => {
     const cid = targetCharId || currentChar?.id;
     const sid = targetSpecId || currentChar?.lastSpec;
     if (cid === currentChar?.id && sid === currentChar?.lastSpec) {
+      customSlotOwnerRef.current = slotOwnerKey(cid, sid);
       setCustomSlotLayout([...newSlots]);
     }
     if (!cid || !sid) return;
@@ -809,22 +816,16 @@ export function App() {
     if (!char) return [];
     const spec = targetSpecId || char.lastSpec;
     const isCurrentActive = (!targetCharId || targetCharId === currentChar?.id) && (!targetSpecId || targetSpecId === currentChar?.lastSpec);
-    const baseSlots = (isCurrentActive && customSlotLayout)
+    const layoutOwnsCurrent =
+      !!customSlotLayout &&
+      customSlotOwnerRef.current === slotOwnerKey(char.id, spec);
+    const baseSlots = (isCurrentActive && layoutOwnsCurrent && customSlotLayout)
       || loadSpecCustomSlots(char.id, spec, char.classId)
       || getDefaultActionSlots(char.classId, spec);
     return baseSlots.map(s => {
       const defaultCd = DEFAULT_SPELL_COOLDOWNS[s.spellId] || 0;
       const totalCdMs = (s.totalCdMs && s.totalCdMs > 0) ? s.totalCdMs : defaultCd;
-      let cdRemainingMs = isCurrentActive ? (playerCooldowns[s.spellId]?.cdRemainingMs || 0) : 0;
-      // Guest: prefer host timeline CD for the active character
-      if (isCurrentActive && isNetworkGuestRef.current && currentChar) {
-        const fromNet = cooldownRemainingFromTimelines(
-          guestCdTimelinesRef.current,
-          currentChar.id,
-          s.spellId
-        );
-        if (fromNet > 0) cdRemainingMs = fromNet;
-      }
+      const cdRemainingMs = isCurrentActive ? (playerCooldowns[s.spellId]?.cdRemainingMs || 0) : 0;
       return {
         ...s,
         totalCdMs: playerCooldowns[s.spellId]?.totalCdMs || totalCdMs,
@@ -1040,6 +1041,7 @@ export function App() {
   );
 
   // Global Alt+1 ~ Alt+5 → currently selected squad's 1st~5th member
+  // Tab → nearest living hostile that is not the current target
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
@@ -1050,11 +1052,28 @@ export function App() {
           setSelectedTargetId(target.id);
           e.preventDefault();
         }
+        return;
+      }
+      if (e.code === 'Tab' || e.key === 'Tab') {
+        if (e.altKey || e.ctrlKey || e.metaKey) return;
+        const engine = engineRef.current;
+        const player =
+          engine.friendlyUnits.find((u) => u.isPlayer) ||
+          engine.friendlyUnits[0];
+        if (!player?.position) return;
+        const next = pickNearestHostileExcluding({
+          enemies: engine.enemyUnits,
+          from: player.position,
+          excludeId: selectedTargetId,
+        });
+        if (!next) return;
+        setSelectedTargetId(next.id);
+        e.preventDefault();
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [raidSquads, selectedSquadIndex]);
+  }, [raidSquads, selectedSquadIndex, selectedTargetId]);
 
   // Cast Player Spell (P6e: gates in combat/handlePlayerCastSlot)
   const handleCastSlot = (slotIdx: number) => {
@@ -1838,7 +1857,11 @@ export function App() {
                 setDungeonTier(tier);
                 setDungeonDifficulty(diff);
                 setCustomDifficulty(customDiff);
+                reloadCustomSlotLayout(targetChar.id, targetChar.lastSpec, targetChar.classId);
                 setupRaidUnits(targetChar, tier, diff, customDiff);
+              } else {
+                customSlotOwnerRef.current = null;
+                setCustomSlotLayout(null);
               }
             }}
             onCreateCharacter={async (name, cls, spec) => {
@@ -1861,6 +1884,7 @@ export function App() {
               setDungeonTier(tier);
               setDungeonDifficulty(diff);
               setCustomDifficulty(customDiff);
+              reloadCustomSlotLayout(newChar.id, newChar.lastSpec, newChar.classId);
               setupRaidUnits(newChar, tier, diff, customDiff);
               return { success: true };
             }}
@@ -1877,7 +1901,11 @@ export function App() {
                 setDungeonTier(tier);
                 setDungeonDifficulty(diff);
                 setCustomDifficulty(customDiff);
+                reloadCustomSlotLayout(nextChar.id, nextChar.lastSpec, nextChar.classId);
                 setupRaidUnits(nextChar, tier, diff, customDiff);
+              } else {
+                customSlotOwnerRef.current = null;
+                setCustomSlotLayout(null);
               }
             }}
             onChangeSpec={(id, spec) => {
@@ -1887,7 +1915,7 @@ export function App() {
                 setAccount({ ...updatedAcc });
                 const updatedChar = updatedAcc.characters.find(c => c.id === id);
                 if (updatedChar) {
-                  setCustomSlotLayout(loadSpecCustomSlots(updatedChar.id, updatedChar.lastSpec, updatedChar.classId));
+                  reloadCustomSlotLayout(updatedChar.id, updatedChar.lastSpec, updatedChar.classId);
                   setupRaidUnits(updatedChar);
                   // 立刻刷新服务器 session，避免进房仍用旧专精
                   netClient.refreshAuthProfile({
@@ -2020,6 +2048,7 @@ export function App() {
           <CombatHudScreen
             friendlyUnits={friendlyUnits}
             bossUnit={bossUnit}
+            enemyUnits={engineRef.current.enemyUnits}
             bossTargetId={bossTargetId}
             groundEffects={groundEffects}
             floatingTexts={floatingTexts}

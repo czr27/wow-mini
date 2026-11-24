@@ -32,12 +32,16 @@ export const AOE_ALPHA: Record<AoeActorTier, number> = {
   MINION: AOE_ALPHA_AT_SMALL,
 };
 
-/** RGB fill colors — heal green / friendly yellow / enemy red */
+/** RGB fill colors — 治疗绿 / 增益黄 / 伤害红（只看分类，与施法者敌我无关） */
 export const AOE_RGB: Record<AoeVisualTone, readonly [number, number, number]> = {
   HEAL: [16, 185, 129],
   FRIENDLY: [234, 179, 8],
   ENEMY: [239, 68, 68],
 };
+
+/** 描边：友方施法者白 / 敌方施法者红（强制显示） */
+export const AOE_OUTLINE_ALLY_RGB = [255, 255, 255] as const;
+export const AOE_OUTLINE_ENEMY_RGB = [239, 68, 68] as const;
 
 export function resolveAoeActorTier(unit: {
   isPlayer?: boolean;
@@ -72,8 +76,37 @@ export function resolveAoeAlpha(unit: Parameters<typeof resolveAoeActorTier>[0])
 }
 
 /**
- * Ground FX that should render as a heal circle and that AI may seek when hurt.
- * Includes HEAL_ZONE spells and healing/support totems (tide / spirit link / barrier).
+ * Ground FX that restore HP (green heal fill). Excludes non-heal support like
+ * spirit link / mana tide / windfury (those use yellow FRIENDLY).
+ */
+export function isHealFillGroundEffect(eff: {
+  kind?: string;
+  spellId?: string;
+  remainingMs?: number;
+}): boolean {
+  if ((eff.remainingMs ?? 1) <= 0) return false;
+  if (eff.kind === 'HEAL_ZONE') return true;
+  const sid = (eff.spellId || '').toLowerCase();
+  if (
+    sid.includes('healing_rain') ||
+    sid.includes('healing_tide') ||
+    sid.includes('lightwell') ||
+    sid.includes('light_well') ||
+    sid.includes('efflorescence') ||
+    sid.includes('swiftmend') ||
+    sid.includes('tranquility') ||
+    sid.includes('治疗之雨') ||
+    sid.includes('治疗之潮') ||
+    sid.includes('圣光井') ||
+    sid.includes('百花')
+  ) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Ground FX that AI may seek when hurt (heal fills + support totems like spirit link).
  * Mana tide / windfury stay non-heal.
  */
 export function isSeekableHealGroundEffect(eff: {
@@ -82,22 +115,20 @@ export function isSeekableHealGroundEffect(eff: {
   remainingMs?: number;
 }): boolean {
   if ((eff.remainingMs ?? 1) <= 0) return false;
-  if (eff.kind === 'HEAL_ZONE') return true;
+  if (isHealFillGroundEffect(eff)) return true;
   if (eff.kind !== 'TOTEM') return false;
   const sid = (eff.spellId || '').toLowerCase();
   return (
-    sid.includes('healing_tide') ||
     sid.includes('spirit_link') ||
     sid.includes('power_word_barrier') ||
     sid.includes('pw_barrier') ||
-    sid.includes('治疗之潮') ||
     sid.includes('灵魂链接')
   );
 }
 
 /**
- * Yellow / FRIENDLY persistent ground FX (non-heal totems etc.) for healthy stacking.
- * Excludes red hazards and green heal circles.
+ * Yellow / FRIENDLY persistent ground FX (non-heal beneficial totems etc.).
+ * Excludes red hazards and green heal fills.
  */
 export function isFriendlyBuffGroundEffect(eff: {
   kind?: string;
@@ -106,7 +137,7 @@ export function isFriendlyBuffGroundEffect(eff: {
 }): boolean {
   if ((eff.remainingMs ?? 1) <= 0) return false;
   if (eff.kind === 'DAMAGE_ZONE' || eff.kind === 'CONE_WARNING') return false;
-  if (isSeekableHealGroundEffect(eff)) return false;
+  if (isHealFillGroundEffect(eff)) return false;
   return eff.kind === 'TOTEM';
 }
 
@@ -129,25 +160,37 @@ export function pickNearestGroundEffect<T extends { x: number; y: number }>(
   return best;
 }
 
+/**
+ * Fill tone by effect category only（与施法者敌我无关）:
+ * HEAL 绿 / FRIENDLY 黄增益 / ENEMY 红伤害.
+ * `isEnemyActor` is ignored for fill — use it only for outline side.
+ */
 export function resolveAoeTone(opts: {
   isHeal?: boolean;
+  /** @deprecated Fill ignores caster side; kept for call-site compat. */
   isEnemyActor?: boolean;
   groundKind?: string;
   spellId?: string;
 }): AoeVisualTone {
+  void opts.isEnemyActor;
   const sid = (opts.spellId || '').toLowerCase();
+  // 绿：回血地形（治疗之雨 / 治疗之潮 / 圣光井 / 百花等）
   if (
     opts.isHeal ||
-    opts.groundKind === 'HEAL_ZONE' ||
-    isSeekableHealGroundEffect({ kind: opts.groundKind, spellId: opts.spellId, remainingMs: 1 }) ||
-    sid.includes('healing_rain') ||
-    sid.includes('efflorescence') ||
-    sid.includes('tranquility') ||
+    isHealFillGroundEffect({
+      kind: opts.groundKind,
+      spellId: opts.spellId,
+      remainingMs: 1,
+    }) ||
     sid.includes('swiftmend')
   ) {
     return 'HEAL';
   }
-  if (opts.isEnemyActor) return 'ENEMY';
+  // 红：伤害地形 / 锥形预警
+  if (opts.groundKind === 'DAMAGE_ZONE' || opts.groundKind === 'CONE_WARNING') {
+    return 'ENEMY';
+  }
+  // 黄：友方增益图腾等（灵魂链接 / 法力之潮 / 风怒 / 真言术障…）
   return 'FRIENDLY';
 }
 

@@ -1123,12 +1123,43 @@ export const SPELL_TOOLTIPS: Record<string, SpellTooltipInfo> = {
   },
   death_and_decay: {
     name: '枯萎凋零',
-    cost: '1 邪恶符文',
+    cost: '1 鲜血符文',
     castTime: '瞬发',
     cooldown: '30 秒',
     range: '30 码',
     school: '暗影',
-    description: '腐化目标区域的地面，每秒对区域内所有敌人造成暗影伤害，持续 10 秒，附带极高的群体坦克仇恨。',
+    description:
+      '鼠标指定地面位置释放（与治疗之雨相同）：腐化该区域，每秒对范围内敌人造成暗影伤害，持续 10 秒，并产生高额群体仇恨。',
+  },
+  dnd: {
+    name: '枯萎凋零',
+    cost: '1 鲜血符文',
+    castTime: '瞬发',
+    cooldown: '30 秒',
+    range: '30 码',
+    school: '暗影',
+    description:
+      '鼠标指定地面位置释放（与治疗之雨相同）：腐化该区域，每秒对范围内敌人造成暗影伤害，持续 10 秒，并产生高额群体仇恨。',
+  },
+  lightwell: {
+    name: '圣光井',
+    cost: '法力',
+    castTime: '瞬发',
+    cooldown: '3 分钟',
+    range: '40 码',
+    school: '神圣',
+    description:
+      '点地放置圣光井（治疗图腾类）：绿色光圈持续 3 分钟，站在圈内的友方周期性获得治疗；同一施法者同时只能存在一口井，新放置会立刻替换旧井。',
+  },
+  blizzard: {
+    name: '暴风雪',
+    cost: '法力',
+    castTime: '引导 8 秒',
+    cooldown: '无',
+    range: '40 码',
+    school: '冰霜',
+    description:
+      '鼠标指定地面降下暴风雪（红色伤害地形）：持续打击圈内敌人，持续约 8 秒。',
   },
   rune_strike: {
     name: '符文打击',

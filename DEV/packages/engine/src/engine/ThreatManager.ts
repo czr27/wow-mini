@@ -134,6 +134,20 @@ export class ThreatManager {
     }
   }
 
+  /** Remap a threat source id (e.g. human leave → AI seat id). */
+  remapSourceId(oldId: string, newId: string): void {
+    if (!oldId || !newId || oldId === newId) return;
+    for (const table of this.tables.values()) {
+      if (!table.has(oldId)) continue;
+      const amount = table.get(oldId) ?? 0;
+      table.delete(oldId);
+      table.set(newId, (table.get(newId) ?? 0) + amount);
+    }
+    for (const [enemyId, targetId] of this.currentTargets.entries()) {
+      if (targetId === oldId) this.currentTargets.set(enemyId, newId);
+    }
+  }
+
   /** Get the threat value of the leader on `enemyId`'s table. */
   getTopThreat(enemyId: string): number {
     const table = this.tables.get(enemyId);

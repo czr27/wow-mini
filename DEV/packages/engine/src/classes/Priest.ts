@@ -286,6 +286,31 @@ export const PRIEST: ClassDef = {
           effects: [{ kind: 'APPLY_BUFF', school: 'HOLY', baseValue: 40, auraId: 'guardian_spirit', durationMs: 10_000 }],
         },
         {
+          id: 'priest_lightwell',
+          name: '圣光井',
+          classId: 'PRIEST',
+          school: 'HOLY',
+          targetType: 'GROUND',
+          castTimeMs: 0,
+          gcdCategory: 'NORMAL',
+          resourceCost: { MANA: 2800 },
+          cooldownMs: 180_000,
+          range: 320,
+          description:
+            '点地放置圣光井（治疗图腾类）：光圈持续3分钟，站在圈内的友方周期性获得治疗；同类井同一施法者仅能存在一个，新放置会立刻替换旧井。',
+          effects: [
+            {
+              kind: 'SUMMON_GROUND_EFFECT',
+              school: 'HOLY',
+              baseValue: 2800,
+              durationMs: 180_000,
+              tickIntervalMs: 2_000,
+              groundEffectKind: 'TOTEM',
+              description: '绿色治疗光圈 + 中央小井标记；圈内友方每2s受治疗',
+            },
+          ],
+        },
+        {
           id: 'priest_shadowfiend',
           name: '暗影魔',
           classId: 'PRIEST',

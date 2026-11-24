@@ -9,9 +9,10 @@ export function getRaidFrameUnits(units: Unit[]): Unit[] {
   return units.filter((u) => !u.isPet && u.role !== 'ENEMY');
 }
 
+/** Identity key: rebuild squads when ids OR class/role change (e.g. AI takeover). */
 export function raidRosterKey(units: Unit[]): string {
   return getRaidFrameUnits(units)
-    .map((u) => u.id)
+    .map((u) => `${u.id}:${u.role}:${u.classId}:${u.spec || ''}`)
     .sort()
     .join(',');
 }

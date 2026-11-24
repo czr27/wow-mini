@@ -62,11 +62,24 @@ describe('AoE 光圈视觉规则', () => {
     assert.equal(resolveAoeActorTier({ classId: 'BOSS', role: 'ENEMY', unitKind: 'BOSS' }), 'BOSS');
   });
 
-  it('2. 色调：治疗绿 / 友方黄 / 敌方红（色调不影响透明度）', () => {
+  it('2. 色调：治疗绿 / 友方黄 / 敌方红（色调不影响透明度；填充与敌我无关）', () => {
     assert.equal(resolveAoeTone({ isHeal: true }), 'HEAL');
     assert.equal(resolveAoeTone({ groundKind: 'HEAL_ZONE' }), 'HEAL');
     assert.equal(resolveAoeTone({ spellId: 'healing_rain' }), 'HEAL');
-    assert.equal(resolveAoeTone({ isEnemyActor: true }), 'ENEMY');
+    assert.equal(resolveAoeTone({ groundKind: 'TOTEM', spellId: 'healing_tide' }), 'HEAL');
+    assert.equal(resolveAoeTone({ groundKind: 'TOTEM', spellId: 'lightwell' }), 'HEAL');
+    assert.equal(resolveAoeTone({ groundKind: 'HEAL_ZONE', spellId: 'swiftmend' }), 'HEAL');
+    assert.equal(resolveAoeTone({ groundKind: 'HEAL_ZONE', spellId: 'efflorescence' }), 'HEAL');
+    // 非回血友方增益 → 黄（即便施法者是敌方，填充仍按分类）
+    assert.equal(resolveAoeTone({ groundKind: 'TOTEM', spellId: 'spirit_link', isEnemyActor: true }), 'FRIENDLY');
+    assert.equal(resolveAoeTone({ groundKind: 'TOTEM', spellId: 'mana_tide' }), 'FRIENDLY');
+    assert.equal(resolveAoeTone({ groundKind: 'TOTEM', spellId: 'windfury_totem' }), 'FRIENDLY');
+    assert.equal(resolveAoeTone({ groundKind: 'TOTEM', spellId: 'power_word_barrier' }), 'FRIENDLY');
+    // 伤害红（友方枯萎凋零 / 暴风雪 / 冰霜宝珠仍为红填充）
+    assert.equal(resolveAoeTone({ groundKind: 'DAMAGE_ZONE', spellId: 'death_and_decay', isEnemyActor: false }), 'ENEMY');
+    assert.equal(resolveAoeTone({ groundKind: 'DAMAGE_ZONE', spellId: 'blizzard' }), 'ENEMY');
+    assert.equal(resolveAoeTone({ groundKind: 'DAMAGE_ZONE', spellId: 'frozen_orb' }), 'ENEMY');
+    assert.equal(resolveAoeTone({ groundKind: 'CONE_WARNING' }), 'ENEMY');
     assert.equal(resolveAoeTone({ isEnemyActor: false }), 'FRIENDLY');
     // 同一半径下 alpha 与色调无关：绿/黄/红共用 resolveAoeAlphaByRadiusPx
     const a10 = resolveAoeAlphaByRadiusPx(yardsToPx(10));

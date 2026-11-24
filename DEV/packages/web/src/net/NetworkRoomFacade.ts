@@ -203,7 +203,13 @@ export class NetworkRoomFacade {
       netClient.leaveRoom(roomId);
       return { removed: true, roomDeleted: false };
     }
-    return this.local.leaveRoom(roomId, memberId);
+    const room = this.local.getRoom(roomId);
+    const result = this.local.leaveRoom(roomId, memberId);
+    // 本地大厅离席：普通/英雄自动补 AI，与服务端 ROOM_LEAVE 行为一致
+    if (!result.roomDeleted && room && room.difficulty !== 'CUSTOM') {
+      this.local.autoFillAi(roomId);
+    }
+    return result;
   }
 
   /** Host destroys room for all clients (wipe FINISH / explicit close). */
@@ -214,6 +220,18 @@ export class NetworkRoomFacade {
       return true;
     }
     return this.local.destroyRoom(roomId);
+  }
+
+  /**
+   * Close every room still listed under this host (stale combat / lobby ghosts).
+   * Used before 快速游戏 so leftover self-hosted rooms do not block create/start.
+   */
+  closeHostedRooms(hostId: string, reason = 'host_left'): number {
+    const rooms = this.listRooms().filter((r) => r.hostId === hostId);
+    for (const room of rooms) {
+      this.closeRoom(room.id, reason);
+    }
+    return rooms.length;
   }
 
   deleteRoom(roomId: string) {

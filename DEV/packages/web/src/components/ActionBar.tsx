@@ -35,8 +35,30 @@ export interface PlayerCastState {
   isHarmful?: boolean;
   maxAllowedRange?: number;
   totalCdMs?: number;
+  /**
+   * Local wall-clock start (guest cast bar). Progress is computed from Date.now()
+   * so the bar does not hitch on host COMBAT_STATE / timeline echo.
+   */
+  startedAtMs?: number;
   /** 读条技能延迟至施法成功结束时再扣除的资源（引导技能起手已扣除，不填此项） */
   deferredCosts?: SpellResourceCostBundle;
+}
+
+/** Advance (or finish) a locally owned cast bar. Returns null when complete. */
+export function advanceLocalPlayerCast(
+  cast: PlayerCastState,
+  now = Date.now()
+): PlayerCastState | null {
+  const total = Math.max(1, cast.totalMs || 1);
+  const started = cast.startedAtMs ?? now - (cast.elapsedMs || 0);
+  const elapsedMs = Math.max(0, now - started);
+  if (elapsedMs >= total) return null;
+  return {
+    ...cast,
+    startedAtMs: started,
+    elapsedMs,
+    progress: Math.min(1, elapsedMs / total),
+  };
 }
 
 /**

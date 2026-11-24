@@ -194,21 +194,31 @@ export function executeAiNormalizedSpell(
       sp.shortId === 'healing_tide_totem' ||
       sp.shortId === 'mana_tide' ||
       sp.shortId === 'mana_tide_totem' ||
+      sp.shortId === 'lightwell' ||
       sp.shortId === 'power_word_barrier'
     ) {
       const isHealingTide = sp.shortId.includes('healing_tide');
       const isManaTide = sp.shortId.includes('mana_tide');
+      const isLightwell = sp.shortId.includes('lightwell');
       const isSpiritLink = sp.shortId.includes('spirit_link') || sp.shortId === 'power_word_barrier';
-      const isTotem = isHealingTide || isManaTide || isSpiritLink;
+      const isTotem = isHealingTide || isManaTide || isSpiritLink || isLightwell;
       // HTT = 40yd (320px); other totems default 10yd (80px); heal zones 60px
       const auraRadius = isHealingTide
         ? (GROUND_TARGET_SPELL_DEFS.healing_tide?.radius ?? RANGE_40YD_PX)
-        : isTotem
-          ? 80
-          : 60;
+        : isLightwell
+          ? (GROUND_TARGET_SPELL_DEFS.lightwell?.radius ?? 80)
+          : isTotem
+            ? 80
+            : 60;
       const centroid = findOptimalGroundAuraCentroid(u, livingAllies, auraRadius, 360);
       const groundId = `${sp.shortId}_ai_${Date.now()}_${u.id}`;
-      const spellId = sp.shortId === 'spirit_link_totem' ? 'spirit_link' : (isHealingTide ? 'healing_tide' : sp.shortId);
+      const spellId = sp.shortId === 'spirit_link_totem'
+        ? 'spirit_link'
+        : isHealingTide
+          ? 'healing_tide'
+          : isLightwell
+            ? 'lightwell'
+            : sp.shortId;
       engine.effectsManager?.addGroundEffect({
         id: groundId,
         kind: isTotem ? 'TOTEM' : 'HEAL_ZONE',
@@ -217,20 +227,24 @@ export function executeAiNormalizedSpell(
         x: centroid.x,
         y: centroid.y,
         radius: auraRadius,
-        colorHex: sp.shortId === 'power_word_barrier'
-          ? '#FACC15'
+        colorHex: isLightwell || isHealingTide || !isTotem
+          ? '#10B981' // 治疗绿（圣光井 / 治疗之潮 / 治疗之雨）
+          : '#EAB308', // 增益黄（灵魂链接 / 法力之潮 / 真言术障）
+        remainingMs: isLightwell
+          ? 180_000
           : isHealingTide
-          ? '#0EA5E9'
-          : isManaTide
-          ? '#56CCF2'
-          : isTotem
-          ? '#00CED1'
-          : '#10B981',
-        remainingMs: isHealingTide ? 10000 : isManaTide ? 12000 : isSpiritLink ? 6000 : 10000,
-        tickIntervalMs: isHealingTide ? 2000 : isManaTide ? 5000 : 1000,
+            ? 10000
+            : isManaTide
+              ? 12000
+              : isSpiritLink
+                ? 6000
+                : 10000,
+        tickIntervalMs: isHealingTide || isLightwell ? 2000 : isManaTide ? 5000 : 1000,
         tickElapsedMs: 0,
         tickValue: Math.round(
-          (isHealingTide
+          (isLightwell
+            ? Math.max(2800, (sp.hotTotalHeal || 84000) / 90)
+            : isHealingTide
             ? Math.max(5200, (sp.hotTotalHeal || 26000) / 5)
             : Math.max(1600, (sp.directHeal || sp.hotTotalHeal * 0.25) * 0.4)) * individualMod
         ),

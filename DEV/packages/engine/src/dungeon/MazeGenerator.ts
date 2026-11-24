@@ -200,8 +200,8 @@ export function computeMazePlacement(
 /** Prefer baked origin from layout (waypoints/exit share the same space). */
 export function getMazeDrawOrigin(
   layout: Pick<MazeLayout, 'cols' | 'rows' | 'cellSize' | 'originX' | 'originY'>,
-  canvasWidth = MAZE_CANVAS_LOGICAL_SIZE.width,
-  canvasHeight = MAZE_CANVAS_LOGICAL_SIZE.height,
+  canvasWidth: number = MAZE_CANVAS_LOGICAL_SIZE.width,
+  canvasHeight: number = MAZE_CANVAS_LOGICAL_SIZE.height,
   viewportFraction: number = MAZE_VIEWPORT_FRACTION
 ): { originX: number; originY: number; mazeW: number; mazeH: number } {
   const mazeW = layout.cols * layout.cellSize;
@@ -785,8 +785,8 @@ export function clampToMazePath(
   layout: MazeLayout,
   x: number,
   y: number,
-  canvasWidth = MAZE_CANVAS_LOGICAL_SIZE.width,
-  canvasHeight = MAZE_CANVAS_LOGICAL_SIZE.height
+  canvasWidth: number = MAZE_CANVAS_LOGICAL_SIZE.width,
+  canvasHeight: number = MAZE_CANVAS_LOGICAL_SIZE.height
 ): { x: number; y: number } {
   const { originX, originY } = getMazeDrawOrigin(layout, canvasWidth, canvasHeight);
 

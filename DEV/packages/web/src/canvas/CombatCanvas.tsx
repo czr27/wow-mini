@@ -19,6 +19,7 @@ import {
   FIDGET_MAX_PX,
   isPosInHazard,
   resolveCombatDisplayPrefs,
+  isEnemyActorUnit,
   type CombatDisplayPrefs,
   type MazeLayout,
 } from '@cata-raid-sim/engine';
@@ -83,8 +84,6 @@ import {
   drawFacingEyePair,
   getActiveFacingPose,
   withBossEightDirFacing,
-  facingDirFromRad,
-  type FacingDir,
 } from './eightDirModels.js';
 
 interface Props {
@@ -245,6 +244,7 @@ function drawBaronAshbury(ctx: CanvasRenderingContext2D, boss: Unit, tickCount: 
     y: -44,
     size: 3.2,
     halfGap: 5,
+    look: isArchangel ? 'hollow' : 'glow',
   });
 
   // High arched collar
@@ -301,7 +301,7 @@ function drawBaronSilverlaine(ctx: CanvasRenderingContext2D, boss: Unit, tickCou
   ctx.fillRect(2, -34, 2, 3);
 
   // Spectral Pale Eyes — eight-dir bias
-  drawFacingEyePair(ctx, '#99f6e4', { y: -46, size: 3, halfGap: 4.5 });
+  drawFacingEyePair(ctx, '#99f6e4', { y: -46, size: 3, halfGap: 4.5, look: 'beast' });
 
   // Ethereal Claws
   ctx.fillStyle = '#5eead4';
@@ -325,7 +325,7 @@ function drawCommanderSpringvale(ctx: CanvasRenderingContext2D, boss: Unit, tick
   ctx.arc(0, -44, 15, 0, Math.PI * 2);
   ctx.fill();
   // Glowing green visor eyes — eight-dir bias
-  drawFacingEyePair(ctx, '#22c55e', { y: -45, size: 3.2, halfGap: 5.5 });
+  drawFacingEyePair(ctx, '#22c55e', { y: -45, size: 3.2, halfGap: 5.5, look: 'visor' });
 
   // Massive Spiked Shoulders (Pauldrons)
   ctx.fillStyle = '#475569';
@@ -374,18 +374,18 @@ function drawLordWalden(ctx: CanvasRenderingContext2D, boss: Unit, tickCount: nu
   ctx.fillRect(-17, -44, 6, 12);
   ctx.fillRect(11, -44, 6, 12);
 
-  // Brass Goggles (green / red lenses) — follow eight-dir eye bias
+  // Brass Goggles + toxic facing lenses
   {
     const pose = getActiveFacingPose();
     if (pose.showFace) {
       const e = pose.eyeBiasX;
+      const a0 = ctx.globalAlpha;
+      ctx.globalAlpha = a0 * pose.faceAlpha;
       ctx.fillStyle = '#ca8a04';
       ctx.fillRect(-9 + e, -43, 8, 7);
       ctx.fillRect(1 + e, -43, 8, 7);
-      ctx.fillStyle = '#22c55e';
-      ctx.fillRect(-7 + e, -41, 4, 3);
-      ctx.fillStyle = '#ef4444';
-      ctx.fillRect(3 + e, -41, 4, 3);
+      ctx.globalAlpha = a0;
+      drawFacingEyePair(ctx, '#4ade80', { y: -41.5, size: 2.6, halfGap: 5, look: 'toxic' });
     }
   }
 
@@ -447,7 +447,7 @@ function drawLordGodfrey(ctx: CanvasRenderingContext2D, boss: Unit, tickCount: n
       ctx.lineWidth = 1.2;
       ctx.strokeRect(-8 + e, -44, 6, 5);
       ctx.strokeRect(2 + e, -44, 6, 5);
-      drawFacingEyePair(ctx, '#1e293b', { y: -43, size: 2.4, halfGap: 5 });
+      drawFacingEyePair(ctx, '#1e293b', { y: -43, size: 2.4, halfGap: 5, look: 'hollow' });
     }
   }
 
@@ -516,7 +516,7 @@ function drawMorchok(ctx: CanvasRenderingContext2D, tickCount: number) {
   ctx.arc(0, -42, 16, 0, Math.PI * 2);
   ctx.fill();
   // Glowing Magma Fissure Eyes — eight-dir bias
-  drawFacingEyePair(ctx, '#f59e0b', { y: -44, size: 3.5, halfGap: 5.5 });
+  drawFacingEyePair(ctx, '#f59e0b', { y: -44, size: 3.5, halfGap: 5.5, look: 'glow' });
   // Floating Earth debris
   const floatY = Math.sin(tickCount * 0.1) * 3;
   ctx.fillStyle = '#78716c';
@@ -542,25 +542,33 @@ function drawZonozz(ctx: CanvasRenderingContext2D, tickCount: number) {
   // Abyssal Chitinous Mantle
   ctx.fillStyle = '#312e81';
   ctx.fillRect(-22, -22, 44, 20);
-  // Giant Central Void Eyeball of C'Thun
-  ctx.fillStyle = '#e0e7ff';
-  ctx.beginPath();
-  ctx.arc(0, -35, 18, 0, Math.PI * 2);
-  ctx.fill();
-  // Shifting Void Iris
-  const irisX = Math.sin(tickCount * 0.05) * 4;
-  ctx.fillStyle = '#7c2d12';
-  ctx.beginPath();
-  ctx.arc(irisX, -35, 10, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = '#ef4444';
-  ctx.beginPath();
-  ctx.arc(irisX, -35, 5, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = '#000000';
-  ctx.beginPath();
-  ctx.arc(irisX, -35, 2.5, 0, Math.PI * 2);
-  ctx.fill();
+  // Giant Central Void Eyeball — iris tracks facing; fades on back
+  {
+    const pose = getActiveFacingPose();
+    const a0 = ctx.globalAlpha;
+    const fa = pose.showFace ? pose.faceAlpha : 0.12;
+    ctx.globalAlpha = a0 * Math.max(0.18, fa);
+    ctx.fillStyle = '#e0e7ff';
+    ctx.beginPath();
+    ctx.arc(0, -35, 18, 0, Math.PI * 2);
+    ctx.fill();
+    const irisX = pose.eyeBiasX * 1.1 + Math.sin(tickCount * 0.05) * 2;
+    ctx.fillStyle = '#7c2d12';
+    ctx.beginPath();
+    ctx.arc(irisX, -35, 10, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#ef4444';
+    ctx.beginPath();
+    ctx.arc(irisX, -35, 5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#000000';
+    ctx.beginPath();
+    ctx.arc(irisX, -35, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = a0;
+    // Side satellite hollow eyes
+    drawFacingEyePair(ctx, '#c084fc', { y: -48, size: 2.4, halfGap: 14, look: 'hollow' });
+  }
 }
 
 function drawYorsahj(ctx: CanvasRenderingContext2D, tickCount: number) {
@@ -586,7 +594,7 @@ function drawYorsahj(ctx: CanvasRenderingContext2D, tickCount: number) {
   ctx.beginPath();
   ctx.arc(0, -38, 15, 0, Math.PI * 2);
   ctx.fill();
-  drawFacingEyePair(ctx, '#facc15', { y: -42, size: 3.2, halfGap: 6 });
+  drawFacingEyePair(ctx, '#facc15', { y: -42, size: 3.2, halfGap: 6, look: 'cross' });
   ctx.fillStyle = '#facc15';
   ctx.fillRect(-2, -34, 4, 3);
 }
@@ -604,7 +612,7 @@ function drawHagara(ctx: CanvasRenderingContext2D, tickCount: number) {
   ctx.arc(0, -38, 13, 0, Math.PI * 2);
   ctx.fill();
   // Lightning eyes — eight-dir bias
-  drawFacingEyePair(ctx, '#38bdf8', { y: -40, size: 3, halfGap: 4.5 });
+  drawFacingEyePair(ctx, '#38bdf8', { y: -40, size: 3, halfGap: 4.5, look: 'rune' });
   // Left Hand: Lightning Spark Orb
   ctx.fillStyle = '#fde047';
   ctx.beginPath();
@@ -658,7 +666,7 @@ function drawUltraxion(ctx: CanvasRenderingContext2D, tickCount: number) {
   ctx.lineTo(14, -46);
   ctx.fill();
   // Glowing Twilight Eyes — eight-dir bias
-  drawFacingEyePair(ctx, '#c084fc', { y: -44, size: 3.2, halfGap: 6 });
+  drawFacingEyePair(ctx, '#c084fc', { y: -44, size: 3.2, halfGap: 6, look: 'toxic' });
   // Unstable Twilight Sparks
   ctx.fillStyle = '#f43f5e';
   const spark = (tickCount * 3) % 40;
@@ -689,7 +697,7 @@ function drawWarmasterBlackhorn(ctx: CanvasRenderingContext2D, tickCount: number
   ctx.lineTo(12, -42);
   ctx.fill();
   // Red War Eyes — eight-dir bias
-  drawFacingEyePair(ctx, '#dc2626', { y: -44, size: 3.2, halfGap: 5 });
+  drawFacingEyePair(ctx, '#dc2626', { y: -44, size: 3.2, halfGap: 5, look: 'hollow' });
   // Spiked Halberd
   ctx.fillStyle = '#a1a1aa';
   ctx.fillRect(26, -45, 4, 60);
@@ -724,6 +732,8 @@ function drawSpineOfDeathwing(ctx: CanvasRenderingContext2D, tickCount: number) 
     const cy = -30 - ((tickCount * 2 + i * 12) % 35);
     ctx.fillRect(-15 + i * 10, cy, 3, 3);
   }
+  // Molten armor "eyes" along the fissure
+  drawFacingEyePair(ctx, '#facc15', { y: -6, size: 3.4, halfGap: 11, look: 'glow' });
 }
 
 function drawMadnessOfDeathwing(ctx: CanvasRenderingContext2D, tickCount: number) {
@@ -772,7 +782,7 @@ function drawMadnessOfDeathwing(ctx: CanvasRenderingContext2D, tickCount: number
   ctx.fillStyle = '#ea580c';
   ctx.fillRect(-12, -30 + jawDrop, 24, 6); // Fire breathing maw
   // Blazing Golden Lava Eyes — eight-dir bias
-  drawFacingEyePair(ctx, '#fde047', { y: -48, size: 4, halfGap: 8 });
+  drawFacingEyePair(ctx, '#fde047', { y: -48, size: 4, halfGap: 8, look: 'glow' });
 }
 
 function drawBossModel(
@@ -782,12 +792,14 @@ function drawBossModel(
   isSelected: boolean,
   tickCount: number,
   isMoving = false,
-  opts?: { showName?: boolean; facingDir?: FacingDir }
+  opts?: { showName?: boolean; facingRad?: number }
 ) {
   const showName = opts?.showName !== false;
-  const facingDir =
-    opts?.facingDir ??
-    facingDirFromRad((bossUnit as { facingRad?: number }).facingRad);
+  const facingRad =
+    opts?.facingRad ??
+    (typeof (bossUnit as { facingRad?: number }).facingRad === 'number'
+      ? (bossUnit as { facingRad?: number }).facingRad!
+      : Math.PI / 2);
   ctx.save();
   // Running footstep bob animation when pursuing target
   const runBob = isMoving ? Math.abs(Math.sin(tickCount * 0.35)) * 4 : 0;
@@ -828,8 +840,8 @@ function drawBossModel(
 
   const bId = (bossUnit.id || '').toLowerCase();
 
-  // 八向建模：身体随朝向镜像/肩宽；铭牌与施法条不受镜像影响
-  withBossEightDirFacing(ctx, facingDir, () => {
+  // 连续朝向：肩宽/深度/五官；铭牌与施法条不受姿态变换影响
+  withBossEightDirFacing(ctx, facingRad, () => {
     if (bId === 'ashbury') {
       drawBaronAshbury(ctx, bossUnit, tickCount);
     } else if (bId === 'silverlaine') {
@@ -957,12 +969,15 @@ function drawClassCharacter(
   isSelected: boolean,
   tickCount: number,
   idx: number,
-  opts?: { scale?: number; showName?: boolean; facingDir?: FacingDir }
+  opts?: { scale?: number; showName?: boolean; facingRad?: number }
 ) {
   const scale = opts?.scale ?? 1;
   const showName = opts?.showName ?? true;
-  const facingDir =
-    opts?.facingDir ?? facingDirFromRad((u as { facingRad?: number }).facingRad);
+  const facingRad =
+    opts?.facingRad ??
+    (typeof (u as { facingRad?: number }).facingRad === 'number'
+      ? (u as { facingRad?: number }).facingRad!
+      : Math.PI / 2);
   const isAlive = (u.isAlive ?? u.alive) && u.hp > 0;
   ctx.save();
   ctx.translate(pos.x, pos.y);
@@ -1042,8 +1057,8 @@ function drawClassCharacter(
     return;
   }
 
-  // 2. Class eight-dir body (facing: move dir or cast/attack target)
-  drawClassEightDirBody(ctx, u, sway, facingDir);
+  // 2. Class body (continuous facing: move dir or cast/attack target)
+  drawClassEightDirBody(ctx, u, sway, facingRad);
 
   // Name-only overhead (when HP also on, name is drawn inside drawUnitHpBar)
   if (showName) {
@@ -2273,7 +2288,7 @@ export const CombatCanvas: React.FC<Props> = ({
     return () => window.removeEventListener('cata_combat_actions', onActions as EventListener);
   }, []);
 
-  // Keyboard listeners for WASD & Arrow Keys (Alt+1~5 squad targeting lives in App)
+  // Keyboard listeners for WASD & Arrow Keys (Alt+1~5 / Tab hostile targeting live in App)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
@@ -4332,7 +4347,9 @@ export const CombatCanvas: React.FC<Props> = ({
       for (const ring of aoeRingsRef.current) {
         if (!showAoeTone(ring.tone)) continue;
         ctx.save();
-        drawAoeRing(ctx, ring, nowFx, { whiteOutline: prefs.terrainWhiteOutline });
+        drawAoeRing(ctx, ring, nowFx, {
+          heightShadow: prefs.isoFxHeightShadow && prefs.canvasViewMode === 'ISO',
+        });
         ctx.restore();
       }
 
@@ -4351,28 +4368,57 @@ export const CombatCanvas: React.FC<Props> = ({
       for (const effect of groundEffects) {
         ctx.save();
         if (effect.kind === 'CONE_WARNING') {
-          // 锥形光圈：与圆形同一套半径→透明度；朝向/张开角由 Boss 设定
-          drawConeWarning(ctx, effect, { whiteOutline: prefs.terrainWhiteOutline });
+          // 锥形：伤害红填充；描边按施法者敌我
+          const coneOwner = unitsById.get(effect.ownerId);
+          drawConeWarning(ctx, effect, {
+            friendlyCaster: coneOwner ? !isEnemyActorUnit(coneOwner) : false,
+          });
         } else if (effect.kind === 'TOTEM') {
-          // Candle-sized totem marker (thin wax + small flame); radius fill comes from AoE ring
           const cx = effect.x;
           const cy = effect.y;
-          ctx.fillStyle = '#C4A574';
-          ctx.fillRect(cx - 1.5, cy - 7, 3, 9);
-          ctx.strokeStyle = '#3F2A14';
-          ctx.lineWidth = 1;
-          ctx.beginPath();
-          ctx.moveTo(cx, cy - 7);
-          ctx.lineTo(cx, cy - 9.5);
-          ctx.stroke();
-          ctx.fillStyle = '#FBBF24';
-          ctx.beginPath();
-          ctx.ellipse(cx, cy - 12, 2.2, 3.6, 0, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.fillStyle = '#F97316';
-          ctx.beginPath();
-          ctx.ellipse(cx, cy - 11.2, 1.1, 1.8, 0, 0, Math.PI * 2);
-          ctx.fill();
+          const sid = (effect.spellId || '').toLowerCase();
+          const isLightwell =
+            sid.includes('lightwell') || sid.includes('light_well') || sid.includes('圣光井');
+          if (isLightwell) {
+            // 圣光井：蜡烛同尺寸的小井（石圈 + 中央圣光），光圈由 AoE ring 绘制
+            ctx.fillStyle = '#94A3B8';
+            ctx.beginPath();
+            ctx.ellipse(cx, cy + 1, 4.5, 2.2, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.strokeStyle = '#64748B';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+            ctx.fillStyle = '#CBD5E1';
+            ctx.fillRect(cx - 3, cy - 6, 6, 7);
+            ctx.strokeStyle = '#64748B';
+            ctx.strokeRect(cx - 3, cy - 6, 6, 7);
+            ctx.fillStyle = 'rgba(16, 185, 129, 0.85)';
+            ctx.beginPath();
+            ctx.ellipse(cx, cy - 3, 2, 2.4, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = 'rgba(254, 249, 195, 0.95)';
+            ctx.beginPath();
+            ctx.ellipse(cx, cy - 3.5, 1, 1.3, 0, 0, Math.PI * 2);
+            ctx.fill();
+          } else {
+            // Candle-sized totem marker (thin wax + small flame); radius fill comes from AoE ring
+            ctx.fillStyle = '#C4A574';
+            ctx.fillRect(cx - 1.5, cy - 7, 3, 9);
+            ctx.strokeStyle = '#3F2A14';
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(cx, cy - 7);
+            ctx.lineTo(cx, cy - 9.5);
+            ctx.stroke();
+            ctx.fillStyle = '#FBBF24';
+            ctx.beginPath();
+            ctx.ellipse(cx, cy - 12, 2.2, 3.6, 0, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = '#F97316';
+            ctx.beginPath();
+            ctx.ellipse(cx, cy - 11.2, 1.1, 1.8, 0, 0, Math.PI * 2);
+            ctx.fill();
+          }
         }
         ctx.restore();
       }
@@ -4800,7 +4846,7 @@ export const CombatCanvas: React.FC<Props> = ({
                   isBossMovingRef.current,
                   {
                     showName: prefs.showBossName && !prefs.showBossHp,
-                    facingDir: facingDirFromRad(viewRelativeFacingRad(bFacing, viewCam)),
+                    facingRad: viewRelativeFacingRad(bFacing, viewCam),
                   }
                 );
               });
@@ -4821,7 +4867,7 @@ export const CombatCanvas: React.FC<Props> = ({
               withUprightAt(ctx, viewCam, pos, (sp) => {
                 drawClassCharacter(ctx, u, sp, !!isPlayer, u.id === selectedUnitId, tickCount, idx, {
                   showName: showNm && !showHp,
-                  facingDir: facingDirFromRad(viewRelativeFacingRad(wFacing, viewCam)),
+                  facingRad: viewRelativeFacingRad(wFacing, viewCam),
                 });
               });
             },
@@ -4987,6 +5033,12 @@ export const CombatCanvas: React.FC<Props> = ({
           ctx.beginPath();
           ctx.arc(x, y, radius, 0, Math.PI * 2);
           ctx.fill();
+          // 玩家点地预览：友方施法者 → 强制白描边
+          ctx.strokeStyle = `rgba(255, 255, 255, ${Math.min(1, 0.55 + ringAlpha * 0.45)})`;
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.arc(x, y, radius, 0, Math.PI * 2);
+          ctx.stroke();
 
           ctx.strokeStyle = '#ffffff';
           ctx.lineWidth = 1.5;

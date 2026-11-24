@@ -38,6 +38,8 @@ export type BossCastingInfo = {
 export type CombatHudScreenProps = {
   friendlyUnits: Unit[];
   bossUnit?: Unit;
+  /** Extra hostiles (adds) for target/focus frame resolution beyond bossUnit */
+  enemyUnits?: Unit[];
   bossTargetId: string | null;
   groundEffects: GroundEffect[];
   floatingTexts: FloatingCombatText[];
@@ -168,6 +170,7 @@ export function CombatHudScreen(props: CombatHudScreenProps) {
   const {
     friendlyUnits,
     bossUnit,
+    enemyUnits = [],
     bossTargetId,
     groundEffects,
     floatingTexts,
@@ -237,19 +240,26 @@ export function CombatHudScreen(props: CombatHudScreenProps) {
     onNetworkMoveReport,
   } = props;
 
-  const allUnits = [...friendlyUnits, ...(bossUnit ? [bossUnit] : [])];
+  const allUnits = [
+    ...friendlyUnits,
+    ...(bossUnit ? [bossUnit] : []),
+    ...enemyUnits.filter((e) => e.id !== bossUnit?.id),
+  ];
   const playerUnit = friendlyUnits.find(u => u.isPlayer);
 
-  const targetUnit =
-    bossUnit && (selectedTargetId === bossUnit.id || selectedTargetId === 'boss')
-      ? bossUnit
-      : friendlyUnits.find(u => u.id === selectedTargetId);
+  const resolveUnit = (id: string | null | undefined): Unit | undefined => {
+    if (!id) return undefined;
+    if (bossUnit && (id === bossUnit.id || id === 'boss')) return bossUnit;
+    return (
+      friendlyUnits.find((u) => u.id === id) ||
+      enemyUnits.find((u) => u.id === id) ||
+      undefined
+    );
+  };
 
-  const focusUnit = !focusTargetId
-    ? null
-    : bossUnit && (focusTargetId === bossUnit.id || focusTargetId === 'boss')
-      ? bossUnit
-      : friendlyUnits.find(u => u.id === focusTargetId) || null;
+  const targetUnit = resolveUnit(selectedTargetId);
+
+  const focusUnit = resolveUnit(focusTargetId) || null;
 
   return (
     <div className="w-full flex-1 relative min-h-[640px] h-[calc(100vh-3.5rem)] overflow-hidden select-none bg-[#0a0a14]">

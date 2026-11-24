@@ -109,9 +109,10 @@ describe('治疗光圈 / 图腾可寻 / 就近选择', () => {
       unit,
       groundEffects: [farRain, nearTide],
       defaultTarget: { x: 0, y: 0 },
+      smartness: 1,
     });
     assert.equal(result.tradeOffDecision, 'SEEK_HEAL_ZONE');
-    // 两圈不重叠时叠层同为 1 → 同叠层取更近（潮图腾）
+    // 两圈不重叠时叠层同为 1 → 聪明 AI 同叠层取更近（潮图腾）
     assert.equal(result.currentHealZoneId, 'tide_near');
   });
 
@@ -135,9 +136,32 @@ describe('治疗光圈 / 图腾可寻 / 就近选择', () => {
       unit,
       groundEffects: zones,
       defaultTarget: { x: 0, y: 0 },
+      smartness: 1,
     });
     assert.equal(result.tradeOffDecision, 'SEEK_HEAL_ZONE');
     assert.equal(countHealAurasAt(result.targetPos, zones), 1);
     assert.equal(result.currentHealZoneId, 'z2');
+  });
+
+  it('5. 不聪明时同叠层更倾向更远的治疗光圈', () => {
+    const unit = ally({
+      id: 'dumb_mage',
+      role: 'DPS',
+      classId: 'MAGE',
+      hp: 3000,
+      maxHp: 10000,
+      position: { x: 0, y: 0 },
+    });
+    const farRain = zone({ id: 'rain_far', kind: 'HEAL_ZONE', spellId: 'healing_rain', x: 400, y: 0 });
+    const nearTide = zone({ id: 'tide_near', kind: 'TOTEM', spellId: 'healing_tide', x: 120, y: 0 });
+    const result = evaluateGroundFormationPosition({
+      currentPos: { x: 0, y: 0 },
+      unit,
+      groundEffects: [farRain, nearTide],
+      defaultTarget: { x: 0, y: 0 },
+      smartness: 0,
+    });
+    assert.equal(result.tradeOffDecision, 'SEEK_HEAL_ZONE');
+    assert.equal(result.currentHealZoneId, 'rain_far');
   });
 });

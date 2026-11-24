@@ -59,6 +59,14 @@ describe('CombatDisplayPrefs', () => {
     assert.equal(resolveCombatDisplayPrefs({}).moveSensitivity, 1);
     assert.equal(resolveCombatDisplayPrefs({ moveSensitivity: 0.1 }).moveSensitivity, 0.5);
     assert.equal(resolveCombatDisplayPrefs({ moveSensitivity: 2 }).moveSensitivity, 1.5);
+    assert.equal(resolveCombatDisplayPrefs({}).isoBodyPitchFx, true);
+    assert.equal(resolveCombatDisplayPrefs({}).isoBodyPitchSquash, 0.78);
+    assert.equal(resolveCombatDisplayPrefs({ isoBodyPitchSquash: 0.2 }).isoBodyPitchSquash, 0.6);
+    assert.equal(resolveCombatDisplayPrefs({ isoShadowAlpha: 9 }).isoShadowAlpha, 0.8);
+    assert.equal(resolveCombatDisplayPrefs({ isoSideLightStrength: 0 }).isoSideLightStrength, 0.1);
+    assert.equal(resolveCombatDisplayPrefs({ isoDepthFogStrength: 2 }).isoDepthFogStrength, 0.8);
+    assert.equal(resolveCombatDisplayPrefs({ isoBodyPitchFx: false }).isoBodyPitchFx, false);
+    assert.equal(resolveCombatDisplayPrefs({ isoFxHeightShadow: false }).isoFxHeightShadow, false);
   });
 
   it('AccountManager persists combatDisplay on character uiLayout', () => {

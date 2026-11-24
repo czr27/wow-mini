@@ -187,7 +187,7 @@ export function executePlayerInstantEffects(ctx: InstantEffectsCtx): boolean {
         x: target.position.x || 160,
         y: target.position.y || 220,
         radius: 50,
-        colorHex: '#6FCF97',
+        colorHex: '#10B981',
         remainingMs: 7000,
         tickIntervalMs: 1000,
         tickElapsedMs: 0,
@@ -393,25 +393,13 @@ export function executePlayerInstantEffects(ctx: InstantEffectsCtx): boolean {
       });
       triggerSlotCooldown();
       return true;
-    } else if (slot.spellId === 'death_and_decay') {
-      const bossPos = engine.bossUnit?.position || { x: 520, y: 200 };
-      engine.effectsManager?.addGroundEffect({
-        id: `dnd_${Date.now()}`,
-        kind: 'DAMAGE_ZONE',
-        spellId: 'death_and_decay',
-        ownerId: player.id,
-        x: bossPos.x,
-        y: bossPos.y,
-        radius: 60,
-        colorHex: '#8B0000',
-        remainingMs: 10000,
-        tickIntervalMs: 1000,
-        tickElapsedMs: 0,
-        tickValue: 3200,
-      });
-      if (boss && boss.alive) engine.threatManager.addThreat(boss.id, player.id, 15000);
-      triggerSlotCooldown();
-      return true;
+    } else if (
+      slot.spellId === 'death_and_decay' ||
+      slot.spellId === 'dnd' ||
+      slot.spellId === 'dk_dnd'
+    ) {
+      // 枯萎凋零必须点地（与治疗之雨相同）；此处不应自动落到首领脚下
+      return false;
     } else if (slot.spellId === 'howling_blast') {
       if (boss && boss.alive) {
         engine.dealDamage(player, boss, 14200, 'FROST', Math.random() < 0.3, '凛风冲击');
@@ -578,7 +566,7 @@ export function executePlayerInstantEffects(ctx: InstantEffectsCtx): boolean {
         x: linkPos.x,
         y: linkPos.y,
         radius: 80,
-        colorHex: '#00CED1',
+        colorHex: '#EAB308',
         remainingMs: 6000,
         tickIntervalMs: 1000,
         tickElapsedMs: 0,
@@ -722,7 +710,7 @@ export function executePlayerInstantEffects(ctx: InstantEffectsCtx): boolean {
         x: bossPos.x,
         y: bossPos.y,
         radius: 65,
-        colorHex: '#00BFFF',
+        colorHex: '#EF4444',
         remainingMs: 10000,
         tickIntervalMs: 1000,
         tickElapsedMs: 0,

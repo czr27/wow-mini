@@ -144,23 +144,15 @@ describe('guest bloodlust / CD aliases', () => {
     assert.ok(Math.abs(rem - 295_000) < 50, `expected ~295000 got ${rem}`);
   });
 
-  it('getEffectivePlayerCooldownMs blocks when only timeline alias is on CD', async () => {
+  it('getEffectivePlayerCooldownMs blocks via local shared-CD aliases (not host timeline)', async () => {
     const { getEffectivePlayerCooldownMs } = await import('../handlePlayerCastSlot.js');
-    const now = Date.now();
     const rem = getEffectivePlayerCooldownMs('bloodlust', {
       slotCdRemainingMs: 0,
-      playerCooldowns: {},
-      unitId: 'char_guest',
-      guestCdTimelines: [
-        {
-          unitId: 'char_guest',
-          spellId: 'shaman_heroism',
-          startedAtMs: now - 1_000,
-          totalMs: 300_000,
-        },
-      ],
+      playerCooldowns: {
+        heroism: { cdRemainingMs: 295_000, totalCdMs: 300_000 },
+      },
       classId: 'SHAMAN',
     });
-    assert.ok(rem > 290_000, `should see host alias CD, got ${rem}`);
+    assert.ok(rem > 290_000, `should see local alias CD, got ${rem}`);
   });
 });

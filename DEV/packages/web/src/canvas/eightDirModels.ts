@@ -1,6 +1,6 @@
 /**
- * 职业 / Boss 八向剪影建模：按 FacingPose 偏移五官与武器侧。
- * 所有职业均画朝向眼；侧面加大 eyeBias 便于读朝向。
+ * 职业 / Boss 朝向剪影：连续 FacingPose。
+ * 眼/手/鞋按肢体身份（前/后，由 facing fwd 锚定）做位置矢量插值；脸背向 faceAlpha 渐隐。
  */
 import type { ClassId, Unit } from '@cata-raid-sim/engine';
 import { CLASS_COLORS } from '../components/AuthAndCharacterModal.js';
@@ -9,10 +9,34 @@ import {
   type FacingPose,
   applyFacingPoseTransform,
   facingPoseFromDir,
+  facingPoseFromRad,
   radToFacingDir,
 } from './facingOctant.js';
+import { applySideLightOverlay } from './isoVolumeFx.js';
 
-/** 当前八向姿态（职业/Boss 绘制时写入，供五官 helper 读取） */
+export type EightDirVolumeOpts = {
+  /** Stronger shoulder/depth by facing. */
+  octantVolume?: boolean;
+  /** Side-light strength 0..1 (0 = off). */
+  sideLightStrength?: number;
+  /** Screen-space light X sign (−1 left / +1 right). */
+  sideLightX?: number;
+};
+
+/** 眼睛造型（像素块，按职业/Boss 个性） */
+export type EyeLook =
+  | 'block'
+  | 'glow'
+  | 'slit'
+  | 'beast'
+  | 'ring'
+  | 'cross'
+  | 'toxic'
+  | 'visor'
+  | 'hollow'
+  | 'rune';
+
+/** 当前朝向姿态（职业/Boss 绘制时写入，供五官 helper 读取） */
 let activeFacingPose: FacingPose = facingPoseFromDir(2);
 
 export function getActiveFacingPose(): FacingPose {
@@ -23,9 +47,137 @@ export function facingDirFromRad(rad: number | undefined | null): FacingDir {
   return radToFacingDir(typeof rad === 'number' ? rad : Math.PI / 2); // 默认朝南
 }
 
+function clamp01(t: number): number {
+  return Math.max(0, Math.min(1, t));
+}
+
+function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
+}
+
+/** 朝向侧：+1 东/右，−1 西/左（与 weaponSide 一致） */
+function facingFwd(pose: FacingPose): 1 | -1 {
+  return pose.eyeBiasX >= 0 ? 1 : -1;
+}
+
+/** 嘴/眼：乘 faceAlpha；背向直接跳过 */
+function withFaceAlpha(
+  ctx: CanvasRenderingContext2D,
+  pose: FacingPose,
+  paint: () => void
+): void {
+  if (!pose.showFace || pose.faceAlpha <= 0.01) return;
+  const prev = ctx.globalAlpha;
+  ctx.globalAlpha = prev * pose.faceAlpha;
+  paint();
+  ctx.globalAlpha = prev;
+}
+
+/** 在已算好的矩形上画个性眼（仅 fillRect，便于测试假 ctx） */
+function paintEyeLook(
+  ctx: CanvasRenderingContext2D,
+  color: string,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  look: EyeLook
+): void {
+  if (w < 0.2 || h < 0.2) return;
+  const cx = x + w / 2;
+  const cy = y + h / 2;
+  const a0 = ctx.globalAlpha;
+  switch (look) {
+    case 'glow': {
+      ctx.fillStyle = color;
+      ctx.globalAlpha = a0 * 0.35;
+      ctx.fillRect(x - 0.8, y - 0.8, w + 1.6, h + 1.6);
+      ctx.globalAlpha = a0;
+      ctx.fillStyle = color;
+      ctx.fillRect(x, y, w, h);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(cx - w * 0.18, cy - h * 0.18, Math.max(0.6, w * 0.35), Math.max(0.6, h * 0.35));
+      break;
+    }
+    case 'slit': {
+      const sw = Math.max(0.7, w * 0.38);
+      const sh = h * 1.15;
+      ctx.fillStyle = color;
+      ctx.fillRect(cx - sw / 2, y - (sh - h) * 0.3, sw, sh);
+      break;
+    }
+    case 'beast': {
+      ctx.fillStyle = color;
+      ctx.fillRect(x - 0.4, cy - h * 0.28, w + 0.8, Math.max(0.8, h * 0.55));
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(cx - w * 0.12, cy - h * 0.2, Math.max(0.5, w * 0.22), Math.max(0.6, h * 0.4));
+      break;
+    }
+    case 'ring': {
+      ctx.fillStyle = color;
+      ctx.fillRect(x, y, w, h);
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(x + w * 0.22, y + h * 0.22, w * 0.56, h * 0.56);
+      ctx.fillStyle = color;
+      ctx.fillRect(cx - w * 0.14, cy - h * 0.14, Math.max(0.5, w * 0.28), Math.max(0.5, h * 0.28));
+      break;
+    }
+    case 'cross': {
+      ctx.fillStyle = color;
+      ctx.fillRect(x, y, w, h);
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(cx - w * 0.12, y + h * 0.1, Math.max(0.5, w * 0.24), h * 0.8);
+      ctx.fillRect(x + w * 0.1, cy - h * 0.12, w * 0.8, Math.max(0.5, h * 0.24));
+      break;
+    }
+    case 'toxic': {
+      ctx.fillStyle = '#14532d';
+      ctx.fillRect(x - 0.5, y - 0.5, w + 1, h + 1);
+      ctx.fillStyle = color;
+      ctx.fillRect(x, y, w, h);
+      ctx.fillStyle = '#ecfccb';
+      ctx.fillRect(cx - w * 0.15, cy - h * 0.15, Math.max(0.5, w * 0.3), Math.max(0.5, h * 0.3));
+      break;
+    }
+    case 'visor': {
+      ctx.fillStyle = color;
+      ctx.fillRect(x - 0.6, cy - h * 0.22, w + 1.2, Math.max(0.9, h * 0.5));
+      ctx.fillStyle = '#ffffff';
+      ctx.globalAlpha = a0 * 0.55;
+      ctx.fillRect(x + w * 0.15, cy - h * 0.12, w * 0.35, Math.max(0.4, h * 0.2));
+      ctx.globalAlpha = a0;
+      break;
+    }
+    case 'hollow': {
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(x - 0.6, y - 0.4, w + 1.2, h + 0.8);
+      ctx.fillStyle = color;
+      ctx.fillRect(cx - w * 0.22, cy - h * 0.22, Math.max(0.7, w * 0.45), Math.max(0.7, h * 0.45));
+      break;
+    }
+    case 'rune': {
+      ctx.fillStyle = color;
+      ctx.globalAlpha = a0 * 0.4;
+      ctx.fillRect(x - 1, y - 1, w + 2, h + 2);
+      ctx.globalAlpha = a0;
+      ctx.fillStyle = color;
+      ctx.fillRect(x, y, w, h);
+      ctx.fillStyle = '#e0f2fe';
+      ctx.fillRect(cx - w * 0.1, y + h * 0.15, Math.max(0.45, w * 0.2), h * 0.7);
+      ctx.fillRect(x + w * 0.15, cy - h * 0.1, w * 0.7, Math.max(0.45, h * 0.2));
+      break;
+    }
+    case 'block':
+    default: {
+      ctx.fillStyle = color;
+      ctx.fillRect(x, y, w, h);
+      break;
+    }
+  }
+}
+
 /**
- * 统一双眼：随 eyeBiasX 整体偏移；强侧视只保留前侧一只眼。
- * 背向 (showFace=false) 不画。
+ * 双眼：前眼（朝向侧）滑到侧视位；后眼收向头心并缩小。身份由 facingFwd 锚定。
  */
 export function drawFacingEyePair(
   ctx: CanvasRenderingContext2D,
@@ -37,28 +189,50 @@ export function drawFacingEyePair(
     halfGap?: number;
     sway?: number;
     pose?: FacingPose;
+    look?: EyeLook;
   }
 ): void {
   const pose = opts?.pose ?? activeFacingPose;
-  if (!pose.showFace) return;
+  const sf = clamp01(pose.sideFactor);
   const e = pose.eyeBiasX;
   const y = opts?.y ?? -19;
   const size = opts?.size ?? 2.4;
   const halfGap = opts?.halfGap ?? 3.2;
   const sway = opts?.sway ?? 0;
-  ctx.fillStyle = color;
-  // 强侧视：单眼前移，朝向更清晰
-  if (Math.abs(e) >= 3.6) {
-    const x = sway + Math.sign(e || 1) * Math.min(5.5, Math.abs(e) * 0.85);
-    ctx.fillRect(x - size * 0.35, y, size + 0.6, size);
-    return;
-  }
-  ctx.fillRect(-halfGap + sway + e, y, size, size);
-  ctx.fillRect(halfGap - size + sway + e, y, size, size);
+  const look = opts?.look ?? 'block';
+  const fwd = facingFwd(pose);
+
+  const leftX0 = -halfGap + sway + e;
+  const rightX0 = halfGap - size + sway + e;
+  const sideX1 = sway + fwd * Math.min(5.5, Math.max(2.2, Math.abs(e) * 0.85)) - size * 0.35;
+  const sideW1 = size + 0.6;
+
+  // 前眼 = 朝向侧那只；后眼 = 对侧
+  const frontX0 = fwd > 0 ? rightX0 : leftX0;
+  const rearX0 = fwd > 0 ? leftX0 : rightX0;
+  const rearTargetX = sway + e * 0.12 - size * 0.5;
+
+  const frontX = lerp(frontX0, sideX1, sf);
+  const frontW = lerp(size, sideW1, sf);
+  const rearX = lerp(rearX0, rearTargetX, sf);
+  const rearScale = lerp(1, 0, sf);
+  const rearW = size * rearScale;
+  const rearH = size * rearScale;
+  const rearY = y + (size - rearH) * 0.5;
+
+  withFaceAlpha(ctx, pose, () => {
+    const baseA = ctx.globalAlpha;
+    if (rearW > 0.2) {
+      paintEyeLook(ctx, color, rearX, rearY, rearW, rearH, look);
+      ctx.globalAlpha = baseA;
+    }
+    paintEyeLook(ctx, color, frontX, y, frontW, size, look);
+    ctx.globalAlpha = baseA;
+  });
 }
 
 /**
- * 嘴巴：随 eyeBias 前移；侧视缩短；背向不画。
+ * 嘴巴：宽度随侧视缩短；下唇随 sideFactor 加厚（几何，非叠影）。
  */
 export function drawFacingMouth(
   ctx: CanvasRenderingContext2D,
@@ -70,24 +244,28 @@ export function drawFacingMouth(
   }
 ): void {
   const pose = opts?.pose ?? activeFacingPose;
-  if (!pose.showFace) return;
+  const sf = clamp01(pose.sideFactor);
   const e = pose.eyeBiasX;
   const sway = opts?.sway ?? 0;
   const y = opts?.y ?? -14.2;
-  const side = Math.abs(e) >= 3.6;
-  const w = side ? 3.4 : Math.abs(e) >= 2 ? 4.4 : 5.2;
-  const h = side ? 1.4 : 1.7;
+  const absE = Math.abs(e);
+  const frontW = absE >= 2 ? 4.4 : 5.2;
+  const w = lerp(frontW, 3.4, sf);
+  const h = lerp(1.7, 1.4, sf);
   const x = sway + e * 0.6 - w / 2;
-  ctx.fillStyle = color;
-  ctx.fillRect(x, y, w, h);
-  // 侧视加一点下唇提示
-  if (side) {
-    ctx.fillRect(x + w * 0.15, y + h, w * 0.7, 0.8);
-  }
+  const lipH = lerp(0, 0.8, sf);
+
+  withFaceAlpha(ctx, pose, () => {
+    ctx.fillStyle = color;
+    ctx.fillRect(x, y, w, h);
+    if (lipH > 0.05) {
+      ctx.fillRect(x + w * 0.15, y + h, w * 0.7, lipH);
+    }
+  });
 }
 
 /**
- * 双手/小臂：随朝向前伸后收；侧视一前一后；背向略收肩仍画手。
+ * 双手：左/右身份锚定 → 前手/后手侧视位；位置与尺寸矢量插值。
  */
 export function drawFacingHands(
   ctx: CanvasRenderingContext2D,
@@ -102,6 +280,7 @@ export function drawFacingHands(
   }
 ): void {
   const pose = opts?.pose ?? activeFacingPose;
+  const sf = clamp01(pose.sideFactor);
   const e = pose.eyeBiasX;
   const sway = opts?.sway ?? 0;
   const y = opts?.y ?? -3;
@@ -109,29 +288,52 @@ export function drawFacingHands(
   const armH = opts?.armH ?? 8.5;
   const spread = (opts?.spread ?? 9.2) * (pose.showFace ? 1 : 0.82);
   const bias = e * 0.55;
-  ctx.fillStyle = color;
+  const fwd = facingFwd(pose);
+  const lead = e * 0.35;
 
-  if (Math.abs(e) >= 3.6) {
-    const fwd = Math.sign(e || 1);
-    // 前手：更靠前、略抬
-    ctx.fillRect(sway + bias + fwd * (spread * 0.85) - armW * 0.4, y - 2.2, armW + 1.2, armH + 1);
-    // 拳/手掌
-    ctx.fillRect(sway + bias + fwd * (spread * 0.85 + armW * 0.2), y + armH - 3.5, armW + 1.6, 3.2);
-    // 后手：收在身后
-    ctx.fillRect(
-      sway + bias - fwd * (spread * 0.45) - armW * 0.35,
-      y + 1.2,
-      armW * 0.9,
-      armH - 1.2
-    );
-  } else {
-    // 朝右：右手略前下、左手略后；朝左相反
-    const lead = e * 0.35;
-    ctx.fillRect(-spread + sway + bias - lead * 0.3, y + Math.max(0, -e) * 0.35, armW, armH);
-    ctx.fillRect(spread - armW + sway + bias + lead * 0.3, y + Math.max(0, e) * 0.35, armW, armH);
-    // 小手掌
-    ctx.fillRect(-spread + sway + bias - lead * 0.3 - 0.4, y + armH - 2.2, armW + 1.2, 2.6);
-    ctx.fillRect(spread - armW + sway + bias + lead * 0.3 - 0.4, y + armH - 2.2, armW + 1.2, 2.6);
+  const leftX0 = -spread + sway + bias - lead * 0.3;
+  const leftY0 = y + Math.max(0, -e) * 0.35;
+  const rightX0 = spread - armW + sway + bias + lead * 0.3;
+  const rightY0 = y + Math.max(0, e) * 0.35;
+
+  const frontX1 = sway + bias + fwd * (spread * 0.85) - armW * 0.4;
+  const frontY1 = y - 2.2;
+  const frontW1 = armW + 1.2;
+  const frontH1 = armH + 1;
+  const rearX1 = sway + bias - fwd * (spread * 0.45) - armW * 0.35;
+  const rearY1 = y + 1.2;
+  const rearW1 = armW * 0.9;
+  const rearH1 = armH - 1.2;
+
+  const frontX0 = fwd > 0 ? rightX0 : leftX0;
+  const frontY0 = fwd > 0 ? rightY0 : leftY0;
+  const rearX0 = fwd > 0 ? leftX0 : rightX0;
+  const rearY0 = fwd > 0 ? leftY0 : rightY0;
+
+  const fX = lerp(frontX0, frontX1, sf);
+  const fY = lerp(frontY0, frontY1, sf);
+  const fW = lerp(armW, frontW1, sf);
+  const fH = lerp(armH, frontH1, sf);
+  const rX = lerp(rearX0, rearX1, sf);
+  const rY = lerp(rearY0, rearY1, sf);
+  const rW = lerp(armW, rearW1, sf);
+  const rH = lerp(armH, rearH1, sf);
+
+  ctx.fillStyle = color;
+  ctx.fillRect(rX, rY, rW, rH);
+  ctx.fillRect(fX, fY, fW, fH);
+  // 掌：正面小掌 → 侧视前拳
+  const palmW = lerp(armW + 1.2, armW + 1.6, sf);
+  const palmH = lerp(2.6, 3.2, sf);
+  const palmX = lerp(fX - 0.4, sway + bias + fwd * (spread * 0.85 + armW * 0.2), sf);
+  const palmY = lerp(fY + fH - 2.2, fY + fH - 3.5, sf);
+  ctx.fillRect(palmX, palmY, palmW, palmH);
+  // 后手小掌随正面淡出
+  if (sf < 0.85) {
+    const prev = ctx.globalAlpha;
+    ctx.globalAlpha = prev * (1 - sf);
+    ctx.fillRect(rX - 0.4, rY + rH - 2.2, armW + 1.2, 2.6);
+    ctx.globalAlpha = prev;
   }
 }
 
@@ -141,7 +343,7 @@ export function facingHandBiasX(pose: FacingPose): number {
 }
 
 /**
- * 鞋子：随朝向偏移；侧视一前一后；背向仍画脚跟示向。
+ * 鞋子：左/右 → 前/后脚矢量插值；鞋尖随前脚生长。
  */
 export function drawFacingShoes(
   ctx: CanvasRenderingContext2D,
@@ -156,6 +358,7 @@ export function drawFacingShoes(
   }
 ): void {
   const pose = opts?.pose ?? activeFacingPose;
+  const sf = clamp01(pose.sideFactor);
   const e = pose.eyeBiasX;
   const sway = opts?.sway ?? 0;
   const y = opts?.y ?? 8;
@@ -163,39 +366,55 @@ export function drawFacingShoes(
   const bootH = opts?.bootH ?? 3.8;
   const spread = (opts?.spread ?? 5.2) * (pose.showFace ? 1 : 0.72);
   const bias = e * 0.4;
-  ctx.fillStyle = color;
+  const fwd = facingFwd(pose);
 
-  if (Math.abs(e) >= 3.6) {
-    const fwd = Math.sign(e || 1);
-    // 前脚
-    ctx.fillRect(sway + bias + fwd * 2.2 - bootW * 0.35, y - 0.8, bootW + 1.8, bootH);
-    // 后脚略小
-    ctx.fillRect(
-      sway + bias - fwd * (spread * 0.55) - bootW * 0.35,
-      y + 0.4,
-      bootW * 0.9,
-      bootH - 0.6
-    );
-    // 鞋尖
-    ctx.fillRect(sway + bias + fwd * (bootW * 0.55 + 1.2), y + bootH - 1.4, 3.2, 1.6);
-  } else {
-    ctx.fillRect(-spread + sway + bias, y, bootW, bootH);
-    ctx.fillRect(spread - bootW + sway + bias, y, bootW, bootH);
-    if (Math.abs(e) > 0.8) {
-      const toe = Math.sign(e) * (2.2 + Math.abs(e) * 0.2);
-      ctx.fillRect(sway + bias + toe - 1.2, y + bootH - 1.3, 3.4, 1.5);
-    }
+  const leftX0 = -spread + sway + bias;
+  const rightX0 = spread - bootW + sway + bias;
+  const frontX1 = sway + bias + fwd * 2.2 - bootW * 0.35;
+  const frontY1 = y - 0.8;
+  const frontW1 = bootW + 1.8;
+  const rearX1 = sway + bias - fwd * (spread * 0.55) - bootW * 0.35;
+  const rearY1 = y + 0.4;
+  const rearW1 = bootW * 0.9;
+  const rearH1 = bootH - 0.6;
+
+  const frontX0 = fwd > 0 ? rightX0 : leftX0;
+  const rearX0 = fwd > 0 ? leftX0 : rightX0;
+
+  const fX = lerp(frontX0, frontX1, sf);
+  const fY = lerp(y, frontY1, sf);
+  const fW = lerp(bootW, frontW1, sf);
+  const fH = bootH;
+  const rX = lerp(rearX0, rearX1, sf);
+  const rY = lerp(y, rearY1, sf);
+  const rW = lerp(bootW, rearW1, sf);
+  const rH = lerp(bootH, rearH1, sf);
+
+  ctx.fillStyle = color;
+  ctx.fillRect(rX, rY, rW, rH);
+  ctx.fillRect(fX, fY, fW, fH);
+
+  // 鞋尖：随朝向与 sideFactor 长出
+  const toeReach = (2.2 + Math.abs(e) * 0.2) * Math.max(sf, Math.min(1, Math.abs(e) / 2.5));
+  if (toeReach > 0.4) {
+    const toeX = sway + bias + fwd * (lerp(2.2, bootW * 0.55 + 1.2, sf)) - 1.2;
+    const toeY = fY + fH - lerp(1.3, 1.4, sf);
+    ctx.fillRect(toeX, toeY, lerp(3.4, 3.2, sf), lerp(1.5, 1.6, sf));
   }
 }
 
-/** 职业八向身体（脚下原点，已 translate） */
+/** 职业身体（脚下原点，已 translate）；facingRad 连续弧度 */
 export function drawClassEightDirBody(
   ctx: CanvasRenderingContext2D,
   u: Unit,
   sway: number,
-  facingDir: FacingDir
+  facingRad: number,
+  volumeOpts?: EightDirVolumeOpts
 ): void {
-  const pose = facingPoseFromDir(facingDir);
+  const pose = facingPoseFromRad(
+    Number.isFinite(facingRad) ? facingRad : Math.PI / 2,
+    !!volumeOpts?.octantVolume
+  );
   activeFacingPose = pose;
   ctx.save();
   applyFacingPoseTransform(ctx, pose);
@@ -213,7 +432,7 @@ export function drawClassEightDirBody(
       ctx.beginPath();
       ctx.arc(0 + sway, -18, 8, 0, Math.PI * 2);
       ctx.fill();
-      drawFacingEyePair(ctx, '#00ffff', { y: -20, size: 2.6, sway, pose });
+      drawFacingEyePair(ctx, '#00ffff', { y: -20, size: 2.6, sway, pose, look: 'rune' });
       ctx.fillStyle = '#94A3B8';
       ctx.fillRect(-10 + sway, -24, 3, 7);
       ctx.fillRect(7 + sway, -24, 3, 7);
@@ -232,7 +451,7 @@ export function drawClassEightDirBody(
       ctx.beginPath();
       ctx.arc(0 + sway, -17, 7, 0, Math.PI * 2);
       ctx.fill();
-      drawFacingEyePair(ctx, '#fef3c7', { y: -18.5, size: 2.2, sway, pose });
+      drawFacingEyePair(ctx, '#fef3c7', { y: -18.5, size: 2.2, sway, pose, look: 'beast' });
       ctx.strokeStyle = '#B45309';
       ctx.lineWidth = 2;
       ctx.beginPath();
@@ -260,7 +479,7 @@ export function drawClassEightDirBody(
       ctx.beginPath();
       ctx.arc(0 + sway, -17, 8, 0, Math.PI * 2);
       ctx.fill();
-      drawFacingEyePair(ctx, '#7dd3fc', { y: -18.5, size: 2.3, sway, pose });
+      drawFacingEyePair(ctx, '#7dd3fc', { y: -18.5, size: 2.3, sway, pose, look: 'glow' });
       ctx.fillStyle = '#0284c7';
       ctx.beginPath();
       ctx.moveTo(-7 + sway, -23);
@@ -285,7 +504,7 @@ export function drawClassEightDirBody(
       ctx.beginPath();
       ctx.arc(0 + sway, -17, 7, 0, Math.PI * 2);
       ctx.fill();
-      drawFacingEyePair(ctx, '#e0f2fe', { y: -18.5, size: 2.2, sway, pose });
+      drawFacingEyePair(ctx, '#e0f2fe', { y: -18.5, size: 2.2, sway, pose, look: 'glow' });
       ctx.fillStyle = '#E2E8F0';
       ctx.fillRect(9 * wSide + sway + hBias, -18, 2.5 * wSide, 24);
       ctx.fillStyle = '#F97316';
@@ -303,7 +522,7 @@ export function drawClassEightDirBody(
       ctx.beginPath();
       ctx.arc(0 + sway, -17, 7, 0, Math.PI * 2);
       ctx.fill();
-      drawFacingEyePair(ctx, '#FFF569', { y: -18.2, size: 2.2, sway, pose });
+      drawFacingEyePair(ctx, '#FFF569', { y: -18.2, size: 2.2, sway, pose, look: 'slit' });
       ctx.fillStyle = '#71717a';
       ctx.fillRect(8 * wSide + sway + hBias, -14, 3 * wSide, 18);
       ctx.fillRect(-11 * wSide + sway + hBias, -14, 3 * wSide, 18);
@@ -323,7 +542,7 @@ export function drawClassEightDirBody(
       ctx.fill();
       ctx.fillStyle = '#ef4444';
       ctx.fillRect(-2 + sway, -27, 4, 5);
-      drawFacingEyePair(ctx, '#f8fafc', { y: -19.2, size: 2.3, sway, pose });
+      drawFacingEyePair(ctx, '#f8fafc', { y: -19.2, size: 2.3, sway, pose, look: 'visor' });
       if (u.role === 'TANK') {
         ctx.fillStyle = '#78350f';
         ctx.fillRect(10 * wSide + sway + hBias, -9, 6 * wSide, 20);
@@ -349,7 +568,7 @@ export function drawClassEightDirBody(
       ctx.beginPath();
       ctx.arc(0 + sway, -18, 7.5, 0, Math.PI * 2);
       ctx.fill();
-      drawFacingEyePair(ctx, '#fef08a', { y: -20, size: 2.3, sway, pose });
+      drawFacingEyePair(ctx, '#fef08a', { y: -20, size: 2.3, sway, pose, look: 'ring' });
       ctx.fillStyle = '#94a3b8';
       ctx.fillRect(10 * wSide + sway + hBias, -18, 3 * wSide, 24);
       ctx.fillStyle = '#fde047';
@@ -365,7 +584,7 @@ export function drawClassEightDirBody(
       ctx.beginPath();
       ctx.arc(0 + sway, -17, 7, 0, Math.PI * 2);
       ctx.fill();
-      drawFacingEyePair(ctx, '#bef264', { y: -18.2, size: 2.2, sway, pose });
+      drawFacingEyePair(ctx, '#bef264', { y: -18.2, size: 2.2, sway, pose, look: 'beast' });
       ctx.strokeStyle = '#d97706';
       ctx.lineWidth = 2.2;
       ctx.beginPath();
@@ -394,6 +613,7 @@ export function drawClassEightDirBody(
         size: 2.2,
         sway,
         pose,
+        look: isShadow ? 'hollow' : 'cross',
       });
       ctx.strokeStyle = isShadow ? '#c084fc' : '#fde047';
       ctx.lineWidth = 1.6;
@@ -417,7 +637,7 @@ export function drawClassEightDirBody(
       ctx.beginPath();
       ctx.arc(0 + sway, -17, 7, 0, Math.PI * 2);
       ctx.fill();
-      drawFacingEyePair(ctx, '#a3e635', { y: -18.2, size: 2.2, sway, pose });
+      drawFacingEyePair(ctx, '#a3e635', { y: -18.2, size: 2.2, sway, pose, look: 'toxic' });
       ctx.fillStyle = '#581c87';
       ctx.fillRect(9 * wSide + sway + hBias, -19, 2.5 * wSide, 26);
       ctx.fillStyle = '#84cc16';
@@ -436,7 +656,6 @@ export function drawClassEightDirBody(
     }
   }
 
-  // 嘴 / 手 / 鞋：统一强化八向
   const mouthColor =
     u.classId === 'DK' || u.classId === 'WARLOCK'
       ? '#4c0519'
@@ -461,21 +680,27 @@ export function drawClassEightDirBody(
   drawFacingHands(ctx, handColor, { y: -3.2, sway, pose });
   drawFacingShoes(ctx, shoeColor, { y: 8.2, sway, pose });
 
+  if ((volumeOpts?.sideLightStrength ?? 0) > 0) {
+    applySideLightOverlay(ctx, {
+      strength: volumeOpts!.sideLightStrength!,
+      lightX: volumeOpts?.sideLightX ?? 1,
+    });
+  }
+
   ctx.restore();
 }
 
-/** Boss 八向：在已有造型外包一层姿态变换（镜像 + 肩宽） */
+/** Boss：连续朝向姿态变换（肩宽/深度，无硬镜像） */
 export function withBossEightDirFacing(
   ctx: CanvasRenderingContext2D,
-  facingDir: FacingDir,
+  facingRad: number,
   drawBody: () => void
 ): void {
-  const pose = facingPoseFromDir(facingDir);
+  const pose = facingPoseFromRad(Number.isFinite(facingRad) ? facingRad : Math.PI / 2);
   activeFacingPose = pose;
   ctx.save();
   applyFacingPoseTransform(ctx, pose);
   drawBody();
-  // Boss 嘴/手/鞋叠在造型上，随朝向偏移
   drawFacingMouth(ctx, '#7f1d1d', { y: -33, pose });
   drawFacingHands(ctx, '#44403c', {
     y: -6,
@@ -491,9 +716,9 @@ export function withBossEightDirFacing(
     bootH: 7.5,
     spread: 13,
   });
-  // 正背时加暗罩，强化「背影」
-  if (!pose.showFace) {
-    ctx.fillStyle = 'rgba(0,0,0,0.18)';
+  const backShade = 1 - pose.faceAlpha;
+  if (backShade > 0.05) {
+    ctx.fillStyle = `rgba(0,0,0,${0.18 * backShade})`;
     ctx.fillRect(-36, -70, 72, 100);
   }
   ctx.restore();

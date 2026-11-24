@@ -11,6 +11,7 @@ import {
   GROUND_TARGET_SPELL_DEFS,
   LEVEL_80_MAX_HASTE,
   getEffectiveGcdMs,
+  getHastedCastTimeMs,
   getSpellByAnyId,
   getSpellGcdCategory,
   classifySpellCastMode,
@@ -27,14 +28,13 @@ import type { ActionSlot, PlayerCastState } from '../components/ActionBar.js';
 import { isOffGcdSpell } from '../components/ActionBar.js';
 import type { IncomingHealCast } from '../components/RaidFrames.js';
 import { DEFAULT_SPELL_COOLDOWNS } from '../assets/defaultActionSlots.js';
-import { cooldownRemainingFromTimelines } from '../net/netTimeline.js';
 import { syncUnitResources } from './unitResources.js';
 import { checkCastSlotResources } from './castResourceGates.js';
 import { executePlayerInstantEffects } from './executePlayerInstantEffects.js';
 import { startPlayerCastBranches } from './startPlayerCastBranches.js';
 import { computePlayerGcdMs } from './playerGcd.js';
 
-/** Local CD map + host timeline + aliases — same source of truth as action-bar UI. */
+/** Local CD map + shared-CD aliases — action-bar / cast gates. */
 function asPlayerClassId(
   classId: CharacterRecord['classId'] | Unit['classId'] | null | undefined
 ): CharacterRecord['classId'] | undefined {
@@ -47,7 +47,9 @@ export function getEffectivePlayerCooldownMs(
   opts: {
     slotCdRemainingMs?: number;
     playerCooldowns: Record<string, { cdRemainingMs: number; totalCdMs: number }>;
+    /** @deprecated Guest CD is local-only; ignored if present */
     unitId?: string | null;
+    /** @deprecated Guest CD is local-only; ignored if present */
     guestCdTimelines?: NetworkCooldownTimeline[] | null;
     classId?: CharacterRecord['classId'] | Unit['classId'];
   }
@@ -55,12 +57,6 @@ export function getEffectivePlayerCooldownMs(
   let best = Math.max(0, opts.slotCdRemainingMs || 0);
   for (const id of resolveCooldownSpellIds(spellId, asPlayerClassId(opts.classId))) {
     best = Math.max(best, opts.playerCooldowns[id]?.cdRemainingMs || 0);
-  }
-  if (opts.unitId && opts.guestCdTimelines?.length) {
-    best = Math.max(
-      best,
-      cooldownRemainingFromTimelines(opts.guestCdTimelines, opts.unitId, spellId)
-    );
   }
   return best;
 }
@@ -237,6 +233,12 @@ export function handlePlayerCastSlot(slotIdx: number, ctx: HandlePlayerCastSlotC
       });
       return;
     }
+    // Ignore re-press while a casted read-bar is already running (channels may clip).
+    // Prefer ref — React state can lag one frame after optimistic setPlayerCast.
+    const activeGuestCast = ctx.playerCastRef.current || ctx.playerCast;
+    if (activeGuestCast && !activeGuestCast.isChannel) {
+      return;
+    }
     const isOffGcdGuest = isOffGcdSpell(slot.spellId);
     if (!isOffGcdGuest && ctx.playerGcdRemainingMs > 0) {
       engine.effectsManager?.addFloatingText({
@@ -275,6 +277,42 @@ export function handlePlayerCastSlot(slotIdx: number, ctx: HandlePlayerCastSlotC
         ctx.setPlayerGcdRemainingMs(gcdMs);
         ctx.setPlayerGcdTotalMs(gcdMs);
       }
+    }
+    // Guest owns their cast bar locally (wall clock). Host only resolves effects / interrupt.
+    const guestNorm =
+      getSpellByAnyId(slot.spellId, ctx.currentChar.classId) || getSpellByAnyId(slot.spellId);
+    const guestCastMode = classifySpellCastMode({
+      spellId: slot.spellId,
+      castTimeMs: guestNorm?.castTimeMs,
+      channelDurationMs: guestNorm?.channelDurationMs,
+    });
+    if (guestCastMode === 'CASTED' || guestCastMode === 'CHANNELED') {
+      const haste = getUnitHaste(player, LEVEL_80_MAX_HASTE);
+      const rawMs =
+        guestCastMode === 'CHANNELED'
+          ? Math.max(
+              1,
+              guestNorm?.channelDurationMs || guestNorm?.castTimeMs || 4000
+            )
+          : Math.max(1, guestNorm?.castTimeMs || 1500);
+      // Must use ESM import — browser Vite has no `require`, which threw and
+      // skipped both local cast-bar setup and sendNetworkCast for 读条技能.
+      const totalMs = getHastedCastTimeMs(rawMs, haste);
+      const isHarmful = !!(guestNorm?.isDamage || guestNorm?.isDot) && !guestNorm?.isHeal;
+      const nowMs = Date.now();
+      const optimistic: PlayerCastState = {
+        spellId: slot.spellId,
+        spellName: slot.name,
+        totalMs,
+        elapsedMs: 0,
+        progress: 0,
+        startedAtMs: nowMs,
+        targetId: targetId || undefined,
+        isChannel: guestCastMode === 'CHANNELED',
+        isHarmful,
+      };
+      ctx.playerCastRef.current = optimistic;
+      ctx.setPlayerCast(optimistic);
     }
     ctx.sendNetworkCast({
       kind: 'CAST',

@@ -22,7 +22,13 @@ function defaultWsUrl(): string {
 const RECONNECT_BASE_MS = 1000;
 const RECONNECT_MAX_MS = 10000;
 
-/** 技能类意图：丢了会重传；MOVE 等高频仍 fire-and-forget（靠后续 COMBAT_STATE 纠偏位置） */
+/**
+ * 可靠意图策略（应用层，叠在 TCP/WS 上）：
+ * - 共享一份 SRTT → rto = max(20, 2·srtt)，仅由带 attempt 的 INPUT_ACK 更新
+ * - 每个 clientInputId 独立计时/翻倍重试；某一条超时不牵连其它意图（无全局退避）
+ * - 超时/重传本身不抬 SRTT（避免把「没等到 ack」当成延迟样本）
+ * - MOVE 等不带 id：fire-and-forget
+ */
 const RELIABLE_INPUT_KINDS = new Set<PlayerInputPayload['kind']>([
   'CAST',
   'GROUND_CAST',
@@ -31,14 +37,43 @@ const RELIABLE_INPUT_KINDS = new Set<PlayerInputPayload['kind']>([
   'DISPEL',
 ]);
 
-const RELIABLE_RETRY_MS = 280;
+const RELIABLE_RETRY_CAP_MS = 1000;
 const RELIABLE_MAX_ATTEMPTS = 6;
 const HOST_ACK_RING = 64;
+const MIN_RTO_MS = 20;
+const INITIAL_SRTT_MS = 40;
+/** Jacobson EWMA weight for new RTT samples */
+const SRTT_ALPHA = 1 / 8;
+
+/** rto = max(min_rto, 2 * srtt); defaults → 80ms */
+export function computeRtoMs(srttMs: number, minRtoMs = MIN_RTO_MS): number {
+  return Math.max(minRtoMs, 2 * Math.max(0, srttMs));
+}
+
+/** EWMA: srtt ← (1-α)·srtt + α·rtt */
+export function updateSrttMs(srttMs: number, rttSampleMs: number, alpha = SRTT_ALPHA): number {
+  const sample = Math.max(0, rttSampleMs);
+  return srttMs * (1 - alpha) + sample * alpha;
+}
+
+/**
+ * Wait after `attempts` sends before next retry / give-up.
+ * attempts=1 → rto; then doubles each time, capped at 1000ms.
+ */
+export function reliableRetryDelayMs(attempts: number, rtoMs: number): number {
+  const n = Math.max(1, Math.floor(attempts));
+  const base = Math.max(MIN_RTO_MS, rtoMs);
+  const exp = Math.min(n - 1, 8);
+  return Math.min(RELIABLE_RETRY_CAP_MS, base * 2 ** exp);
+}
 
 type PendingReliableInput = {
   roomId: string;
   payload: PlayerInputPayload;
+  /** Last transmission wall clock (retry scheduling) */
   sentAtMs: number;
+  /** attempt → wall clock when that transmission was sent */
+  attemptSentAtMs: Map<number, number>;
   attempts: number;
 };
 
@@ -54,8 +89,16 @@ export class NetClient {
   private _onlinePlayerIds: string[] = [];
   private combatSeq = 0;
   private clientInputSeq = 0;
+  /**
+   * Wall clock when this client entered the current dungeon/run.
+   * Embedded in clientInputId so leave→rejoin cannot collide with host's
+   * processed-id ring from the previous visit (same seq after reload).
+   */
+  private combatInputEpochMs = 0;
   /** Guest: awaiting host ackedInputIds */
   private pendingReliable = new Map<string, PendingReliableInput>();
+  /** Guest smoothed RTT for RTO (ms); seed 40 → initial rto 80 */
+  private srttMs = INITIAL_SRTT_MS;
   /** Host: idempotent apply + rolling ack window for guests */
   private processedGuestInputIds = new Set<string>();
   private processedGuestInputOrder: string[] = [];
@@ -333,44 +376,139 @@ export class NetClient {
     this.send({ type: 'ROOM_START', roomId });
   }
 
+  /**
+   * Start a new cast-id epoch for this dungeon visit.
+   * Call on ROOM_START / hot-join into combat so leave→rejoin presses are not
+   * idempotent-ignored against the host's previous processed set.
+   */
+  beginCombatInputEpoch(epochMs?: number) {
+    this.combatInputEpochMs = Math.max(1, epochMs ?? Date.now());
+    this.clientInputSeq = 0;
+    this.pendingReliable.clear();
+  }
+
+  getCombatInputEpochMs(): number {
+    return this.combatInputEpochMs;
+  }
+
+  /** Build unique reliable-intent id: epoch + seq + send time */
+  nextClientInputId(nowMs = Date.now()): string {
+    if (!this.combatInputEpochMs) {
+      this.combatInputEpochMs = Math.max(1, nowMs);
+    }
+    const epoch = this.combatInputEpochMs.toString(36);
+    const seq = (++this.clientInputSeq).toString(36);
+    const t = nowMs.toString(36);
+    return `ci_${epoch}_${seq}_${t}`;
+  }
+
   sendPlayerInput(roomId: string, payload: PlayerInputPayload) {
     let body = payload;
     if (RELIABLE_INPUT_KINDS.has(payload.kind)) {
-      const clientInputId =
-        payload.clientInputId || `ci_${++this.clientInputSeq}_${Date.now().toString(36)}`;
-      body = { ...payload, clientInputId };
+      const clientInputId = payload.clientInputId || this.nextClientInputId();
+      const now = Date.now();
+      const attempt = 1;
+      body = { ...payload, clientInputId, clientInputAttempt: attempt };
+      const attemptSentAtMs = new Map<number, number>([[attempt, now]]);
       this.pendingReliable.set(clientInputId, {
         roomId,
         payload: body,
-        sentAtMs: Date.now(),
-        attempts: 1,
+        sentAtMs: now,
+        attemptSentAtMs,
+        attempts: attempt,
       });
     }
     this.send({ type: 'PLAYER_INPUT', roomId, payload: body });
   }
 
-  /** Guest: host COMBAT_STATE 回传 ack 后停止重传 */
-  ackReliableInputs(ids: string[] | undefined | null) {
-    if (!ids || ids.length === 0) return;
-    for (const id of ids) {
-      if (id) this.pendingReliable.delete(id);
+  getSrttMs(): number {
+    return this.srttMs;
+  }
+
+  getRtoMs(): number {
+    return computeRtoMs(this.srttMs);
+  }
+
+  /** Host: ack the specific transmission (id + attempt) that was received */
+  sendInputAck(
+    roomId: string,
+    acks: Array<{ clientInputId: string; attempt: number }>
+  ) {
+    const cleaned = acks.filter((a) => a?.clientInputId && a.attempt >= 1);
+    if (!roomId || cleaned.length === 0) return;
+    this.send({
+      type: 'INPUT_ACK',
+      roomId,
+      timeMs: Date.now(),
+      payload: {
+        acks: cleaned,
+        // backup for older guests / COMBAT_STATE-shaped handlers
+        ackedInputIds: cleaned.map((a) => a.clientInputId),
+      },
+    });
+  }
+
+  /**
+   * Guest: INPUT_ACK with attempt → RTT from that send's timestamp; clear pending.
+   * COMBAT_STATE id-only backup → clear pending, no RTT (ambiguous which attempt).
+   */
+  ackReliableInputs(
+    idsOrAcks:
+      | string[]
+      | Array<{ clientInputId: string; attempt: number }>
+      | undefined
+      | null
+  ) {
+    if (!idsOrAcks || idsOrAcks.length === 0) return;
+    const now = Date.now();
+    for (const entry of idsOrAcks) {
+      if (typeof entry === 'string') {
+        if (entry) this.pendingReliable.delete(entry);
+        continue;
+      }
+      const id = entry.clientInputId;
+      const attempt = entry.attempt;
+      if (!id) continue;
+      const pending = this.pendingReliable.get(id);
+      if (pending) {
+        const sentAt = pending.attemptSentAtMs.get(attempt);
+        if (typeof sentAt === 'number') {
+          this.srttMs = updateSrttMs(this.srttMs, now - sentAt);
+        }
+        this.pendingReliable.delete(id);
+      }
     }
   }
 
-  /** Guest: 未 ack 的可靠意图按间隔重传（技能丢包可补；次数封顶） */
+  /**
+   * Guest: per-intent RTO retry (independent schedules).
+   * Shared rto is only a delay estimate — timing out one id does not pause or
+   * inflate waits for other pending ids (no app-level global backoff).
+   */
   flushReliableInputRetries() {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
     if (this.pendingReliable.size === 0) return;
     const now = Date.now();
+    const rto = this.getRtoMs();
     for (const [id, pending] of [...this.pendingReliable.entries()]) {
-      if (now - pending.sentAtMs < RELIABLE_RETRY_MS) continue;
+      const waitMs = reliableRetryDelayMs(pending.attempts, rto);
+      if (now - pending.sentAtMs < waitMs) continue;
       if (pending.attempts >= RELIABLE_MAX_ATTEMPTS) {
         this.pendingReliable.delete(id);
         continue;
       }
-      pending.attempts += 1;
+      // Retransmit only this id; do not touch srttMs / other pendings.
+      const attempt = pending.attempts + 1;
+      pending.attempts = attempt;
       pending.sentAtMs = now;
-      this.send({ type: 'PLAYER_INPUT', roomId: pending.roomId, payload: pending.payload });
+      pending.attemptSentAtMs.set(attempt, now);
+      const payload: PlayerInputPayload = {
+        ...pending.payload,
+        clientInputId: id,
+        clientInputAttempt: attempt,
+      };
+      pending.payload = payload;
+      this.send({ type: 'PLAYER_INPUT', roomId: pending.roomId, payload });
     }
   }
 

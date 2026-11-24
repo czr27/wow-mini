@@ -4,7 +4,7 @@
  * 眼睛随 withBossEightDirFacing 写入的八向姿态偏移。
  */
 import type { Unit } from '@cata-raid-sim/engine';
-import { drawFacingEyePair } from './eightDirModels.js';
+import { drawFacingEyePair, type EyeLook } from './eightDirModels.js';
 
 function body(ctx: CanvasRenderingContext2D, color: string, w = 44, h = 56) {
   ctx.fillStyle = color;
@@ -18,8 +18,8 @@ function head(ctx: CanvasRenderingContext2D, color: string, r = 13, y = -42) {
   ctx.fill();
 }
 
-function eyes(ctx: CanvasRenderingContext2D, color: string, y = -44) {
-  drawFacingEyePair(ctx, color, { y, size: 3.2, halfGap: 5 });
+function eyes(ctx: CanvasRenderingContext2D, color: string, y = -44, look: EyeLook = 'glow') {
+  drawFacingEyePair(ctx, color, { y, size: 3.2, halfGap: 5, look });
 }
 
 // ── Deadmines ──────────────────────────────────────────────────────────────
@@ -42,7 +42,7 @@ function drawGlubtok(ctx: CanvasRenderingContext2D, tickCount: number) {
   ctx.lineTo(16, -68);
   ctx.lineTo(4, -56);
   ctx.fill();
-  eyes(ctx, '#fbbf24', -46);
+  eyes(ctx, '#fbbf24', -46, 'cross');
   // 左炎拳 / 右霜拳脉冲
   const pulse = 1 + Math.sin(tickCount * 0.2) * 0.15;
   ctx.fillStyle = '#f97316';
@@ -72,7 +72,7 @@ function drawHelix(ctx: CanvasRenderingContext2D, tickCount: number) {
   ctx.fillStyle = '#84cc16';
   ctx.fillRect(-10, -26 + bob, 20, 10);
   head(ctx, '#4d7c0f', 10, -36 + bob);
-  eyes(ctx, '#facc15', -38 + bob);
+  eyes(ctx, '#facc15', -38 + bob, 'visor');
   // 齿轮扳手
   ctx.fillStyle = '#fbbf24';
   ctx.fillRect(14, -22 + bob, 4, 18);
@@ -98,9 +98,7 @@ function drawFoeReaper(ctx: CanvasRenderingContext2D, tickCount: number) {
   // 驾驶舱眼灯
   ctx.fillStyle = '#0f172a';
   ctx.fillRect(-14, -22, 28, 12);
-  ctx.fillStyle = '#ef4444';
-  ctx.fillRect(-10, -19, 8, 6);
-  ctx.fillRect(2, -19, 8, 6);
+  eyes(ctx, '#ef4444', -19, 'visor');
   // 收割镰臂
   ctx.fillStyle = '#a1a1aa';
   ctx.fillRect(-38, -10, 16, 6);
@@ -140,7 +138,7 @@ function drawRipsnarl(ctx: CanvasRenderingContext2D, tickCount: number) {
   ctx.lineTo(6, -64);
   ctx.lineTo(2, -50);
   ctx.fill();
-  eyes(ctx, '#f97316', -44);
+  eyes(ctx, '#f97316', -44, 'beast');
   // 三角帽
   ctx.fillStyle = '#0f172a';
   ctx.beginPath();
@@ -171,7 +169,7 @@ function drawCookie(ctx: CanvasRenderingContext2D, tickCount: number) {
   ctx.beginPath();
   ctx.ellipse(0, -34, 8, 4, 0, 0, Math.PI * 2);
   ctx.fill();
-  eyes(ctx, '#fef08a', -42);
+  eyes(ctx, '#fef08a', -42, 'ring');
   // 厨师帽
   ctx.fillStyle = '#f8fafc';
   ctx.fillRect(-10, -58, 20, 14);
@@ -200,7 +198,7 @@ function drawVanessa(ctx: CanvasRenderingContext2D, tickCount: number) {
   ctx.closePath();
   ctx.fill();
   head(ctx, '#fde68a', 12, -44);
-  eyes(ctx, '#ef4444', -46);
+  eyes(ctx, '#ef4444', -46, 'slit');
   // 双匕
   const flash = tickCount % 20 < 6;
   ctx.fillStyle = flash ? '#f8fafc' : '#94a3b8';
@@ -219,7 +217,7 @@ function drawVishas(ctx: CanvasRenderingContext2D, _tickCount: number) {
   ctx.fillStyle = '#f8fafc';
   ctx.fillRect(-14, -26, 28, 14);
   head(ctx, '#fde68a', 12, -42);
-  eyes(ctx, '#dc2626');
+  eyes(ctx, '#dc2626', -44, 'hollow');
   // 审讯兜帽
   ctx.fillStyle = '#450a0a';
   ctx.beginPath();
@@ -241,7 +239,7 @@ function drawThalnoren(ctx: CanvasRenderingContext2D, tickCount: number) {
   ctx.fillStyle = '#fecaca';
   ctx.fillRect(-14, -26, 28, 10);
   head(ctx, '#fca5a5', 12, -42);
-  eyes(ctx, '#f97316');
+  eyes(ctx, '#f97316', -44, 'visor');
   const flame = Math.sin(tickCount * 0.25) * 3;
   ctx.fillStyle = '#f97316';
   ctx.beginPath();
@@ -261,7 +259,7 @@ function drawLoksey(ctx: CanvasRenderingContext2D, tickCount: number) {
   ctx.fillStyle = '#44403c';
   ctx.fillRect(-18, -24, 36, 12);
   head(ctx, '#fde68a', 12, -42);
-  eyes(ctx, '#ef4444');
+  eyes(ctx, '#ef4444', -44, 'beast');
   // 猎犬项圈挂饰
   ctx.fillStyle = '#a8a29e';
   ctx.fillRect(-8, -18, 16, 4);
@@ -284,7 +282,7 @@ function drawDoan(ctx: CanvasRenderingContext2D, boss: Unit, tickCount: number) 
   ctx.fillStyle = '#a78bfa';
   ctx.fillRect(-16, -26, 32, 12);
   head(ctx, '#e9d5ff', 12, -42);
-  eyes(ctx, '#c084fc');
+  eyes(ctx, '#c084fc', -44, 'rune');
   // 法师尖帽
   ctx.fillStyle = '#2e1065';
   ctx.beginPath();
@@ -312,7 +310,7 @@ function drawHerod(ctx: CanvasRenderingContext2D, tickCount: number) {
   ctx.fillStyle = '#f8fafc';
   ctx.fillRect(-18, -26, 36, 12);
   head(ctx, '#fde68a', 13, -42);
-  eyes(ctx, '#ef4444');
+  eyes(ctx, '#ef4444', -44, 'visor');
   // 羽冠盔
   ctx.fillStyle = '#7f1d1d';
   ctx.fillRect(-14, -52, 28, 8);
@@ -346,7 +344,7 @@ function drawMograine(ctx: CanvasRenderingContext2D, boss: Unit, tickCount: numb
   ctx.fillRect(-3, -24, 6, 16);
   ctx.fillRect(-8, -18, 16, 5);
   head(ctx, '#fde68a', 12, -42);
-  eyes(ctx, fakeDead ? '#64748b' : '#ef4444');
+  eyes(ctx, fakeDead ? '#64748b' : '#ef4444', -44, fakeDead ? 'block' : 'hollow');
   ctx.fillStyle = '#7f1d1d';
   ctx.fillRect(-14, -52, 28, 8);
   if (!fakeDead) {
@@ -372,7 +370,7 @@ function drawWilley(ctx: CanvasRenderingContext2D, tickCount: number) {
   ctx.fillStyle = '#f8fafc';
   ctx.fillRect(-14, -24, 28, 10);
   head(ctx, '#fde68a', 12, -42);
-  eyes(ctx, '#ef4444');
+  eyes(ctx, '#ef4444', -44, 'hollow');
   // 肩炮
   ctx.fillStyle = '#3f3f46';
   ctx.fillRect(14, -28, 22, 10);
@@ -394,7 +392,7 @@ function drawBalnazzar(ctx: CanvasRenderingContext2D, boss: Unit, tickCount: num
     ctx.fillStyle = '#f8fafc';
     ctx.fillRect(-16, -26, 32, 12);
     head(ctx, '#fde68a', 12, -42);
-    eyes(ctx, '#ef4444');
+    eyes(ctx, '#ef4444', -44, 'hollow');
     ctx.fillStyle = '#450a0a';
     ctx.fillRect(-16, -52, 32, 8);
     return;
@@ -428,7 +426,7 @@ function drawBalnazzar(ctx: CanvasRenderingContext2D, boss: Unit, tickCount: num
   ctx.lineTo(14, -70);
   ctx.lineTo(2, -56);
   ctx.fill();
-  eyes(ctx, '#f97316', -46);
+  eyes(ctx, '#f97316', -46, 'toxic');
 }
 
 /** 拉姆斯登：屠宰房憎恶（攻略：践踏 / 亡灵增援） */
@@ -442,9 +440,8 @@ function drawRamstein(ctx: CanvasRenderingContext2D, tickCount: number) {
   ctx.arc(-10, -42, 11, 0, Math.PI * 2);
   ctx.arc(12, -40, 10, 0, Math.PI * 2);
   ctx.fill();
-  ctx.fillStyle = '#a3e635';
-  ctx.fillRect(-14, -44, 3, 3);
-  ctx.fillRect(10, -42, 3, 3);
+  drawFacingEyePair(ctx, '#a3e635', { y: -44, size: 2.6, halfGap: 3.2, look: 'toxic', sway: -10 });
+  drawFacingEyePair(ctx, '#84cc16', { y: -42, size: 2.4, halfGap: 3.0, look: 'hollow', sway: 12 });
   // 缝线
   ctx.strokeStyle = '#14532d';
   ctx.lineWidth = 2;
@@ -468,7 +465,7 @@ function drawRivendare(ctx: CanvasRenderingContext2D, tickCount: number) {
   ctx.fillRect(-28, -28, 12, 16);
   ctx.fillRect(16, -28, 12, 16);
   head(ctx, '#cbd5e1', 13, -42);
-  eyes(ctx, '#22d3ee');
+  eyes(ctx, '#22d3ee', -44, 'glow');
   // 骷髅冠
   ctx.fillStyle = '#e2e8f0';
   ctx.fillRect(-12, -54, 24, 6);
@@ -488,7 +485,7 @@ function drawVenoxis(ctx: CanvasRenderingContext2D, tickCount: number) {
   ctx.fillStyle = '#22c55e';
   ctx.fillRect(-16, -26, 32, 12);
   head(ctx, '#14532d', 13, -42);
-  eyes(ctx, '#a3e635');
+  eyes(ctx, '#a3e635', -44, 'toxic');
   // 蛇冠
   const sway = Math.sin(tickCount * 0.15) * 4;
   ctx.fillStyle = '#84cc16';
@@ -509,7 +506,7 @@ function drawMandokir(ctx: CanvasRenderingContext2D, tickCount: number) {
   ctx.fillStyle = '#450a0a';
   ctx.fillRect(-18, -26, 36, 12);
   head(ctx, '#166534', 13, -42);
-  eyes(ctx, '#facc15');
+  eyes(ctx, '#facc15', -44, 'beast');
   // 獠牙
   ctx.fillStyle = '#f8fafc';
   ctx.fillRect(-7, -36, 3, 7);
@@ -539,7 +536,7 @@ function drawKilnara(ctx: CanvasRenderingContext2D, boss: Unit, tickCount: numbe
   ctx.fillStyle = enrage ? '#f97316' : '#a1a1aa';
   ctx.fillRect(-16, -26, 32, 10);
   head(ctx, '#27272a', 12, -42);
-  eyes(ctx, enrage ? '#ef4444' : '#fbbf24');
+  eyes(ctx, enrage ? '#ef4444' : '#fbbf24', -44, 'beast');
   // 豹耳
   ctx.fillStyle = '#09090b';
   ctx.beginPath();
@@ -568,7 +565,7 @@ function drawZanzil(ctx: CanvasRenderingContext2D, tickCount: number) {
   ctx.fillStyle = '#4d7c0f';
   ctx.fillRect(-14, -24, 28, 10);
   head(ctx, '#166534', 12, -40);
-  eyes(ctx, '#a3e635');
+  eyes(ctx, '#a3e635', -44, 'toxic');
   // 巫医面具
   ctx.fillStyle = '#fbbf24';
   ctx.fillRect(-10, -48, 20, 6);
@@ -591,7 +588,7 @@ function drawJindo(ctx: CanvasRenderingContext2D, tickCount: number) {
   ctx.fillStyle = '#4c1d95';
   ctx.fillRect(-18, -26, 36, 12);
   head(ctx, '#312e81', 13, -42);
-  eyes(ctx, '#c084fc');
+  eyes(ctx, '#c084fc', -44, 'rune');
   // 影冠
   ctx.fillStyle = '#7c3aed';
   ctx.beginPath();
@@ -617,7 +614,7 @@ function drawGenericFiveMan(ctx: CanvasRenderingContext2D, tickCount: number) {
   ctx.fillStyle = '#a8a29e';
   ctx.fillRect(-14, -24, 28, 10);
   head(ctx, '#fde68a', 12, -40);
-  eyes(ctx, '#ef4444');
+  eyes(ctx, '#ef4444', -44, 'hollow');
   const bob = Math.sin(tickCount * 0.1) * 2;
   ctx.fillStyle = '#78716c';
   ctx.fillRect(14, -16 + bob, 4, 22);

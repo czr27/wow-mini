@@ -32,7 +32,7 @@ const SPELLS = {
   // Rotation
   SOUL_STRIKE:     'dk_souls_strike',        // Blood rune: self-heal + Blood Shield
   HEART_STRIKE:    'dk_heart_strike',        // Blood rune: high-threat cleave
-  DEATH_AND_DECAY: 'dk_death_and_decay',     // Unholy rune: AoE threat ground
+  DEATH_AND_DECAY: 'dk_dnd',                 // Blood rune: placeable AoE threat ground
   BLOOD_BOIL:      'dk_blood_boil',          // No rune: threat refresh
   OUTBREAK:        'dk_outbreak',            // Apply diseases (threat-booster)
 } as const;

@@ -204,7 +204,7 @@ export const DEATH_KNIGHT: ClassSpec = {
           durationMs: 10_000,
           tickIntervalMs: 2_000,
           baseValue: 1800,
-          description: '在地面放置暗红法阵（DmgZone，10s，每2s造成暗影伤害）',
+          description: '主动点地放置暗红法阵（与治疗之雨相同操作；10s，周期性暗影伤害）',
         },
       ],
     },

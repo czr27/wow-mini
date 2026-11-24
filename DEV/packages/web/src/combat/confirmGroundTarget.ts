@@ -125,12 +125,12 @@ export function confirmGroundTarget(ctx: ConfirmGroundTargetCtx): void {
     });
   };
 
-  if (spellId === 'death_and_decay') {
+  if (spellId === 'death_and_decay' || spellId === 'dnd' || spellId === 'dk_dnd') {
     placeAndLog({
       idPrefix: 'dnd',
       kind: 'DAMAGE_ZONE',
       spellId: 'death_and_decay',
-      radius: groundRadius('death_and_decay', 60),
+      radius: groundRadius(spellId, groundRadius('death_and_decay', 60)),
       colorHex: '#8B0000',
       remainingMs: 10000,
       tickIntervalMs: 1000,
@@ -154,13 +154,39 @@ export function confirmGroundTarget(ctx: ConfirmGroundTargetCtx): void {
     });
     triggerSlotCooldown();
     clearGroundTarget();
+  } else if (spellId === 'lightwell' || spellId === 'priest_lightwell') {
+    placeAndLog({
+      idPrefix: 'lw',
+      kind: 'TOTEM',
+      spellId: 'lightwell',
+      radius: groundRadius(spellId, groundRadius('lightwell', 80)),
+      colorHex: '#10B981',
+      remainingMs: 180_000,
+      tickIntervalMs: 2000,
+      tickValue: 2800,
+    });
+    triggerSlotCooldown();
+    clearGroundTarget();
+  } else if (spellId === 'blizzard' || spellId === 'mage_blizzard') {
+    placeAndLog({
+      idPrefix: 'bliz',
+      kind: 'DAMAGE_ZONE',
+      spellId: 'blizzard',
+      radius: groundRadius(spellId, groundRadius('blizzard', 80)),
+      colorHex: '#EF4444',
+      remainingMs: 8000,
+      tickIntervalMs: 1000,
+      tickValue: 2100,
+    });
+    triggerSlotCooldown();
+    clearGroundTarget();
   } else if (spellId === 'spirit_link' || spellId === 'spirit_link_totem') {
     placeAndLog({
       idPrefix: 'slt',
       kind: 'TOTEM',
       spellId: 'spirit_link',
       radius: groundRadius('spirit_link', 80),
-      colorHex: '#00CED1',
+      colorHex: '#EAB308',
       remainingMs: 6000,
       tickIntervalMs: 1000,
       tickValue: 0,
@@ -177,7 +203,7 @@ export function confirmGroundTarget(ctx: ConfirmGroundTargetCtx): void {
       kind: 'TOTEM',
       spellId: 'healing_tide',
       radius: groundRadius('healing_tide', RANGE_40YD_PX), // 40 码
-      colorHex: '#0EA5E9',
+      colorHex: '#10B981',
       remainingMs: 10000,
       tickIntervalMs: 2000,
       tickValue: 5200,
@@ -191,7 +217,7 @@ export function confirmGroundTarget(ctx: ConfirmGroundTargetCtx): void {
       kind: 'TOTEM',
       spellId: 'mana_tide',
       radius: groundRadius('mana_tide', 80),
-      colorHex: '#56CCF2',
+      colorHex: '#EAB308',
       remainingMs: 12000,
       tickIntervalMs: 5000,
       tickValue: 0,
@@ -204,7 +230,7 @@ export function confirmGroundTarget(ctx: ConfirmGroundTargetCtx): void {
       kind: 'TOTEM',
       spellId: 'windfury_totem',
       radius: groundRadius('windfury_totem', 80),
-      colorHex: '#E0E0E0',
+      colorHex: '#EAB308',
       remainingMs: 300000,
       tickIntervalMs: 1000,
       tickValue: 0,

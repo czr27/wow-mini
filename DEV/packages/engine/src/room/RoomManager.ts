@@ -276,15 +276,22 @@ export function isCustomDifficultyRoom(room: Pick<LobbyRoom, 'difficulty'>): boo
 }
 
 /**
- * 热加入顶替 AI 优先级：坦克（同职业优先）→ DPS → 治疗。
- * 用于自定义难度（可不限职责）；普通/英雄仍只在同职责池内挑选。
+ * 热加入顶替 AI 优先级（自定义难度可不限职责）：
+ * 1) 同职责（同职业优先）→ 2) DPS → 3) 治疗 → 4) 坦克最后（避免奶/输出重进把坦顶光）。
+ * 普通/英雄调用方仍只传入同职责 AI 池。
  */
 export function pickHotJoinAiReplacement(
   ais: RoomMember[],
-  playerClassId: ClassId
+  playerClassId: ClassId,
+  preferredRole?: RoleId
 ): RoomMember | undefined {
   if (!ais.length) return undefined;
-  const roleOrder: RoleId[] = ['TANK', 'DPS', 'HEALER'];
+  const roleOrder: RoleId[] = preferredRole
+    ? [
+        preferredRole,
+        ...(['DPS', 'HEALER', 'TANK'] as RoleId[]).filter((r) => r !== preferredRole),
+      ]
+    : ['DPS', 'HEALER', 'TANK'];
   for (const role of roleOrder) {
     const pool = ais.filter((m) => m.role === role);
     if (!pool.length) continue;
@@ -501,8 +508,21 @@ export class RoomManager {
     return removed;
   }
 
+  /** Drop settled rooms so they cannot linger in the lobby / quick-join pool. */
+  public cleanupSettledRooms(): number {
+    let removed = 0;
+    for (const [roomId, room] of this.rooms.entries()) {
+      if (room.status === 'CLEARED' || room.status === 'CLOSED') {
+        this.rooms.delete(roomId);
+        removed++;
+      }
+    }
+    return removed;
+  }
+
   public listRooms(): LobbyRoom[] {
     this.cleanupAiOnlyRooms();
+    this.cleanupSettledRooms();
     return Array.from(this.rooms.values());
   }
 
@@ -592,7 +612,7 @@ export class RoomManager {
   /**
    * Join a human into the room:
    * - NORMAL/HEROIC: empty same-role slot, or replace same-role AI (never switch player role).
-   * - CUSTOM: any empty slot / any AI while humans < capacity; hot-join AI pick = T(同职业优先)→DPS→奶.
+   * - CUSTOM: any empty slot / any AI while humans < capacity; hot-join AI pick = 同职责优先→DPS→奶→坦.
    */
   public joinOrHotSwapPlayer(
     roomId: string,
@@ -606,6 +626,7 @@ export class RoomManager {
   } {
     const room = this.getRoom(roomId);
     if (!room) return { ok: false, reason: '房间不存在' };
+    reconcileRoomRoster(room);
 
     if (room.members.some((m) => m.id === player.id)) {
       return { ok: true, room, member: room.members.find((m) => m.id === player.id) };
@@ -652,7 +673,7 @@ export class RoomManager {
       ? room.members.filter((m) => m.isAi)
       : room.members.filter((m) => m.isAi && m.role === role);
     const replacedAi = custom
-      ? pickHotJoinAiReplacement(aiPool, player.classId)
+      ? pickHotJoinAiReplacement(aiPool, player.classId, role)
       : aiPool[0];
     if (!replacedAi) {
       return {
@@ -1387,7 +1408,7 @@ export class RoomManager {
   /**
    * Hot-swap waiting players onto AI slots.
    * NORMAL/HEROIC: same-role AI only.
-   * CUSTOM: any AI; pick order T(同职业优先)→DPS→奶.
+   * CUSTOM: any AI; pick order 同职责优先 → DPS → 奶 → 坦最后.
    * Inherits HP / resources / Buff / position / threat from the replaced AI unit.
    */
   public substituteOutOfCombat(
@@ -1415,7 +1436,7 @@ export class RoomManager {
         : [];
       const pool = withCombatUnit.length > 0 ? withCombatUnit : matchingAis;
       const replacedAi = custom
-        ? pickHotJoinAiReplacement(pool, queued.classId) || pool[0]
+        ? pickHotJoinAiReplacement(pool, queued.classId, queued.role) || pool[0]
         : pool[Math.floor(Math.random() * pool.length)];
       if (!replacedAi) continue;
 
@@ -1464,7 +1485,11 @@ export class RoomManager {
   /**
    * Remap an AI combat unit to a human player while keeping HP/Buff/resources/threat.
    * Identity (name/class/spec/role) always becomes the joining player; AI casting stops via isHumanControlled.
-   * If `aiUnitId` is missing from the engine (id drift), falls back to an orphan same-role AI seat.
+   * Seat resolution order:
+   * 1) already remapped human at player.id
+   * 2) engine unit id === room aiUnitId
+   * 3) id-drift seat still keyed by player.id but AI-controlled (MEMBER_REPLACE_AI 未改 id 的旧路径)
+   * 4) orphan same-role AI (never steal another human seat)
    */
   public inheritCombatUnitFromAi(
     combatEngine: CombatEngine,
@@ -1485,8 +1510,11 @@ export class RoomManager {
     }
 
     let old = combatEngine.getUnit(aiUnitId);
+    // Id drift: leave kept engine id as player.id — reclaim that seat first (do NOT steal another AI)
+    if (!old && existing && !existing.isHumanControlled && !existing.isPlayer && !existing.isPet) {
+      old = existing;
+    }
     if (!old) {
-      // Id drift: room AI id ≠ engine unit id — claim orphan AI (not in current human roster)
       const orphans = combatEngine.friendlyUnits.filter(
         (u) =>
           !u.isPlayer &&
@@ -1500,35 +1528,20 @@ export class RoomManager {
     if (!old) return undefined;
 
     const oldId = old.id;
-
-    // Host engine: joiner is human-controlled but NOT local isPlayer (avoids id/`isPlayer` collisions).
-    const inherited: Unit = {
-      ...old,
-      id: player.id,
+    const inherited = combatEngine.remapUnitId(oldId, player.id, {
       name: player.name,
       classId: player.classId,
       spec: player.spec,
       role: player.role,
       isPlayer: false,
       isHumanControlled: true,
-      buffs: (old.buffs || []).map((b) => ({
-        ...b,
-        sourceUnitId: b.sourceUnitId === oldId ? player.id : b.sourceUnitId,
-        targetUnitId: b.targetUnitId === oldId ? player.id : b.targetUnitId,
-      })),
-      threatTable: (old.threatTable || []).map((t) => ({ ...t })),
-      resources: (old.resources || []).map((r) => ({ ...r })),
-      position: old.position ? { ...old.position } : { x: 200, y: 160 },
-      stats: old.stats ? { ...old.stats } : old.stats,
-      combatStats: old.combatStats ? { ...old.combatStats } : undefined,
-      runes: old.runes ? old.runes.map((r) => ({ ...r })) : undefined,
-    };
+    });
+    if (!inherited) return undefined;
     // Force re-resolve as PLAYER (stale unitKind:'AI' would keep AI labeling in snapshots)
     delete (inherited as { unitKind?: string }).unitKind;
-
-    combatEngine.removeUnit(oldId);
-    if (aiUnitId !== oldId) combatEngine.removeUnit(aiUnitId);
-    combatEngine.addUnit(inherited);
+    if (aiUnitId !== oldId && aiUnitId !== player.id) {
+      combatEngine.removeUnit(aiUnitId);
+    }
     return inherited;
   }
 

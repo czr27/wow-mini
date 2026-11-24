@@ -37,6 +37,9 @@ function buildClassSpellList(classId: ClassId): Array<{ spellId: string; name: s
     if (sp.id === 'shaman_spirit_link_totem') spellId = 'spirit_link';
     else if (sp.id === 'shaman_mana_tide_totem') spellId = 'mana_tide';
     else if (sp.id === 'shaman_heroism') spellId = 'bloodlust';
+    else if (sp.id === 'dk_dnd') spellId = 'death_and_decay';
+    else if (sp.id === 'priest_lightwell') spellId = 'lightwell';
+    else if (sp.id === 'mage_blizzard') spellId = 'blizzard';
     const reqSpec = sp.specIds.length === 1 && totalSpecs > 1 ? sp.specIds[0] : undefined;
     return { spellId, name: sp.name, reqSpec };
   });

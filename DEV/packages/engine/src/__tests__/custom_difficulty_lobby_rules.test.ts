@@ -85,7 +85,7 @@ describe('自定义难度大厅规则', () => {
     assert.ok(idsAfter.every((id) => !idsBefore.has(id)), '旧 AI id 应全部被替换');
   });
 
-  it('3. 自定义满员时 DPS 可顶替坦克 AI（优先 T）并保持自己职责', () => {
+  it('3. 自定义满员时 DPS 优先顶替同职责 AI（不先顶坦）并保持自己职责', () => {
     const mgr = new RoomManager();
     const room = mgr.createRoom({
       name: '自定义热加入',
@@ -96,6 +96,8 @@ describe('自定义难度大厅规则', () => {
     });
     mgr.autoFillAi(room.id);
     assert.equal(room.members.length, 5);
+    const dpsAi = room.members.find((m) => m.isAi && m.role === 'DPS');
+    assert.ok(dpsAi);
     const tankAi = room.members.find((m) => m.isAi && m.role === 'TANK');
     assert.ok(tankAi);
 
@@ -108,10 +110,11 @@ describe('自定义难度大厅规则', () => {
     });
     assert.equal(join.ok, true, join.reason);
     assert.equal(join.member?.role, 'DPS');
-    assert.equal(join.replacedAiId, tankAi!.id, '满员热加入应优先顶坦克 AI');
+    assert.equal(join.replacedAiId, dpsAi!.id, '满员热加入应优先顶同职责 DPS AI，不先顶坦克');
+    assert.ok(room.members.some((m) => m.id === tankAi!.id), '坦克 AI 应保留');
   });
 
-  it('4. pickHotJoinAiReplacement：T 同职业 > 其它 T > DPS > 奶', () => {
+  it('4. pickHotJoinAiReplacement：同职责优先 → DPS → 奶 → 坦最后', () => {
     const ais = [
       {
         id: 'h1',
@@ -162,18 +165,18 @@ describe('自定义难度大厅规则', () => {
         slotIndex: 3,
       },
     ];
-    const pick = pickHotJoinAiReplacement(ais as any, 'DK');
-    assert.equal(pick?.id, 't2', '应优先同职业坦克');
-    const pick2 = pickHotJoinAiReplacement(
-      ais.filter((a) => a.id !== 't2') as any,
-      'MAGE'
+    const pickHealer = pickHotJoinAiReplacement(ais as any, 'PRIEST', 'HEALER');
+    assert.equal(pickHealer?.id, 'h1', '治疗加入应顶治疗 AI');
+    const pickDps = pickHotJoinAiReplacement(ais as any, 'MAGE', 'DPS');
+    assert.equal(pickDps?.id, 'd1', '输出加入应顶输出 AI');
+    const pickNoPreferred = pickHotJoinAiReplacement(ais as any, 'DK');
+    assert.equal(pickNoPreferred?.id, 'd1', '无 preferredRole 时先 DPS，坦最后');
+    const pickTankOnly = pickHotJoinAiReplacement(
+      ais.filter((a) => a.role === 'TANK') as any,
+      'DK',
+      'DPS'
     );
-    assert.equal(pick2?.id, 't1', '无同职业坦时取任意坦');
-    const pick3 = pickHotJoinAiReplacement(
-      ais.filter((a) => a.role !== 'TANK') as any,
-      'MAGE'
-    );
-    assert.equal(pick3?.id, 'd1', '无坦时取 DPS');
+    assert.equal(pickTankOnly?.id, 't2', '仅剩坦时同职业坦优先');
   });
 
   it('5. hasJoinableSeat：自定义有任意 AI 即可进；英雄仍要同职责', () => {

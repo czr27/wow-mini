@@ -291,6 +291,11 @@ const SHORT_ID_ALIASES: Record<string, string> = {
   time_warp: 'mage_time_warp',
   icebound: 'dk_icebound_fortitude',
   ams: 'dk_anti_magic_shell',
+  /** UI / 动作条常用 id → 引擎 dk_dnd（枯萎凋零，点地） */
+  death_and_decay: 'dk_dnd',
+  dnd: 'dk_dnd',
+  lightwell: 'priest_lightwell',
+  blizzard: 'mage_blizzard',
   kidney_shot: 'rogue_kick',
   living_bomb: 'mage_living_bomb',
   pw_shield: 'priest_power_word_shield',
@@ -581,6 +586,7 @@ function normalizeLegacySpell(classId: ClassId, sp: LegacySpell): NormalizedSpel
     sp.id === 'druid_wild_growth' ||
     sp.id === 'druid_tranquility' ||
     sp.id === 'mage_living_bomb' ||
+    sp.id === 'dk_dnd' ||
     sp.id === 'dk_death_and_decay' ||
     sp.id === 'dk_blood_boil';
 
@@ -706,6 +712,9 @@ function normalizeModernSpell(classId: ClassId, specId: string, sp: ModernSpell)
   let tickIntervalMs = 0;
   let maxStacks = 1;
   let dispelTypes: string[] | undefined;
+  let groundKind: NormalizedSpell['groundKind'];
+  let groundColorHex: string | undefined;
+  let groundRadius: number | undefined;
 
   for (const eff of sp.effects) {
     const val = eff.baseValue ?? 0;
@@ -758,6 +767,29 @@ function normalizeModernSpell(classId: ClassId, specId: string, sp: ModernSpell)
       case 'RESOURCE_RESTORE':
         resourceRestoreAmount += val;
         break;
+      case 'SUMMON_GROUND_EFFECT': {
+        groundKind = eff.groundEffectKind || 'TOTEM';
+        groundRadius = groundRadius ?? 10;
+        // 填充色约定：治疗绿 / 增益黄 / 伤害红（描边另按敌我）
+        groundColorHex =
+          groundColorHex ??
+          (groundKind === 'DAMAGE_ZONE' || groundKind === 'CONE_WARNING'
+            ? '#EF4444'
+            : groundKind === 'HEAL_ZONE' ||
+                sp.id.includes('lightwell') ||
+                sp.id.includes('healing_tide') ||
+                sp.id.includes('healing_rain') ||
+                sp.id.includes('efflorescence')
+              ? '#10B981'
+              : '#EAB308');
+        if (groundKind === 'HEAL_ZONE' || groundKind === 'TOTEM') {
+          if (val > 0 && ticks > 0) hotTotalHeal += val * ticks;
+          else if (val > 0) hotTotalHeal += val * 10;
+        } else if (groundKind === 'DAMAGE_ZONE' && val > 0) {
+          dotTotalDamage += val * Math.max(1, ticks);
+        }
+        break;
+      }
       default:
         break;
     }
@@ -772,10 +804,15 @@ function normalizeModernSpell(classId: ClassId, specId: string, sp: ModernSpell)
     sp.id === 'warlock_drain_soul' ||
     sp.id === 'warlock_rain_of_fire';
 
+  const isGroundHealTotem =
+    groundKind === 'HEAL_ZONE' ||
+    (groundKind === 'TOTEM' && (sp.id.includes('lightwell') || sp.id.includes('healing_tide')));
+
   const isAOE =
     targetType === 'AOE_ENEMY' ||
     targetType === 'AOE_ALLY' ||
     targetType === 'SMART_ALLY' ||
+    targetType === 'GROUND' ||
     sp.id === 'priest_power_word_barrier' ||
     sp.id === 'priest_divine_hymn' ||
     sp.id === 'priest_circle_of_healing' ||
@@ -788,7 +825,7 @@ function normalizeModernSpell(classId: ClassId, specId: string, sp: ModernSpell)
     shieldValue = 28000;
   }
 
-  const isHeal = (directHeal > 0 || hotTotalHeal > 0 || shieldValue > 0) && !isResurrect;
+  const isHeal = (directHeal > 0 || hotTotalHeal > 0 || shieldValue > 0 || isGroundHealTotem) && !isResurrect;
   const isDamage = directDamage > 0 || dotTotalDamage > 0;
   const isDefensive = DEFENSIVE_SPELL_KEYWORDS.some(k => sp.id.includes(k));
   const isMajorCd = sp.cooldownMs >= 45_000;
@@ -851,6 +888,9 @@ function normalizeModernSpell(classId: ClassId, specId: string, sp: ModernSpell)
     durationMs,
     tickIntervalMs,
     maxStacks,
+    groundKind,
+    groundColorHex,
+    groundRadius,
     rangePx: resolveSpellRangePx({
       classId,
       spellId: sp.id,

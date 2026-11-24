@@ -220,4 +220,59 @@ describe('applyGuestNetworkCast', () => {
       bossId
     );
   });
+
+  it('GCD 未好时拒绝新 CAST，不得清掉进行中的读条', () => {
+    const engine = makeEngineWithGuest();
+    const boss = engine.bossUnit!;
+    const casts: Record<string, AiActiveCast> = {};
+    const first = applyGuestNetworkCast(
+      engine,
+      {
+        playerId: 'char_guest',
+        spellId: 'lightning_bolt',
+        spellName: '闪电箭',
+        targetId: boss.id,
+      },
+      casts
+    );
+    assert.equal(first.startedCast, true);
+    assert.ok(casts['char_guest']);
+    const kept = casts['char_guest'];
+
+    const second = applyGuestNetworkCast(
+      engine,
+      {
+        playerId: 'char_guest',
+        spellId: 'lightning_bolt',
+        spellName: '闪电箭',
+        targetId: boss.id,
+      },
+      casts
+    );
+    assert.equal(second.startedCast, false);
+    assert.equal(casts['char_guest'], kept, 'GCD 中拒绝不得 wipe 读条');
+  });
+
+  it('缺少 isHumanControlled 时 tick 仍应结算客人读条', () => {
+    const engine = makeEngineWithGuest();
+    const guest = engine.getUnit('char_guest')!;
+    guest.isHumanControlled = false;
+    const boss = engine.bossUnit!;
+    const hpBefore = boss.hp;
+    const casts: Record<string, AiActiveCast> = {};
+    applyGuestNetworkCast(
+      engine,
+      {
+        playerId: 'char_guest',
+        spellId: 'lightning_bolt',
+        spellName: '闪电箭',
+        targetId: boss.id,
+      },
+      casts
+    );
+    assert.ok(casts['char_guest']);
+    tickGuestNetworkCasts(engine, casts, (casts['char_guest']?.totalMs || 2000) + 10);
+    assert.equal(casts['char_guest'], undefined);
+    assert.ok(boss.hp < hpBefore);
+  });
 });

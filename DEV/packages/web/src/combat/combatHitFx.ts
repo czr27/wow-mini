@@ -780,6 +780,8 @@ export type HitFxDrawFilter = {
   showFriendlySlash?: boolean;
   showEnemyProjectiles?: boolean;
   showEnemySlash?: boolean;
+  /** Draw ground blob under arcing projectiles */
+  heightShadow?: boolean;
 };
 
 /**
@@ -795,6 +797,7 @@ export function drawHitFx(
   const showEProj = filter?.showEnemyProjectiles !== false;
   const showFSlash = filter?.showFriendlySlash !== false;
   const showESlash = filter?.showEnemySlash !== false;
+  const heightShadow = !!filter?.heightShadow;
 
   for (const p of state.projectiles) {
     const side = p.side || 'FRIENDLY';
@@ -806,6 +809,15 @@ export function drawHitFx(
     const baseA = side === 'ENEMY' ? HIT_FX_BOSS_ALPHA : HIT_FX_ALPHA;
     const alpha = baseA * (1 - t * 0.35);
     const size = HIT_FX_MAX_SIZE_PX * Math.max(0.55, p.scale);
+    if (heightShadow && pose.lift > 2) {
+      const gx = p.fromX + (p.toX - p.fromX) * t;
+      const gy = p.fromY + (p.toY - p.fromY) * t;
+      const shadowT = Math.min(1, pose.lift / 80);
+      ctx.fillStyle = `rgba(0,0,0,${0.26 * shadowT})`;
+      ctx.beginPath();
+      ctx.ellipse(gx, gy, Math.max(4, size * 0.45), Math.max(2, size * 0.18), 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
     ctx.save();
     ctx.translate(pose.x, pose.y);
     ctx.rotate(pose.angle);

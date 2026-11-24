@@ -745,14 +745,20 @@ export class RoomWsHub {
           break;
         }
 
-        // Lobby leave: remove seat
+        // Lobby leave: remove seat; 普通/英雄自动补 AI，避免回来后少一人坑
         const result = this.roomManager.leaveRoom(leftRoomId, session.playerId);
         if (result.roomDeleted) {
           this.destroyRoomAndNotify(leftRoomId, result.destroyedByHost ? 'host_left' : 'empty', false);
         } else {
           const updated = this.roomManager.getRoom(leftRoomId);
-          if (updated) this.pushRoomUpdate(updated);
-          else this.pushRoomList();
+          if (updated) {
+            if (updated.difficulty !== 'CUSTOM') {
+              this.roomManager.autoFillAi(leftRoomId);
+            }
+            const afterFill = this.roomManager.getRoom(leftRoomId);
+            if (afterFill) this.pushRoomUpdate(afterFill);
+            else this.pushRoomList();
+          } else this.pushRoomList();
         }
         break;
       }
@@ -933,7 +939,8 @@ export class RoomWsHub {
 
       case 'COMBAT_STATE':
       case 'MEMBER_HOT_SWAP':
-      case 'CAST_INTERRUPT': {
+      case 'CAST_INTERRUPT':
+      case 'INPUT_ACK': {
         // Relay only within room; combat tick stays on host client
         if (!msg.roomId && session.roomId) msg.roomId = session.roomId;
         if (!msg.roomId) break;

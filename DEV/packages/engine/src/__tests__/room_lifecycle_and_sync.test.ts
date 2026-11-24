@@ -183,6 +183,9 @@ describe('Room Lifecycle, AI-Only Cleanup, AI Name Sync & Custom Difficulty', ()
       currentBossIndex: 2,
     });
     assert.strictEqual(roomA.status, 'CLEARED');
+    // Settled rooms must not linger for lobby / 快速加入
+    assert.ok(manager.cleanupSettledRooms() >= 1);
+    assert.equal(manager.getRoom(roomA.id), undefined);
     assert.ok(roomA.lastSettlement?.cleared);
     assert.strictEqual(roomB.status, 'OUT_OF_COMBAT', '结算房间A不得改写房间B');
   });

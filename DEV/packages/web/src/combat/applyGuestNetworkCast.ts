@@ -91,10 +91,8 @@ export function applyGuestNetworkCast(
     return { startedCast: false, resolvedInstant: false };
   }
 
-  // Replace any in-flight read-bar for this human
-  delete guestCasts[caster.id];
-  engine.interruptCast(caster.id, 0);
-
+  // Gate BEFORE wiping in-flight cast — otherwise a late/retry CAST during GCD
+  // cancelled the guest's active read-bar and the spell never landed.
   const gcdCat =
     norm.gcdCategory === 'OFF_GCD' ? 'OFF_GCD' : norm.gcdCategory === 'ROGUE' ? 'ROGUE' : 'NORMAL';
   if (gcdCat !== 'OFF_GCD' && !engine.cooldownManager.isGcdFree(caster.id)) {
@@ -103,6 +101,10 @@ export function applyGuestNetworkCast(
   if (isGuestSpellOnCooldown(engine, caster.id, input.spellId, caster.classId)) {
     return { startedCast: false, resolvedInstant: false };
   }
+
+  // Replace any in-flight read-bar for this human (only after gates pass)
+  delete guestCasts[caster.id];
+  engine.interruptCast(caster.id, 0);
 
   const target = resolveGuestCastTarget(engine, caster, norm, input.targetId);
   const livingEnemies = engine.enemyUnits.filter((e) => (e.isAlive ?? e.alive) && e.hp > 0);
@@ -194,8 +196,10 @@ export function tickGuestNetworkCasts(
 
   for (const [unitId, cast] of Object.entries(guestCasts)) {
     const unit = engine.getUnit(unitId);
-    // Only remote humans — local host uses playerCastRef; AI uses its own loop
-    if (!unit || !unit.isHumanControlled || unit.isPlayer) continue;
+    // Remote-human cast bars live here. Skip the local host seat (playerCastRef).
+    // Do not require isHumanControlled: some snapshots briefly omit the flag and
+    // would freeze CASTED spells forever while instants/channels still worked.
+    if (!unit || unit.isPlayer) continue;
     if (!(unit.isAlive ?? unit.alive) || unit.hp <= 0) {
       delete guestCasts[unitId];
       continue;

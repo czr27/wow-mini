@@ -27,16 +27,11 @@ import {
   getUnitHaste,
   resolveCooldownSpellIds,
 } from '@cata-raid-sim/engine';
-import type { PlayerCastState } from '../components/ActionBar.js';
+import { advanceLocalPlayerCast, type PlayerCastState } from '../components/ActionBar.js';
 import type { IncomingHealCast } from '../components/RaidFrames.js';
 import { netClient } from '../net/NetClient.js';
 import type { NetworkRoomFacade } from '../net/NetworkRoomFacade.js';
-import {
-  buildCastFromTimeline,
-  cooldownRemainingFromTimelines,
-  hasCooldownTimelineForSpell,
-  gcdRemainingFromTimelines,
-} from '../net/netTimeline.js';
+import { buildCastFromTimeline } from '../net/netTimeline.js';
 import {
   hasSufficientPlayerResources,
   deductPlayerResources,
@@ -137,73 +132,34 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
   const engine = ctx.engineRef.current;
   if (!rsm || ctx.runPhase === 'LOBBY' || ctx.runPhase === 'SUMMARY') return;
 
-  // Network guests: no combat sim — advance local HUD from host timelines
+  // Network guests: no combat sim — own cast bar is local; companions/GCD/CD from host
   if (ctx.isNetworkGuestRef.current) {
     // 未收到房主 ack 的技能意图重传（MOVE 不重传；血量/位置靠后续 COMBAT_STATE 补齐）
     netClient.flushReliableInputRetries();
     const now = Date.now();
     const myId = ctx.currentChar?.id;
     if (myId) {
-      const myCastTl = ctx.guestCastTimelinesRef.current.find((c) => c.unitId === myId && !c.interrupted);
-      if (myCastTl) {
-        const built = buildCastFromTimeline(myCastTl, now);
-        if (built) {
-          ctx.playerCastRef.current = built as any;
-          ctx.setPlayerCast(built as any);
+      // Own read-bar: advance on wall clock. Never clear just because host timeline is late —
+      // that caused hitching and made later casted spells feel "unfireable".
+      const localCast = ctx.playerCastRef.current;
+      if (localCast) {
+        const next = advanceLocalPlayerCast(localCast, now);
+        if (next) {
+          ctx.playerCastRef.current = next;
+          ctx.setPlayerCast(next);
         } else {
           ctx.playerCastRef.current = null;
           ctx.setPlayerCast(null);
         }
-      } else if (ctx.playerCastRef.current) {
-        // No host timeline → clear sticky bar (avoid ghosting after resolve)
-        ctx.playerCastRef.current = null;
-        ctx.setPlayerCast(null);
       }
-      const gcdTl = ctx.guestGcdTimelinesRef.current.find((t) => t.unitId === myId);
-      if (gcdTl) {
-        const gcd = gcdRemainingFromTimelines(ctx.guestGcdTimelinesRef.current, myId, now);
-        ctx.setPlayerGcdRemainingMs(gcd.remaining);
-        ctx.setPlayerGcdTotalMs(gcd.total);
-      } else {
-        // No host GCD echo yet — tick down optimistic local GCD
-        ctx.setPlayerGcdRemainingMs((prev) => Math.max(0, prev - 50));
-      }
+      // Own GCD/CD: local clock only. Host timelines cause rewind/skip under latency.
+      ctx.setPlayerGcdRemainingMs((prev) => Math.max(0, prev - 50));
       ctx.setPlayerCooldowns((prev) => {
-        const next = { ...prev };
-        // Prefer host timeline; alias-aware so bloodlust ↔ heroism syncs to action-bar keys
-        for (const slot of Object.keys(next)) {
-          const rem = cooldownRemainingFromTimelines(ctx.guestCdTimelinesRef.current, myId, slot, now);
-          if (rem > 0) {
-            next[slot] = {
-              ...(next[slot] || { totalCdMs: rem }),
-              cdRemainingMs: rem,
-              totalCdMs: Math.max(next[slot]?.totalCdMs || 0, rem),
-            };
-          } else if (
-            hasCooldownTimelineForSpell(ctx.guestCdTimelinesRef.current, myId, slot)
-          ) {
-            // Host says ready (matching timeline expired / cleared)
-            next[slot] = { ...next[slot], cdRemainingMs: 0 };
-          }
-          // else: no host echo yet — keep optimistic local CD (decremented each tick)
-        }
-        for (const cd of ctx.guestCdTimelinesRef.current) {
-          if (cd.unitId !== myId) continue;
-          const rem = cooldownRemainingFromTimelines(
-            ctx.guestCdTimelinesRef.current,
-            myId,
-            cd.spellId,
-            now
-          );
-          next[cd.spellId] = { cdRemainingMs: rem, totalCdMs: cd.totalMs };
-        }
-        // Guest early-return skips host CD tick — decrement optimistic-only entries
+        const next: Record<string, { cdRemainingMs: number; totalCdMs: number }> = {};
         const guestDeltaMs = 50;
-        for (const [id, cd] of Object.entries(next)) {
-          if (hasCooldownTimelineForSpell(ctx.guestCdTimelinesRef.current, myId, id)) continue;
+        for (const [id, cd] of Object.entries(prev)) {
           const rem = Math.max(0, (cd.cdRemainingMs || 0) - guestDeltaMs);
           if (rem > 0) next[id] = { ...cd, cdRemainingMs: rem };
-          else delete next[id];
         }
         return next;
       });
@@ -233,11 +189,17 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
   // Apply remote player inputs on host before simulating (guests only send intents)
   if (ctx.isNetworkHostRef.current && ctx.pendingGuestInputsRef.current.length > 0) {
     const inputs = ctx.pendingGuestInputsRef.current.splice(0, ctx.pendingGuestInputsRef.current.length);
+    const immediateAcks: Array<{ clientInputId: string; attempt: number }> = [];
     for (const input of inputs) {
-      // 可靠意图幂等：重传只补 ack，不二次施放
-      if (!netClient.shouldApplyGuestInput(input.clientInputId)) {
-        continue;
+      // 凡带 id：幂等去重 + 立刻 INPUT_ACK（回传本次 attempt，供客人算 RTT）
+      const shouldApply = netClient.shouldApplyGuestInput(input.clientInputId);
+      if (input.clientInputId) {
+        immediateAcks.push({
+          clientInputId: input.clientInputId,
+          attempt: Math.max(1, input.clientInputAttempt || 1),
+        });
       }
+      if (!shouldApply) continue;
       if (input.kind === 'TARGET' && input.targetId) {
         continue;
       }
@@ -245,19 +207,15 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
         const mover = engine.getUnit(input.playerId);
         if (mover && mover.isAlive) {
           mover.position = { x: input.x, y: input.y };
-          // Moving cancels that player's cast on the host sim (engine + guest read-bar)
-          const hadCast = clearGuestNetworkCast(ctx.aiHealerCastsRef.current, engine, input.playerId);
-          if (hadCast && ctx.activeRoomIdRef.current) {
-            netClient.sendCastInterrupt(ctx.activeRoomIdRef.current, input.playerId, input.spellId);
-          }
+          // Guest already cleared their own bar on move. Host only drops sim cast —
+          // do NOT echo CAST_INTERRUPT (late echo can wipe their next cast).
+          clearGuestNetworkCast(ctx.aiHealerCastsRef.current, engine, input.playerId);
         }
         continue;
       }
       if (input.kind === 'INTERRUPT' && input.playerId) {
+        // Same as MOVE: guest self-cancel is local; host silently clears authority cast.
         clearGuestNetworkCast(ctx.aiHealerCastsRef.current, engine, input.playerId);
-        if (ctx.activeRoomIdRef.current) {
-          netClient.sendCastInterrupt(ctx.activeRoomIdRef.current, input.playerId, input.spellId);
-        }
         continue;
       }
       if (input.kind === 'DISPEL' && input.playerId) {
@@ -316,7 +274,7 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
           const healingTideRadius = GROUND_TARGET_SPELL_DEFS.healing_tide?.radius ?? RANGE_40YD_PX;
           const rainRadius = 60;
           let placedId: string | undefined;
-          if (spellId === 'death_and_decay') {
+          if (spellId === 'death_and_decay' || spellId === 'dnd' || spellId === 'dk_dnd') {
             placedId = `dnd_${Date.now()}_${caster.id}`;
             engine.effectsManager?.addGroundEffect({
               id: placedId, kind: 'DAMAGE_ZONE', spellId: 'death_and_decay', ownerId: caster.id,
@@ -330,11 +288,25 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
               x, y, radius: rainRadius, colorHex: '#10B981', remainingMs: 10000,
               tickIntervalMs: 1000, tickElapsedMs: 0, tickValue: 3400,
             });
+          } else if (spellId === 'lightwell' || spellId === 'priest_lightwell') {
+            placedId = `lw_${Date.now()}_${caster.id}`;
+            engine.effectsManager?.addGroundEffect({
+              id: placedId, kind: 'TOTEM', spellId: 'lightwell', ownerId: caster.id,
+              x, y, radius: GROUND_TARGET_SPELL_DEFS.lightwell?.radius ?? 80, colorHex: '#10B981',
+              remainingMs: 180_000, tickIntervalMs: 2000, tickElapsedMs: 0, tickValue: 2800,
+            });
+          } else if (spellId === 'blizzard' || spellId === 'mage_blizzard') {
+            placedId = `bliz_${Date.now()}_${caster.id}`;
+            engine.effectsManager?.addGroundEffect({
+              id: placedId, kind: 'DAMAGE_ZONE', spellId: 'blizzard', ownerId: caster.id,
+              x, y, radius: GROUND_TARGET_SPELL_DEFS.blizzard?.radius ?? 80, colorHex: '#EF4444',
+              remainingMs: 8000, tickIntervalMs: 1000, tickElapsedMs: 0, tickValue: 2100,
+            });
           } else if (spellId === 'spirit_link' || spellId === 'spirit_link_totem') {
             placedId = `slt_${Date.now()}_${caster.id}`;
             engine.effectsManager?.addGroundEffect({
               id: placedId, kind: 'TOTEM', spellId: 'spirit_link', ownerId: caster.id,
-              x, y, radius: totemRadius, colorHex: '#00CED1', remainingMs: 6000,
+              x, y, radius: totemRadius, colorHex: '#EAB308', remainingMs: 6000,
               tickIntervalMs: 1000, tickElapsedMs: 0, tickValue: 0,
             });
           } else if (
@@ -345,21 +317,21 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
             placedId = `htt_${Date.now()}_${caster.id}`;
             engine.effectsManager?.addGroundEffect({
               id: placedId, kind: 'TOTEM', spellId: 'healing_tide', ownerId: caster.id,
-              x, y, radius: healingTideRadius, colorHex: '#0EA5E9', remainingMs: 10000,
+              x, y, radius: healingTideRadius, colorHex: '#10B981', remainingMs: 10000,
               tickIntervalMs: 2000, tickElapsedMs: 0, tickValue: 5200,
             });
           } else if (spellId === 'mana_tide' || spellId === 'mana_tide_totem') {
             placedId = `mtt_${Date.now()}_${caster.id}`;
             engine.effectsManager?.addGroundEffect({
               id: placedId, kind: 'TOTEM', spellId: 'mana_tide', ownerId: caster.id,
-              x, y, radius: totemRadius, colorHex: '#56CCF2', remainingMs: 12000,
+              x, y, radius: totemRadius, colorHex: '#EAB308', remainingMs: 12000,
               tickIntervalMs: 5000, tickElapsedMs: 0, tickValue: 0,
             });
           } else if (spellId === 'windfury_totem' || spellId === 'windfury') {
             placedId = `wft_${Date.now()}_${caster.id}`;
             engine.effectsManager?.addGroundEffect({
               id: placedId, kind: 'TOTEM', spellId: 'windfury_totem', ownerId: caster.id,
-              x, y, radius: totemRadius, colorHex: '#E0E0E0', remainingMs: 300000,
+              x, y, radius: totemRadius, colorHex: '#EAB308', remainingMs: 300000,
               tickIntervalMs: 1000, tickElapsedMs: 0, tickValue: 0,
             });
           }
@@ -425,10 +397,15 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
           },
           ctx.aiHealerCastsRef.current
         );
+        // Reject = no effect on host. Do not CAST_INTERRUPT the guest: their CD/GCD/bar
+        // are local; a nack echo under latency can interrupt a newer cast.
         if (result.resolvedInstant || result.startedCast) {
           ctx.setFriendlyUnits([...engine.friendlyUnits]);
         }
       }
+    }
+    if (immediateAcks.length > 0 && ctx.activeRoomIdRef.current) {
+      netClient.sendInputAck(ctx.activeRoomIdRef.current, immediateAcks);
     }
   }
 

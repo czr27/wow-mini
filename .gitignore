@@ -6,3 +6,10 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Local runtime / generated — keep on disk, never sync to git
+DEV/packages/server/data/accounts.json
+*.js.map
+*.d.ts.map
+DEV/packages/web/src/utils/hudLayout.js
+DEV/packages/web/src/utils/hudLayout.d.ts

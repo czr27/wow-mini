@@ -294,60 +294,97 @@ export const GROUND_TARGET_SPELL_DEFS: Record<
     name: '枯萎凋零',
     radius: 60,
     color: '#ef4444',
+    maxRange: 240, // 30 码点地（与描述一致）
+  },
+  /** 技能书 shortId / 引擎 id 别名，与 death_and_decay 相同点地逻辑 */
+  dnd: {
+    name: '枯萎凋零',
+    radius: 60,
+    color: '#ef4444',
+    maxRange: 240,
+  },
+  dk_dnd: {
+    name: '枯萎凋零',
+    radius: 60,
+    color: '#ef4444',
+    maxRange: 240,
+  },
+  lightwell: {
+    name: '圣光井',
+    radius: 80, // ≈10 码
+    color: '#10b981',
+    maxRange: 320,
+  },
+  priest_lightwell: {
+    name: '圣光井',
+    radius: 80,
+    color: '#10b981',
+    maxRange: 320,
+  },
+  blizzard: {
+    name: '暴风雪',
+    radius: 80, // ≈10 码
+    color: '#ef4444',
+    maxRange: 320,
+  },
+  mage_blizzard: {
+    name: '暴风雪',
+    radius: 80,
+    color: '#ef4444',
     maxRange: 320,
   },
   healing_rain: {
     name: '治疗之雨',
     radius: 60,
-    color: '#10b981', // 与画布治疗光圈绿色一致
+    color: '#10b981', // 治疗绿
     maxRange: 320, // 40 码点地
   },
   spirit_link: {
     name: '灵魂链接图腾',
     radius: 80, // ≈10 码图腾半径（40码=320）
-    color: '#2dd4bf',
+    color: '#eab308', // 增益黄
     maxRange: 320,
   },
   healing_tide: {
     name: '治疗之潮图腾',
     radius: 320, // 40 码 = RANGE_40YD_PX（8px/码）
-    color: '#0ea5e9',
+    color: '#10b981', // 治疗绿
     maxRange: 320,
   },
   healing_tide_totem: {
     name: '治疗之潮图腾',
     radius: 320, // 40 码 = RANGE_40YD_PX
-    color: '#0ea5e9',
+    color: '#10b981',
     maxRange: 320,
   },
   shaman_healing_tide_totem: {
     name: '治疗之潮图腾',
     radius: 320, // 40 码 = RANGE_40YD_PX
-    color: '#0ea5e9',
+    color: '#10b981',
     maxRange: 320,
   },
   mana_tide: {
     name: '法力之潮图腾',
     radius: 80,
-    color: '#38bdf8',
+    color: '#eab308', // 增益黄
     maxRange: 320,
   },
   mana_tide_totem: {
     name: '法力之潮图腾',
     radius: 80,
-    color: '#38bdf8',
+    color: '#eab308',
     maxRange: 320,
   },
   spirit_link_totem: {
     name: '灵魂链接图腾',
     radius: 80,
-    color: '#2dd4bf',
+    color: '#eab308',
     maxRange: 320,
   },
   windfury_totem: {
     name: '风怒图腾',
     radius: 80,
-    color: '#e0e0e0',
+    color: '#eab308', // 增益黄
     maxRange: 320,
   },
 };
@@ -565,8 +602,6 @@ export interface CombatDisplayPrefs {
   showHealTerrain: boolean;
   showBuffTerrain: boolean;
   showDamageTerrain: boolean;
-  /** 地形光圈白色描边 */
-  terrainWhiteOutline: boolean;
   /** 团队框架：名称 / buff / debuff / 常驻团 buff（爪、智、韧、王等） */
   showRaidFrameNames: boolean;
   showRaidFrameBuffs: boolean;
@@ -582,7 +617,30 @@ export interface CombatDisplayPrefs {
   showSctDamageOnMe: boolean;
   showSctAllyDamage: boolean;
   showSctAllyHeal: boolean;
+  /** 2.5D: body foreshortens with pitch (less cardboard). */
+  isoBodyPitchFx: boolean;
+  /** Body Y-scale at min pitch (20deg); 1 at 90deg. */
+  isoBodyPitchSquash: number;
+  /** Foot shadow drawn in ground ISO space. */
+  isoGroundShadow: boolean;
+  /** Ground foot-shadow alpha. */
+  isoShadowAlpha: number;
+  /** Soft contact darkening under feet. */
+  isoContactShade: boolean;
+  /** Stronger 8-dir shoulder/depth volume. */
+  isoOctantVolume: boolean;
+  /** Side lighting from camera-relative sun. */
+  isoSideLight: boolean;
+  /** Side-light strength 0..1. */
+  isoSideLightStrength: number;
+  /** Fade distant ground by viewDepthKey. */
+  isoDepthFog: boolean;
+  /** Depth fog strength 0..1. */
+  isoDepthFogStrength: number;
+  /** Flying proj/AoE cast a ground shadow at landing height. */
+  isoFxHeightShadow: boolean;
 }
+
 
 /** Defaults match prior hard-coded visibility (self/boss/target/focus nameplates + all FX/terrain). */
 /** 2.5D orbit/pitch sensitivity: default 1.0, clamp ±50%. */
@@ -596,6 +654,37 @@ export function clampIsoViewSensitivity(value: number): number {
     ISO_VIEW_SENSITIVITY_MAX,
     Math.max(ISO_VIEW_SENSITIVITY_MIN, value)
   );
+}
+
+/** Body pitch squash at 20deg look-down. */
+export const ISO_BODY_PITCH_SQUASH_DEFAULT = 0.78;
+export const ISO_BODY_PITCH_SQUASH_MIN = 0.6;
+export const ISO_BODY_PITCH_SQUASH_MAX = 1;
+
+export function clampIsoBodyPitchSquash(value: number): number {
+  if (!Number.isFinite(value)) return ISO_BODY_PITCH_SQUASH_DEFAULT;
+  return Math.min(ISO_BODY_PITCH_SQUASH_MAX, Math.max(ISO_BODY_PITCH_SQUASH_MIN, value));
+}
+
+/** Generic 0..1 strength slider (shadow / light / fog). */
+export function clampUnitInterval(value: number, fallback: number): number {
+  if (!Number.isFinite(value)) return fallback;
+  return Math.min(1, Math.max(0, value));
+}
+
+export function clampIsoShadowAlpha(value: number): number {
+  if (!Number.isFinite(value)) return 0.45;
+  return Math.min(0.8, Math.max(0.15, value));
+}
+
+export function clampIsoSideLightStrength(value: number): number {
+  if (!Number.isFinite(value)) return 0.35;
+  return Math.min(0.7, Math.max(0.1, value));
+}
+
+export function clampIsoDepthFogStrength(value: number): number {
+  if (!Number.isFinite(value)) return 0.4;
+  return Math.min(0.8, Math.max(0.1, value));
 }
 
 export const DEFAULT_COMBAT_DISPLAY_PREFS: CombatDisplayPrefs = {
@@ -620,7 +709,6 @@ export const DEFAULT_COMBAT_DISPLAY_PREFS: CombatDisplayPrefs = {
   showHealTerrain: true,
   showBuffTerrain: true,
   showDamageTerrain: true,
-  terrainWhiteOutline: false,
   showRaidFrameNames: true,
   showRaidFrameBuffs: true,
   showRaidFrameDebuffs: true,
@@ -631,6 +719,17 @@ export const DEFAULT_COMBAT_DISPLAY_PREFS: CombatDisplayPrefs = {
   showSctDamageOnMe: true,
   showSctAllyDamage: false,
   showSctAllyHeal: false,
+  isoBodyPitchFx: true,
+  isoBodyPitchSquash: ISO_BODY_PITCH_SQUASH_DEFAULT,
+  isoGroundShadow: true,
+  isoShadowAlpha: 0.45,
+  isoContactShade: true,
+  isoOctantVolume: true,
+  isoSideLight: true,
+  isoSideLightStrength: 0.35,
+  isoDepthFog: true,
+  isoDepthFogStrength: 0.4,
+  isoFxHeightShadow: true,
 };
 
 export function resolveCombatDisplayPrefs(
@@ -641,6 +740,17 @@ export function resolveCombatDisplayPrefs(
   merged.isoOrbitSensitivity = clampIsoViewSensitivity(merged.isoOrbitSensitivity as number);
   merged.isoPitchSensitivity = clampIsoViewSensitivity(merged.isoPitchSensitivity as number);
   merged.moveSensitivity = clampIsoViewSensitivity(merged.moveSensitivity as number);
+  merged.isoBodyPitchFx = merged.isoBodyPitchFx !== false;
+  merged.isoBodyPitchSquash = clampIsoBodyPitchSquash(merged.isoBodyPitchSquash as number);
+  merged.isoGroundShadow = merged.isoGroundShadow !== false;
+  merged.isoShadowAlpha = clampIsoShadowAlpha(merged.isoShadowAlpha as number);
+  merged.isoContactShade = merged.isoContactShade !== false;
+  merged.isoOctantVolume = merged.isoOctantVolume !== false;
+  merged.isoSideLight = merged.isoSideLight !== false;
+  merged.isoSideLightStrength = clampIsoSideLightStrength(merged.isoSideLightStrength as number);
+  merged.isoDepthFog = merged.isoDepthFog !== false;
+  merged.isoDepthFogStrength = clampIsoDepthFogStrength(merged.isoDepthFogStrength as number);
+  merged.isoFxHeightShadow = merged.isoFxHeightShadow !== false;
   return merged;
 }
 

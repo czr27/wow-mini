@@ -175,6 +175,10 @@ describe('aoeRing throw + projectile flight', () => {
     const trap = rings.find((r) => r.id === 'trap1')!;
     assert.ok(rain);
     assert.ok(trap);
+    assert.equal(rain.tone, 'HEAL');
+    assert.equal(trap.tone, 'ENEMY');
+    assert.equal(rain.friendlyCaster, true);
+    assert.equal(trap.friendlyCaster, true);
     assert.equal(rain.flight, 'arc');
     assert.equal(trap.flight, 'straight');
     assert.equal(rain.fromX, 50);

@@ -1,6 +1,21 @@
 import { GroundEffect, FloatingCombatText, Unit } from '../types.js';
 import { isSeekableHealGroundEffect } from './AoeRingVisual.js';
 
+/** Same-caster same-family totems: new placement instantly destroys the old one. */
+export function resolveTotemFamilyId(spellId: string): string {
+  const sid = (spellId || '').toLowerCase();
+  if (sid.includes('lightwell') || sid.includes('light_well') || sid.includes('圣光井')) {
+    return 'lightwell';
+  }
+  if (sid.includes('healing_tide') || sid.includes('治疗之潮')) return 'healing_tide';
+  if (sid.includes('spirit_link') || sid.includes('灵魂链接')) return 'spirit_link';
+  if (sid.includes('mana_tide') || sid.includes('法力之潮')) return 'mana_tide';
+  if (sid.includes('windfury') || sid.includes('风怒')) return 'windfury';
+  if (sid.includes('healing_stream')) return 'healing_stream';
+  // Fallback: strip class prefix so priest_lightwell / lightwell share a family
+  return sid.replace(/^(shaman_|priest_|mage_|dk_|druid_|warlock_|paladin_)/, '') || sid;
+}
+
 export class EffectsManager {
   public groundEffects: GroundEffect[] = [];
   public floatingTexts: FloatingCombatText[] = [];
@@ -14,6 +29,18 @@ export class EffectsManager {
       tickElapsedMs: 0,
       ...effect,
     } as GroundEffect;
+    // 同类图腾同一施法者只能有一个：新的出现则立刻销毁旧的
+    if (newEffect.kind === 'TOTEM' && newEffect.ownerId) {
+      const family = resolveTotemFamilyId(newEffect.spellId);
+      this.groundEffects = this.groundEffects.filter(
+        (e) =>
+          !(
+            e.kind === 'TOTEM' &&
+            e.ownerId === newEffect.ownerId &&
+            resolveTotemFamilyId(e.spellId) === family
+          )
+      );
+    }
     this.groundEffects.push(newEffect);
     return newEffect;
   }
@@ -123,19 +150,23 @@ export class EffectsManager {
       spellId === 'shaman_healing_tide_totem' ||
       spellId === '治疗之潮' ||
       spellId === '治疗之潮图腾';
+    const isLightwell =
+      spellId.includes('lightwell') || spellId.includes('light_well') || spellId.includes('圣光井');
     const isSpiritLink = spellId.includes('spirit_link');
     const isManaTide = spellId.includes('mana_tide');
     const isWindfury = spellId.includes('windfury');
 
-    if (eff.kind === 'HEAL_ZONE' || (eff.kind === 'TOTEM' && isHealingTide)) {
-      // Heal friendly units standing inside radius (Healing Rain / Healing Tide Totem)
+    if (eff.kind === 'HEAL_ZONE' || (eff.kind === 'TOTEM' && (isHealingTide || isLightwell))) {
+      // Heal friendly units standing inside radius (Healing Rain / Healing Tide / Lightwell)
       const owner = (this.engine.units.get(eff.ownerId) || this.engine.friendlyUnits.find((f: any) => f.id === eff.ownerId) || this.engine.friendlyUnits[0]) as any;
       const living = this.alliesInRadius(eff);
       const targets = isHealingTide
         ? [...living].sort((a: any, b: any) => a.hp / a.maxHp - b.hp / b.maxHp).slice(0, 5)
         : living;
       const isHealingRain = spellId === 'healing_rain' || spellId === 'shaman_healing_rain' || spellId === '治疗之雨';
-      const healName = isHealingTide
+      const healName = isLightwell
+        ? '圣光井'
+        : isHealingTide
         ? '治疗之潮图腾'
         : (isHealingRain ? '治疗之雨' : '百花齐放');
 
@@ -275,18 +306,29 @@ export class EffectsManager {
           }
         }
       } else {
+        const owner = this.engine.units.get(eff.ownerId) || this.engine.friendlyUnits[0];
+        const school =
+          spellId.includes('blizzard') || spellId.includes('frozen') || spellId.includes('frost')
+            ? 'FROST'
+            : spellId.includes('fire') || spellId.includes('flamestrike')
+              ? 'FIRE'
+              : 'SHADOW';
+        const spellName =
+          spellId.includes('blizzard')
+            ? '暴风雪'
+            : spellId === 'death_and_decay' || spellId === 'dnd' || spellId === 'dk_dnd'
+              ? '枯萎凋零'
+              : spellId === 'frozen_orb'
+                ? '寒冰宝珠'
+                : '地面伤害';
         if (boss && (boss.isAlive ?? boss.alive) && this.isPositionInEffect(boss.position, eff)) {
-          const owner = this.engine.units.get(eff.ownerId) || this.engine.friendlyUnits[0];
-          const school = eff.spellId === 'frozen_orb' ? 'FROST' : 'SHADOW';
-          const spellName = eff.spellId === 'death_and_decay' ? '死亡凋零' : (eff.spellId === 'frozen_orb' ? '寒冰宝珠' : '地面伤害');
           this.engine.dealDamage(owner, boss, value, school, false, spellName);
         }
         // Multi-add ready: damage all enemies in radius (boss + adds)
         for (const enemy of this.engine.enemyUnits) {
           if (enemy.id === boss?.id) continue;
           if ((enemy.isAlive ?? enemy.alive) && this.isPositionInEffect(enemy.position, eff)) {
-            const owner = this.engine.units.get(eff.ownerId) || this.engine.friendlyUnits[0];
-            this.engine.dealDamage(owner, enemy, value, 'SHADOW', false, eff.spellId || '地面伤害');
+            this.engine.dealDamage(owner, enemy, value, school, false, spellName);
           }
         }
       }

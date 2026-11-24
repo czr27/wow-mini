@@ -29,7 +29,7 @@ import {
 import type { PlayerCastState } from '../components/ActionBar.js';
 import { netClient } from '../net/NetClient.js';
 import type { NetworkRoomFacade } from '../net/NetworkRoomFacade.js';
-import { buildCastFromTimeline, gcdRemainingFromTimelines } from '../net/netTimeline.js';
+import { buildCastFromTimeline } from '../net/netTimeline.js';
 import {
   pendingQuickPlayStartRef,
   type RoomLobbySubView,
@@ -261,6 +261,7 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
             d().isNetworkGuestRef.current = room.hostId !== d().currentChar.id;
             d().isNetworkHostRef.current = room.hostId === d().currentChar.id;
             d().setWaitingQueueRoomId(null);
+            netClient.beginCombatInputEpoch();
             d().setupRaidUnitsRef.current(
               d().currentChar,
               tier,
@@ -351,7 +352,8 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
         const room = msg.payload as NetLobbyRoom;
         pendingQuickPlayStartRef.current = false;
         lastAppliedCombatSeqRef.current = 0;
-        netClient.clearReliableInputs();
+        // New dungeon visit → fresh cast-id epoch (leave/rejoin must not reuse old ids)
+        netClient.beginCombatInputEpoch();
         netClient.clearHostInputAckState();
         d().roomFacadeRef.current.upsertRoom(room);
         d().setActiveRoomId(room.id);
@@ -371,6 +373,18 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
           activeRoom: room,
         });
       }
+      if (msg.type === 'INPUT_ACK' && msg.payload) {
+        const body = msg.payload as {
+          acks?: Array<{ clientInputId: string; attempt: number }>;
+          ackedInputIds?: string[];
+        };
+        if (body.acks?.length) {
+          netClient.ackReliableInputs(body.acks);
+        } else {
+          // Legacy: id-only — stop retry, no RTT sample
+          netClient.ackReliableInputs(body.ackedInputIds);
+        }
+      }
       if (msg.type === 'COMBAT_STATE' && msg.payload && d().isNetworkGuestRef.current) {
         const snap = msg.payload as NetworkCombatSnapshot;
         // Room isolation: ignore snapshots from other rooms
@@ -378,7 +392,7 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
         if (snap.roomId && myRoom && snap.roomId !== myRoom) return;
         if (msg.roomId && myRoom && msg.roomId !== myRoom) return;
 
-        // 技能 ack：未回传则客人侧会重传；此处停掉已确认意图
+        // 兜底 ack（即时 INPUT_ACK 丢了时仍能停重传）
         netClient.ackReliableInputs(snap.ackedInputIds);
 
         // 全量状态快照：只接受更新的 seq（乱序旧包丢弃；中间丢包由后续快照补血量/位置）
@@ -501,24 +515,10 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
           });
         }
 
-        // Apply cast timelines to local player cast bar / companion casts
+        // Companion / boss cast bars from host timelines.
+        // Guest's OWN cast bar is owned locally (see runCombatTick) — do not overwrite/clear
+        // from snap.casts or the bar hitch-resets every COMBAT_STATE (~10Hz).
         const now = Date.now();
-        const myCast = (snap.casts || []).find((c) => c.unitId === myId && !c.interrupted);
-        if (myCast) {
-          const built = buildCastFromTimeline(myCast, now);
-          if (built) {
-            d().playerCastRef.current = built as any;
-            d().setPlayerCast(built as any);
-          } else {
-            d().playerCastRef.current = null;
-            d().setPlayerCast(null);
-          }
-        } else {
-          // Always clear when host has no active cast for me (avoid sticky / double-bar)
-          d().playerCastRef.current = null;
-          d().setPlayerCast(null);
-        }
-
         const companion: Record<string, { spellName: string; progress: number; spellId?: string }> = {};
         let bossCasting: {
           spellName: string;
@@ -550,18 +550,17 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
         }
         d().setCompanionCasts(companion);
         d().setGuestBossCasting(bossCasting);
-
-        if (myId) {
-          const gcd = gcdRemainingFromTimelines(snap.gcds, myId, now);
-          d().setPlayerGcdRemainingMs(gcd.remaining);
-          d().setPlayerGcdTotalMs(gcd.total);
-        }
+        // Own GCD/CD stay local — do not snap from host gcds/cooldowns (latency hitch).
       }
       if (msg.type === 'CAST_INTERRUPT' && msg.payload) {
         const body = msg.payload as { unitId: string; spellId?: string };
+        // Host-forced stop (reject / remote interrupt). Self ESC/MOVE already cleared locally.
         if (d().currentChar && body.unitId === d().currentChar.id) {
-          d().playerCastRef.current = null;
-          d().setPlayerCast(null);
+          const local = d().playerCastRef.current;
+          if (!body.spellId || !local || local.spellId === body.spellId) {
+            d().playerCastRef.current = null;
+            d().setPlayerCast(null);
+          }
         }
         d().setCompanionCasts((prev) => {
           const next = { ...prev };
@@ -680,6 +679,8 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
             d().setDungeonTier(tier);
             d().setSelectedDungeonId(body.room.dungeonId);
             d().setDungeonDifficulty(body.room.difficulty);
+            // Hot-swap into live run: new epoch so CAST ids won't hit host's old ring
+            netClient.beginCombatInputEpoch();
             d().setupRaidUnitsRef.current(
               d().currentChar,
               tier,
@@ -724,18 +725,22 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
         d().roomFacadeRef.current.upsertRoom(body.room);
         if (d().isNetworkHostRef.current || d().isNetworkGuestRef.current) {
           const engine = d().engineRef.current;
-          const unit = engine.getUnit(body.playerId);
-          if (unit) {
-            // Keep combat unit id; clear human flags so host AI can drive the seat
-            unit.isPlayer = false;
-            unit.isHumanControlled = false;
-            const aiMeta = body.room.members.find((m) => m.id === body.aiMemberId);
-            if (aiMeta) {
-              unit.name = aiMeta.name;
-              unit.classId = aiMeta.classId as any;
-              unit.spec = aiMeta.spec;
-              unit.role = aiMeta.role as any;
-            }
+          const aiMeta = body.room.members.find((m) => m.id === body.aiMemberId);
+          // Align engine unit id with room AI id so later hot-join can inherit the same seat
+          // (keeping playerId caused orphan mis-claim → missing member + wrong class/role).
+          const remapped = engine.remapUnitId(body.playerId, body.aiMemberId, {
+            isPlayer: false,
+            isHumanControlled: false,
+            ...(aiMeta
+              ? {
+                  name: aiMeta.name,
+                  classId: aiMeta.classId as any,
+                  spec: aiMeta.spec,
+                  role: aiMeta.role as any,
+                }
+              : {}),
+          });
+          if (remapped) {
             d().setFriendlyUnits([...engine.friendlyUnits]);
           }
         }

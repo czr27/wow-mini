@@ -8,10 +8,12 @@ import {
   AOE_FADE_MS,
   AOE_INSTANT_HOLD_MS,
   AOE_RGB,
+  AOE_OUTLINE_ALLY_RGB,
+  AOE_OUTLINE_ENEMY_RGB,
   resolveAoeAlphaByRadiusPx,
   resolveAoeTone,
   isEnemyActorUnit,
-  isSeekableHealGroundEffect,
+  isHealFillGroundEffect,
   type AoeVisualTone,
 } from '@cata-raid-sim/engine';
 import {
@@ -33,6 +35,8 @@ export interface AoeRingState {
   y: number;
   radius: number;
   tone: AoeVisualTone;
+  /** true → white outline; false → red outline (by caster side, not fill tone) */
+  friendlyCaster: boolean;
   baseAlpha: number;
   /** When the ring should start fading (performance.now()) */
   fadeAt: number;
@@ -136,6 +140,7 @@ export function createInstantRing(opts: {
   radius: number;
   tone: AoeVisualTone;
   baseAlpha: number;
+  friendlyCaster?: boolean;
   now?: number;
 }): AoeRingState {
   const now = opts.now ?? performance.now();
@@ -146,6 +151,7 @@ export function createInstantRing(opts: {
     y: opts.y,
     radius: opts.radius,
     tone: opts.tone,
+    friendlyCaster: opts.friendlyCaster !== false,
     baseAlpha: opts.baseAlpha,
     fadeAt,
     expireAt: fadeAt + AOE_FADE_MS,
@@ -170,6 +176,7 @@ export function createPersistentRing(opts: {
   tone: AoeVisualTone;
   baseAlpha: number;
   remainingMs: number;
+  friendlyCaster?: boolean;
   now?: number;
   fromX?: number;
   fromY?: number;
@@ -190,6 +197,7 @@ export function createPersistentRing(opts: {
     y: opts.y,
     radius: opts.radius,
     tone: opts.tone,
+    friendlyCaster: opts.friendlyCaster !== false,
     baseAlpha: opts.baseAlpha,
     fadeAt,
     expireAt: fadeAt + AOE_FADE_MS,
@@ -224,15 +232,14 @@ export function syncPersistentRingsFromGround(
     if (g.kind !== 'HEAL_ZONE' && g.kind !== 'DAMAGE_ZONE' && g.kind !== 'TOTEM') continue;
     liveIds.add(g.id);
     const owner = unitsById.get(g.ownerId);
-    const isHealCircle = isSeekableHealGroundEffect(g);
-    const tone = resolveAoeTone({
+    const isHealFill = isHealFillGroundEffect(g);
+    const friendlyCaster = !isEnemyActorUnit(owner);
+    // 填充只看分类：绿治疗 / 黄增益 / 红伤害；描边看敌我
+    const finalTone = resolveAoeTone({
       groundKind: g.kind,
       spellId: g.spellId,
-      isEnemyActor: isEnemyActorUnit(owner),
-      isHeal: isHealCircle,
+      isHeal: isHealFill,
     });
-    // Healing zones / healing totems always use HEAL green; ring fades when ground effect ends
-    const finalTone = isHealCircle ? 'HEAL' : tone;
     const baseAlpha = resolveAoeAlphaByRadiusPx(g.radius);
     const existing = byId.get(g.id);
     if (existing && existing.persistent) {
@@ -240,6 +247,7 @@ export function syncPersistentRingsFromGround(
       existing.landY = g.y;
       existing.targetRadius = g.radius;
       existing.tone = finalTone;
+      existing.friendlyCaster = friendlyCaster;
       existing.baseAlpha = baseAlpha;
       // Keep fadeAt in sync with remaining lifetime (don't restart fade early)
       const wantFade = now + Math.max(0, g.remainingMs);
@@ -263,6 +271,7 @@ export function syncPersistentRingsFromGround(
         y: g.y,
         radius: g.radius,
         tone: finalTone,
+        friendlyCaster,
         baseAlpha,
         remainingMs: g.remainingMs,
         now,
@@ -322,7 +331,7 @@ export function drawAoeRing(
   ctx: CanvasRenderingContext2D,
   ring: AoeRingState,
   now: number,
-  opts?: { whiteOutline?: boolean }
+  opts?: { heightShadow?: boolean }
 ): void {
   if (now >= ring.expireAt) return;
   const pose = resolveAoeRingPose(ring, now);
@@ -339,6 +348,33 @@ export function drawAoeRing(
   if (alpha <= 0.001) return;
 
   const [r, g, b] = toneRgb(ring.tone);
+  const outline = ring.friendlyCaster !== false ? AOE_OUTLINE_ALLY_RGB : AOE_OUTLINE_ENEMY_RGB;
+  const outlineA = Math.min(1, 0.55 + alpha * 0.45);
+
+  // Ground shadow under flying throw (land point, not lifted tip)
+  if (opts?.heightShadow && pose.throwing) {
+    const age = Math.max(0, now - ring.bornAt);
+    const throwMs = Math.max(1, ring.throwMs || 1);
+    const t = Math.min(1, age / throwMs);
+    const flight = sampleProjectileFlight(
+      ring.fromX,
+      ring.fromY,
+      ring.landX,
+      ring.landY,
+      t,
+      ring.flight || 'arc'
+    );
+    if (flight.lift > 2) {
+      const gx = ring.fromX + (ring.landX - ring.fromX) * t;
+      const gy = ring.fromY + (ring.landY - ring.fromY) * t;
+      const shadowT = Math.min(1, flight.lift / 80);
+      ctx.fillStyle = `rgba(0,0,0,${0.22 * shadowT})`;
+      ctx.beginPath();
+      ctx.ellipse(gx, gy, Math.max(5, rad * 0.55), Math.max(2.5, rad * 0.22), 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
   ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${alpha})`;
   ctx.beginPath();
   ctx.arc(pose.x, pose.y, rad, 0, Math.PI * 2);
@@ -352,15 +388,14 @@ export function drawAoeRing(
     ctx.beginPath();
     ctx.arc(pose.x, pose.y, seedR, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = `rgba(255, 255, 255, ${Math.min(0.7, seedA)})`;
+    ctx.strokeStyle = `rgba(${outline[0]}, ${outline[1]}, ${outline[2]}, ${Math.min(0.7, seedA)})`;
     ctx.lineWidth = 1.25;
     ctx.beginPath();
     ctx.arc(pose.x, pose.y, seedR, 0, Math.PI * 2);
     ctx.stroke();
-  }
-
-  if (opts?.whiteOutline && !pose.throwing) {
-    ctx.strokeStyle = `rgba(255, 255, 255, ${Math.min(1, 0.55 + alpha * 0.45)})`;
+  } else {
+    // 强制描边：友方白 / 敌方红
+    ctx.strokeStyle = `rgba(${outline[0]}, ${outline[1]}, ${outline[2]}, ${outlineA})`;
     ctx.lineWidth = 1.5;
     ctx.beginPath();
     ctx.arc(pose.x, pose.y, rad, 0, Math.PI * 2);
@@ -368,7 +403,7 @@ export function drawAoeRing(
   }
 }
 
-/** 锥形预警：与圆形光圈同一套半径→透明度规则；张开角/朝向由 Boss 设定 */
+/** 锥形预警：伤害类红填充；描边按施法者敌我（Boss 锥形 → 红边） */
 export function drawConeWarning(
   ctx: CanvasRenderingContext2D,
   effect: Pick<GroundEffect, 'x' | 'y' | 'radius'> & {
@@ -376,45 +411,28 @@ export function drawConeWarning(
     coneAngleRad?: number;
     colorHex?: string;
   },
-  opts?: { whiteOutline?: boolean }
+  opts?: { friendlyCaster?: boolean }
 ): void {
   const rad = Math.max(1, effect.radius);
   const alpha = resolveAoeAlphaByRadiusPx(rad);
   if (alpha <= 0.001) return;
   const facing = effect.facingRad ?? Math.PI;
   const coneAngle = effect.coneAngleRad ?? Math.PI / 3;
-  let r = AOE_RGB.ENEMY[0];
-  let g = AOE_RGB.ENEMY[1];
-  let b = AOE_RGB.ENEMY[2];
-  const hex = effect.colorHex?.replace('#', '');
-  if (hex && (hex.length === 6 || hex.length === 3)) {
-    const full =
-      hex.length === 3
-        ? hex
-            .split('')
-            .map((c) => c + c)
-            .join('')
-        : hex;
-    r = parseInt(full.slice(0, 2), 16);
-    g = parseInt(full.slice(2, 4), 16);
-    b = parseInt(full.slice(4, 6), 16);
-    if (![r, g, b].every((n) => Number.isFinite(n))) {
-      [r, g, b] = AOE_RGB.ENEMY;
-    }
-  }
+  // 分类：锥形预警一律伤害红（忽略 colorHex）
+  const [r, g, b] = AOE_RGB.ENEMY;
+  const outline = opts?.friendlyCaster ? AOE_OUTLINE_ALLY_RGB : AOE_OUTLINE_ENEMY_RGB;
+  const outlineA = Math.min(1, 0.55 + alpha * 0.45);
   ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${alpha})`;
   ctx.beginPath();
   ctx.moveTo(effect.x, effect.y);
   ctx.arc(effect.x, effect.y, rad, facing - coneAngle / 2, facing + coneAngle / 2);
   ctx.closePath();
   ctx.fill();
-  if (opts?.whiteOutline) {
-    ctx.strokeStyle = `rgba(255, 255, 255, ${Math.min(1, 0.55 + alpha * 0.45)})`;
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(effect.x, effect.y);
-    ctx.arc(effect.x, effect.y, rad, facing - coneAngle / 2, facing + coneAngle / 2);
-    ctx.closePath();
-    ctx.stroke();
-  }
+  ctx.strokeStyle = `rgba(${outline[0]}, ${outline[1]}, ${outline[2]}, ${outlineA})`;
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(effect.x, effect.y);
+  ctx.arc(effect.x, effect.y, rad, facing - coneAngle / 2, facing + coneAngle / 2);
+  ctx.closePath();
+  ctx.stroke();
 }

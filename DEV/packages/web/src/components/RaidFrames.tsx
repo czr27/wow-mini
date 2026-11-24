@@ -578,6 +578,10 @@ export const RaidFrames: React.FC<Props> = ({
 
   const frameUnitCount = squads.reduce((n, s) => n + s.length, 0);
   const isMultiSquad = is20Man || squads.length > 1;
+  const liveMembers = squads.flat();
+  const liveTanks = liveMembers.filter((u) => u.role === 'TANK').length;
+  const liveHealers = liveMembers.filter((u) => u.role === 'HEALER').length;
+  const liveDps = liveMembers.filter((u) => u.role === 'DPS').length;
 
   return (
     <div
@@ -604,7 +608,7 @@ export const RaidFrames: React.FC<Props> = ({
             {isMultiSquad ? `团队框架 (${frameUnitCount}人)` : '小队 1'}
           </span>
           <span className="text-gray-400 text-[10px] font-mono">
-            {isMultiSquad ? '2T · 4H · 14DPS' : '1T · 1H · 3DPS'}
+            {liveTanks}T · {liveHealers}H · {liveDps}DPS
           </span>
         </div>
 

@@ -213,10 +213,29 @@ export interface PlayerInputPayload {
   wipeVote?: WipeVoteChoice;
   skipTravelVote?: SkipTravelVoteChoice;
   /**
-   * 客人可靠意图 id：房主处理后经 COMBAT_STATE.ackedInputIds 回传；
-   * 未收到 ack 时客人可重传，房主按 id 幂等去重。
+   * 客人可靠意图 id：房主按 id 幂等去重；INPUT_ACK 回传 id+attempt 供 RTT。
+   * MOVE 等高频意图不带 id（fire-and-forget）。
    */
   clientInputId?: string;
+  /**
+   * 本包是该 id 的第几次发送（1=首发，重传递增）。
+   * INPUT_ACK 原样回传，客人用对应发出时刻算回路延迟。
+   */
+  clientInputAttempt?: number;
+}
+
+/** 单次发送的确认：必须带 attempt，不能只按 id 合并 */
+export interface InputAckEntry {
+  clientInputId: string;
+  /** Echo of the acked transmission's clientInputAttempt */
+  attempt: number;
+}
+
+/** Host→guest：轻量确认（按「哪次发送」区分，用于正确 RTT） */
+export interface InputAckPayload {
+  acks: InputAckEntry[];
+  /** @deprecated 仅兼容旧客户端；新路径用 acks */
+  ackedInputIds?: string[];
 }
 
 export type NetMessageType =
@@ -239,6 +258,7 @@ export type NetMessageType =
   | 'ROOM_START'
   | 'ROOM_ACTION'
   | 'PLAYER_INPUT'
+  | 'INPUT_ACK'
   | 'COMBAT_STATE'
   | 'MEMBER_LEFT'
   | 'MEMBER_REPLACE_AI'

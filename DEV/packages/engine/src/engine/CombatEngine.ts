@@ -471,6 +471,45 @@ export class CombatEngine {
     this.units.delete(id);
   }
 
+  /**
+   * Remap a friendly unit's id (combat leave → AI seat, or AI seat → rejoining human).
+   * Preserves HP/buffs/resources and rewrites threat source ids.
+   */
+  remapUnitId(
+    oldId: string,
+    newId: string,
+    patch?: Partial<Unit>
+  ): Unit | undefined {
+    const old = this.units.get(oldId);
+    if (!old) return undefined;
+    if (oldId === newId) {
+      if (patch) Object.assign(old, patch, { id: newId });
+      return old;
+    }
+    this.units.delete(oldId);
+    const next: Unit = {
+      ...old,
+      ...patch,
+      id: newId,
+      buffs: (old.buffs || []).map((b) => ({
+        ...b,
+        sourceUnitId: b.sourceUnitId === oldId ? newId : b.sourceUnitId,
+        targetUnitId: b.targetUnitId === oldId ? newId : b.targetUnitId,
+      })),
+      threatTable: (old.threatTable || []).map((t) => ({ ...t })),
+      resources: (old.resources || []).map((r) => ({ ...r })),
+      position: old.position ? { ...old.position } : old.position,
+      stats: old.stats ? { ...old.stats } : old.stats,
+      combatStats: old.combatStats ? { ...old.combatStats } : undefined,
+      runes: old.runes ? old.runes.map((r) => ({ ...r })) : undefined,
+    };
+    // Drop colliding newId if present (stale)
+    this.units.delete(newId);
+    this.units.set(newId, next);
+    this.threatManager?.remapSourceId(oldId, newId);
+    return next;
+  }
+
   getUnit(id: string): Unit | undefined {
     return this.units.get(id);
   }
@@ -1124,19 +1163,24 @@ export class CombatEngine {
               ? 40
               : (effect.groundRadius ?? (groundKind === 'TOTEM' ? 10 : 8));
             const radiusPx = yardsToPx(radiusYd);
+            const isLightwell = spell.id.includes('lightwell');
             this.effectsManager.addGroundEffect({
               id: `${spell.id}_${this.elapsedMs}`,
               kind: groundKind,
-              spellId: isHealingTide ? 'healing_tide' : spell.id,
+              spellId: isHealingTide
+                ? 'healing_tide'
+                : isLightwell
+                  ? 'lightwell'
+                  : spell.id,
               ownerId: casterId,
               x: target.position?.x ?? caster.position?.x ?? 0,
               y: target.position?.y ?? caster.position?.y ?? 0,
               radius: radiusPx,
-              colorHex: effect.groundColorHex ?? '#38BDF8',
-              remainingMs: durationMs || 10_000,
-              tickIntervalMs: tickIntervalMs || (isHealingTide ? 2_000 : 1_000),
+              colorHex: effect.groundColorHex ?? (isLightwell ? '#10B981' : '#38BDF8'),
+              remainingMs: durationMs || (isLightwell ? 180_000 : 10_000),
+              tickIntervalMs: tickIntervalMs || (isHealingTide || isLightwell ? 2_000 : 1_000),
               tickElapsedMs: 0,
-              tickValue: baseValue || (isHealingTide ? 5200 : 0),
+              tickValue: baseValue || (isHealingTide ? 5200 : isLightwell ? 2800 : 0),
             });
           }
           break;
