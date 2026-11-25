@@ -33,8 +33,8 @@ describe('combatSfx', () => {
     const bossGain = computeEffectiveGain('boss', 0.3, { x: 120, y: 100 }, listener);
     const otherGain = computeEffectiveGain('other', 0.3, { x: 120, y: 100 }, listener);
 
-    assert.equal(selfGain, 0.6);
-    assert.ok(bossGain > otherGain * 2.5, 'boss SFX should be much louder than other players');
+    assert.equal(selfGain, 0.48);
+    assert.ok(bossGain > otherGain * 5, 'boss SFX should be much louder than other players');
   });
 
   it('computes stereo pan clamped to [-0.75, 0.75]', () => {

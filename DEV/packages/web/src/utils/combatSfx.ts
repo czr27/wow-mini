@@ -31,7 +31,7 @@ const MAX_HEAR_DIST_PX = 560; // >= 70 yards: silent
 const ROLE_WEIGHT: Record<SfxActorRole, number> = {
   self: 1.0,
   boss: 0.95,
-  other: 0.28,
+  other: 0.112, // -60% from 0.28 (0.28 * 0.40) to soften non-boss & non-self actions
 };
 
 let cachedVolume: number | null = null;
@@ -114,8 +114,8 @@ export function computeEffectiveGain(
   if (masterVol <= 0.001) return 0;
   const distFactor = role === 'self' ? 1.0 : computeDistanceAttenuation(actorPos, listenerPos);
   if (distFactor <= 0.001) return 0;
-  // 2x gain boost so default 30% feels punchy and audible
-  return Math.min(1.0, masterVol * 2.0 * ROLE_WEIGHT[role] * distFactor);
+  // 1.6x gain multiplier (2.0 - 20% = 1.6) for balanced combat audio
+  return Math.min(1.0, masterVol * 1.6 * ROLE_WEIGHT[role] * distFactor);
 }
 
 export function inferSpellSchool(spellId?: string, spellName?: string): SfxSchool {
