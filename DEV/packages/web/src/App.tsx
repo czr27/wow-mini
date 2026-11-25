@@ -251,7 +251,12 @@ export function App() {
   const pushDbmAlerts = useCallback((incoming: DbmAlert[]) => {
     if (!incoming || incoming.length === 0) return;
     const now = Date.now();
-    let voicePhrase: string | null = null;
+    // React 18 defers setState updater callbacks, so resolve voicePhrase synchronously from incoming
+    const lastIncoming = incoming[incoming.length - 1];
+    const voicePhrase = (lastIncoming?.voiceText || lastIncoming?.advice || '').trim();
+    if (dbmVoiceEnabledRef.current && voicePhrase) {
+      speakDbmVoice(voicePhrase);
+    }
     setDbmAlerts((prev) => {
       const alive = prev.filter((a) => now - a.atMs < (a.ttlMs || 3500));
       const seen = new Set(alive.map((a) => a.id));
@@ -264,18 +269,13 @@ export function App() {
           const replaceIdx = next.findIndex((a) => a.replaceKey === item.replaceKey);
           if (replaceIdx >= 0) {
             next[replaceIdx] = stamped;
-            voicePhrase = item.voiceText || item.advice;
             continue;
           }
         }
         next.push(stamped);
-        voicePhrase = item.voiceText || item.advice;
       }
       return next.slice(-12);
     });
-    if (dbmVoiceEnabledRef.current && voicePhrase) {
-      speakDbmVoice(voicePhrase);
-    }
   }, []);
   const [customSlotLayout, setCustomSlotLayout] = useState<ActionSlot[] | null>(null);
   /** Which char+spec `customSlotLayout` belongs to — prevents stale skills after character switch. */

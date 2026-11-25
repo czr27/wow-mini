@@ -633,303 +633,232 @@ function drawLordGodfrey(ctx: CanvasRenderingContext2D, boss: Unit, tickCount: n
   drawEightDirLayers(pose, { back: drawBack, core: drawCore, front: drawFront });
 }
 
-// ── Dragon Soul Boss Sub-renderers ──────────────────────────────────────────
+// ── Dragon Soul Boss Sub-renderers (Cyber/Neon × WoW) ───────────────────────
 
 function drawMorchok(ctx: CanvasRenderingContext2D, tickCount: number) {
-  // Colossal Jagged Obsidian Earth Elemental with Resonating Crystals
-  ctx.fillStyle = '#292524';
-  ctx.fillRect(-30, -32, 60, 64);
-  ctx.fillStyle = '#44403c';
-  ctx.fillRect(-24, -28, 48, 20);
-  // Resonating Crystal Spikes on shoulders
-  ctx.fillStyle = '#d97706';
-  ctx.beginPath();
-  ctx.moveTo(-28, -25);
-  ctx.lineTo(-44, -55);
-  ctx.lineTo(-20, -35);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.moveTo(28, -25);
-  ctx.lineTo(44, -55);
-  ctx.lineTo(20, -35);
-  ctx.fill();
-  // Glowing amber crystal facets
-  ctx.fillStyle = '#fbbf24';
-  ctx.fillRect(-12, -15, 24, 10);
-  ctx.fillRect(-6, 2, 12, 12);
-  // Heavy Stone Head
-  ctx.fillStyle = '#1c1917';
-  ctx.beginPath();
-  ctx.arc(0, -42, 16, 0, Math.PI * 2);
-  ctx.fill();
-  // Glowing Magma Fissure Eyes — eight-dir bias
-  drawFacingEyePair(ctx, '#f59e0b', { y: -44, size: 3.5, halfGap: 5.5, look: 'glow' });
-  // Floating Earth debris
+  const pose = getActiveFacingPose();
   const floatY = Math.sin(tickCount * 0.1) * 3;
-  ctx.fillStyle = '#78716c';
-  ctx.fillRect(-38, -10 + floatY, 8, 8);
-  ctx.fillRect(30, 5 - floatY, 8, 8);
+  const drawBack = () => {
+    if (isFacingBack(pose)) {
+      drawNeonGlowLine(ctx, 0, -28, 0, 22, 3, '#F59E0B', 0.9);
+      drawNeonGlowLine(ctx, -14, -14, 14, -14, 2, '#F59E0B', 0.8);
+    }
+    drawCyberBox(ctx, -38, -10 + floatY, 8, 8, '#57534e', NEON_INK, '#F59E0B', 1.2);
+    drawCyberBox(ctx, 30, 5 - floatY, 8, 8, '#57534e', NEON_INK, '#F59E0B', 1.2);
+  };
+  const drawCore = () => {
+    drawCyberBox(ctx, -30, -32, 60, 64, '#1c1917', NEON_INK, '#F59E0B', 1.8);
+    drawCyberBox(ctx, -24, -28, 48, 20, '#292524', NEON_INK, '#FBBF24', 1.5);
+    // 晶簇双肩
+    ctx.fillStyle = NEON_INK;
+    ctx.beginPath();
+    ctx.moveTo(-28, -25); ctx.lineTo(-46, -57); ctx.lineTo(-18, -35); ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(28, -25); ctx.lineTo(46, -57); ctx.lineTo(18, -35); ctx.fill();
+    drawNeonGlowLine(ctx, -28, -27, -43, -53, 3.2, '#F59E0B', 1);
+    drawNeonGlowLine(ctx, 28, -27, 43, -53, 3.2, '#F59E0B', 1);
+    drawNeonGlowRect(ctx, -12, -15, 24, 9, '#FBBF24', 0.95);
+    drawNeonGlowRect(ctx, -6, 2, 12, 12, '#F59E0B', 0.95);
+    ctx.fillStyle = NEON_INK;
+    ctx.beginPath(); ctx.arc(0, -42, 17, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#292524';
+    ctx.beginPath(); ctx.arc(0, -42, 15.5, 0, Math.PI * 2); ctx.fill();
+    drawFacingEyePair(ctx, '#FBBF24', { y: -44, size: 3.6, halfGap: 5.5, look: 'glow' });
+  };
+  drawEightDirLayers(pose, { back: drawBack, core: drawCore });
 }
 
 function drawZonozz(ctx: CanvasRenderingContext2D, tickCount: number) {
-  // Warlord Zon'ozz - C'Thun Faceless Behemoth
-  ctx.fillStyle = '#1e1b4b';
-  ctx.fillRect(-28, -26, 56, 58);
-  // Writhing Tentacles
-  ctx.strokeStyle = '#4338ca';
-  ctx.lineWidth = 5;
-  ctx.beginPath();
+  const pose = getActiveFacingPose();
   const sway1 = Math.sin(tickCount * 0.1) * 8;
   const sway2 = Math.cos(tickCount * 0.1) * 8;
-  ctx.moveTo(-20, 20);
-  ctx.quadraticCurveTo(-45 + sway1, 35, -35, 45);
-  ctx.moveTo(20, 20);
-  ctx.quadraticCurveTo(45 - sway2, 35, 35, 45);
-  ctx.stroke();
-  // Abyssal Chitinous Mantle
-  ctx.fillStyle = '#312e81';
-  ctx.fillRect(-22, -22, 44, 20);
-  // Giant Central Void Eyeball — iris tracks facing; fades on back
-  {
-    const pose = getActiveFacingPose();
+  const drawBack = () => {
+    drawNeonGlowLine(ctx, -20, 20, -35 + sway1 * 0.5, 45, 4.5, '#7C3AED', 0.9, '#C084FC');
+    drawNeonGlowLine(ctx, 20, 20, 35 - sway2 * 0.5, 45, 4.5, '#7C3AED', 0.9, '#C084FC');
+    if (isFacingBack(pose)) {
+      drawNeonGlowCircle(ctx, 0, -10, 8, '#C084FC', 0.8);
+    }
+  };
+  const drawCore = () => {
+    drawCyberBox(ctx, -28, -26, 56, 58, '#130f2e', NEON_INK, '#C084FC', 1.8);
+    drawCyberBox(ctx, -22, -22, 44, 20, '#2e1065', NEON_INK, '#A855F7', 1.5);
     const a0 = ctx.globalAlpha;
-    const fa = pose.showFace ? pose.faceAlpha : 0.12;
-    ctx.globalAlpha = a0 * Math.max(0.18, fa);
+    const fa = pose.showFace ? pose.faceAlpha : 0.14;
+    ctx.globalAlpha = a0 * Math.max(0.2, fa);
+    ctx.fillStyle = NEON_INK;
+    ctx.beginPath(); ctx.arc(0, -35, 19.5, 0, Math.PI * 2); ctx.fill();
     ctx.fillStyle = '#e0e7ff';
-    ctx.beginPath();
-    ctx.arc(0, -35, 18, 0, Math.PI * 2);
-    ctx.fill();
+    ctx.beginPath(); ctx.arc(0, -35, 17.5, 0, Math.PI * 2); ctx.fill();
     const irisX = pose.eyeBiasX * 1.1 + Math.sin(tickCount * 0.05) * 2;
-    ctx.fillStyle = '#7c2d12';
-    ctx.beginPath();
-    ctx.arc(irisX, -35, 10, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = '#ef4444';
-    ctx.beginPath();
-    ctx.arc(irisX, -35, 5, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.fillStyle = '#000000';
-    ctx.beginPath();
-    ctx.arc(irisX, -35, 2.5, 0, Math.PI * 2);
-    ctx.fill();
+    drawNeonGlowCircle(ctx, irisX, -35, 9, '#FF1744', 1, '#090B14');
     ctx.globalAlpha = a0;
-    // Side satellite hollow eyes
-    drawFacingEyePair(ctx, '#c084fc', { y: -48, size: 2.4, halfGap: 14, look: 'hollow' });
-  }
+    drawFacingEyePair(ctx, '#E879F9', { y: -48, size: 2.6, halfGap: 14, look: 'hollow' });
+  };
+  drawEightDirLayers(pose, { back: drawBack, core: drawCore });
 }
 
 function drawYorsahj(ctx: CanvasRenderingContext2D, tickCount: number) {
-  // Yor'sahj the Unsleeping - Aberrant Void Ooze
-  ctx.fillStyle = '#0f172a';
-  ctx.fillRect(-26, -26, 52, 56);
-  // Pulsing Ooze Globs (Black, Red, Green)
+  const pose = getActiveFacingPose();
   const pulse = Math.sin(tickCount * 0.12) * 3;
-  ctx.fillStyle = '#16a34a'; // Acid green
-  ctx.beginPath();
-  ctx.arc(-16, -10 + pulse, 12, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = '#dc2626'; // Deep blood
-  ctx.beginPath();
-  ctx.arc(16, -10 - pulse, 12, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = '#7c3aed'; // Shadow globule
-  ctx.beginPath();
-  ctx.arc(0, 10 + pulse, 14, 0, Math.PI * 2);
-  ctx.fill();
-  // Maw with jagged eyes — upper pair follows facing; lower stays centered
-  ctx.fillStyle = '#09090b';
-  ctx.beginPath();
-  ctx.arc(0, -38, 15, 0, Math.PI * 2);
-  ctx.fill();
-  drawFacingEyePair(ctx, '#facc15', { y: -42, size: 3.2, halfGap: 6, look: 'cross' });
-  ctx.fillStyle = '#facc15';
-  ctx.fillRect(-2, -34, 4, 3);
+  const drawBack = () => {
+    if (isFacingBack(pose)) {
+      drawNeonGlowCircle(ctx, 0, -6, 12, '#A855F7', 0.75);
+    }
+  };
+  const drawCore = () => {
+    drawCyberBox(ctx, -26, -26, 52, 56, '#090d1a', NEON_INK, '#A855F7', 1.8);
+    drawNeonGlowCircle(ctx, -16, -10 + pulse, 10.5, '#39FF14', 0.95);
+    drawNeonGlowCircle(ctx, 16, -10 - pulse, 10.5, '#FF2A55', 0.95);
+    drawNeonGlowCircle(ctx, 0, 10 + pulse, 12, '#A855F7', 0.95);
+    ctx.fillStyle = NEON_INK;
+    ctx.beginPath(); ctx.arc(0, -38, 16, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#18181b';
+    ctx.beginPath(); ctx.arc(0, -38, 14.5, 0, Math.PI * 2); ctx.fill();
+    drawFacingEyePair(ctx, '#FACC15', { y: -42, size: 3.4, halfGap: 6, look: 'cross' });
+  };
+  drawEightDirLayers(pose, { back: drawBack, core: drawCore });
 }
 
 function drawHagara(ctx: CanvasRenderingContext2D, tickCount: number) {
-  // Hagara the Stormbinder - Ice & Lightning Shaman
-  ctx.fillStyle = '#1e293b';
-  ctx.fillRect(-20, -28, 40, 56);
-  // Elemental Mantle
-  ctx.fillStyle = '#0369a1';
-  ctx.fillRect(-16, -24, 32, 14);
-  // Shamanic Headdress
-  ctx.fillStyle = '#334155';
-  ctx.beginPath();
-  ctx.arc(0, -38, 13, 0, Math.PI * 2);
-  ctx.fill();
-  // Lightning eyes — eight-dir bias
-  drawFacingEyePair(ctx, '#38bdf8', { y: -40, size: 3, halfGap: 4.5, look: 'rune' });
-  // Left Hand: Lightning Spark Orb
-  ctx.fillStyle = '#fde047';
-  ctx.beginPath();
-  ctx.arc(-28, -12, 7 + Math.sin(tickCount * 0.2) * 2, 0, Math.PI * 2);
-  ctx.fill();
-  // Right Hand: Glacial Ice Spear
-  ctx.fillStyle = '#bae6fd';
-  ctx.fillRect(24, -36, 4, 42);
-  ctx.fillStyle = '#38bdf8';
-  ctx.beginPath();
-  ctx.moveTo(26, -46);
-  ctx.lineTo(21, -34);
-  ctx.lineTo(31, -34);
-  ctx.fill();
+  const pose = getActiveFacingPose();
+  const wSide = pose.weaponSide;
+  const hBias = facingHandBiasX(pose);
+  const drawBack = () => {
+    drawCyberBox(ctx, -22, -26, 44, 54, '#0c2747', NEON_INK, '#00F0FF', 1.6);
+  };
+  const drawCore = () => {
+    drawCyberBox(ctx, -20, -28, 40, 56, '#0f172a', NEON_INK, '#00F0FF', 1.6);
+    drawCyberBox(ctx, -16, -24, 32, 14, '#0369a1', NEON_INK, '#38BDF8', 1.5);
+    ctx.fillStyle = NEON_INK;
+    ctx.beginPath(); ctx.arc(0, -38, 14, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#1e293b';
+    ctx.beginPath(); ctx.arc(0, -38, 12.6, 0, Math.PI * 2); ctx.fill();
+    drawFacingEyePair(ctx, '#00F0FF', { y: -40, size: 3.2, halfGap: 4.5, look: 'rune' });
+  };
+  const drawFront = () => {
+    drawNeonGlowCircle(ctx, -28 * wSide + hBias, -12, 7 + Math.sin(tickCount * 0.2) * 1.8, '#FFE600', 1);
+    const sx = 26 * wSide + hBias;
+    drawCyberBox(ctx, sx - 2, -36, 4, 42, '#bae6fd', NEON_INK, '#00F0FF', 1.3);
+    drawNeonGlowCircle(ctx, sx, -40, 4.5, '#00F0FF', 1);
+  };
+  drawEightDirLayers(pose, { back: drawBack, core: drawCore, front: drawFront });
 }
 
 function drawUltraxion(ctx: CanvasRenderingContext2D, tickCount: number) {
-  // Ultraxion - Twilight Dragon
+  const pose = getActiveFacingPose();
   const wingFlap = Math.sin(tickCount * 0.15) * 10;
-  ctx.fillStyle = 'rgba(88, 28, 135, 0.9)';
-  ctx.beginPath();
-  ctx.moveTo(-15, -20);
-  ctx.quadraticCurveTo(-65 + wingFlap, -65, -80 + wingFlap, -20);
-  ctx.quadraticCurveTo(-55 + wingFlap, 15, -15, 0);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.moveTo(15, -20);
-  ctx.quadraticCurveTo(65 - wingFlap, -65, 80 - wingFlap, -20);
-  ctx.quadraticCurveTo(55 - wingFlap, 15, 15, 0);
-  ctx.fill();
-  // Dragon Scale Body
-  ctx.fillStyle = '#2e1065';
-  ctx.fillRect(-22, -28, 44, 58);
-  ctx.fillStyle = '#4c1d95';
-  ctx.fillRect(-16, -24, 32, 18);
-  // Draconic Head with Horns
-  ctx.fillStyle = '#1e1b4b';
-  ctx.beginPath();
-  ctx.arc(0, -42, 16, 0, Math.PI * 2);
-  ctx.fill();
-  // Swept Obsidian Horns
-  ctx.fillStyle = '#0f172a';
-  ctx.beginPath();
-  ctx.moveTo(-8, -50);
-  ctx.lineTo(-24, -68);
-  ctx.lineTo(-14, -46);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.moveTo(8, -50);
-  ctx.lineTo(24, -68);
-  ctx.lineTo(14, -46);
-  ctx.fill();
-  // Glowing Twilight Eyes — eight-dir bias
-  drawFacingEyePair(ctx, '#c084fc', { y: -44, size: 3.2, halfGap: 6, look: 'toxic' });
-  // Unstable Twilight Sparks
-  ctx.fillStyle = '#f43f5e';
-  const spark = (tickCount * 3) % 40;
-  ctx.fillRect(-20 + spark, -20 + Math.sin(spark) * 8, 3, 3);
+  const drawBack = () => {
+    ctx.fillStyle = NEON_INK;
+    ctx.beginPath();
+    ctx.moveTo(-14, -22); ctx.quadraticCurveTo(-68 + wingFlap, -68, -84 + wingFlap, -20);
+    ctx.quadraticCurveTo(-56 + wingFlap, 18, -14, 2); ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(14, -22); ctx.quadraticCurveTo(68 - wingFlap, -68, 84 - wingFlap, -20);
+    ctx.quadraticCurveTo(56 - wingFlap, 18, 14, 2); ctx.fill();
+
+    ctx.fillStyle = 'rgba(88, 28, 135, 0.9)';
+    ctx.beginPath();
+    ctx.moveTo(-15, -20); ctx.quadraticCurveTo(-65 + wingFlap, -65, -80 + wingFlap, -20);
+    ctx.quadraticCurveTo(-55 + wingFlap, 15, -15, 0); ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(15, -20); ctx.quadraticCurveTo(65 - wingFlap, -65, 80 - wingFlap, -20);
+    ctx.quadraticCurveTo(55 - wingFlap, 15, 15, 0); ctx.fill();
+
+    drawNeonGlowLine(ctx, -15, -20, -68 + wingFlap, -28, 2.4, '#E879F9', 0.95);
+    drawNeonGlowLine(ctx, 15, -20, 68 - wingFlap, -28, 2.4, '#E879F9', 0.95);
+  };
+  const drawCore = () => {
+    drawCyberBox(ctx, -22, -28, 44, 58, '#1e0b38', NEON_INK, '#E879F9', 1.8);
+    drawCyberBox(ctx, -16, -24, 32, 18, '#3b0764', NEON_INK, '#C084FC', 1.4);
+    drawNeonGlowCircle(ctx, 0, -10, 6.5, '#E879F9', 1);
+    ctx.fillStyle = NEON_INK;
+    ctx.beginPath(); ctx.arc(0, -42, 17, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#1e1b4b';
+    ctx.beginPath(); ctx.arc(0, -42, 15.5, 0, Math.PI * 2); ctx.fill();
+    drawNeonGlowLine(ctx, -10, -48, -24, -68, 3, '#E879F9', 0.9, '#090B14');
+    drawNeonGlowLine(ctx, 10, -48, 24, -68, 3, '#E879F9', 0.9, '#090B14');
+    drawFacingEyePair(ctx, '#E879F9', { y: -44, size: 3.4, halfGap: 6, look: 'toxic' });
+  };
+  drawEightDirLayers(pose, { back: drawBack, core: drawCore });
 }
 
 function drawWarmasterBlackhorn(ctx: CanvasRenderingContext2D, tickCount: number) {
-  // Warmaster Blackhorn - Armored Tauren Warlord
-  ctx.fillStyle = '#3f3f46';
-  ctx.fillRect(-26, -30, 52, 60);
-  ctx.fillStyle = '#71717a';
-  ctx.fillRect(-20, -26, 40, 16);
-  // Massive Horned Tauren Head
-  ctx.fillStyle = '#27272a';
-  ctx.beginPath();
-  ctx.arc(0, -42, 16, 0, Math.PI * 2);
-  ctx.fill();
-  // Great Horns
-  ctx.fillStyle = '#d4d4d8';
-  ctx.beginPath();
-  ctx.moveTo(-10, -48);
-  ctx.quadraticCurveTo(-36, -65, -34, -40);
-  ctx.lineTo(-12, -42);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.moveTo(10, -48);
-  ctx.quadraticCurveTo(36, -65, 34, -40);
-  ctx.lineTo(12, -42);
-  ctx.fill();
-  // Red War Eyes — eight-dir bias
-  drawFacingEyePair(ctx, '#dc2626', { y: -44, size: 3.2, halfGap: 5, look: 'hollow' });
-  // Spiked Halberd
-  ctx.fillStyle = '#a1a1aa';
-  ctx.fillRect(26, -45, 4, 60);
-  ctx.fillStyle = '#ef4444';
-  ctx.fillRect(22, -48, 12, 10);
+  const pose = getActiveFacingPose();
+  const wSide = pose.weaponSide;
+  const hBias = facingHandBiasX(pose);
+  const drawBack = () => {
+    drawCyberBox(ctx, -28, -28, 56, 56, '#27272a', NEON_INK, '#FF5500', 1.6);
+  };
+  const drawCore = () => {
+    drawCyberBox(ctx, -26, -30, 52, 60, '#1f2937', NEON_INK, '#FF5500', 1.8);
+    drawCyberBox(ctx, -20, -26, 40, 16, '#3f3f46', NEON_INK, '#FACC15', 1.4);
+    ctx.fillStyle = NEON_INK;
+    ctx.beginPath(); ctx.arc(0, -42, 17, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#27272a';
+    ctx.beginPath(); ctx.arc(0, -42, 15.5, 0, Math.PI * 2); ctx.fill();
+    drawNeonGlowLine(ctx, -12, -46, -34, -44, 3.5, '#e2e8f0', 0.7, null);
+    drawNeonGlowLine(ctx, 12, -46, 34, -44, 3.5, '#e2e8f0', 0.7, null);
+    drawFacingEyePair(ctx, '#FF2A55', { y: -44, size: 3.4, halfGap: 5, look: 'hollow' });
+  };
+  const drawFront = () => {
+    const hx = 28 * wSide + hBias;
+    drawCyberBox(ctx, hx - 2, -45, 4, 62, '#94a3b8', NEON_INK);
+    drawCyberBox(ctx, hx - 7, -49, 14, 11, '#FF2A55', NEON_INK, '#FFE600', 1.5);
+    const sx = -28 * wSide + hBias;
+    drawCyberBox(ctx, sx - 6, -14, 12, 34, '#3f3f46', NEON_INK, '#FF5500', 1.6);
+  };
+  drawEightDirLayers(pose, { back: drawBack, core: drawCore, front: drawFront });
 }
 
 function drawSpineOfDeathwing(ctx: CanvasRenderingContext2D, tickCount: number) {
-  // Spine of Deathwing - Elementium Plate section with burning tendons
-  ctx.fillStyle = '#1c1917';
-  ctx.fillRect(-32, -32, 64, 64);
-  // Armor Plate Rivets
-  ctx.fillStyle = '#44403c';
-  ctx.fillRect(-28, -28, 56, 12);
-  ctx.fillRect(-28, 16, 56, 12);
-  // Molten Lava Core Fissure
-  ctx.fillStyle = '#ea580c';
-  ctx.fillRect(-8, -26, 16, 52);
-  ctx.fillStyle = '#facc15';
-  ctx.fillRect(-4, -20, 8, 40);
-  // Burning Tendon Erupting
+  const pose = getActiveFacingPose();
   const sway = Math.sin(tickCount * 0.18) * 6;
-  ctx.fillStyle = '#dc2626';
-  ctx.beginPath();
-  ctx.moveTo(-6, -10);
-  ctx.quadraticCurveTo(-20 + sway, -45, 0 + sway, -55);
-  ctx.quadraticCurveTo(20 + sway, -45, 6, -10);
-  ctx.fill();
-  // Floating Cinders
-  ctx.fillStyle = '#f97316';
-  for (let i = 0; i < 4; i++) {
-    const cy = -30 - ((tickCount * 2 + i * 12) % 35);
-    ctx.fillRect(-15 + i * 10, cy, 3, 3);
+  drawCyberBox(ctx, -32, -32, 64, 64, '#141210', NEON_INK, '#FF6B00', 2);
+  drawCyberBox(ctx, -28, -28, 56, 12, '#292524', NEON_INK);
+  drawCyberBox(ctx, -28, 16, 56, 12, '#292524', NEON_INK);
+  drawNeonGlowRect(ctx, -8, -26, 16, 52, '#FF6B00', 1, '#FDE047');
+  drawNeonGlowLine(ctx, 0, -10, sway, -55, 6, '#FF2A55', 0.95, '#FACC15');
+  drawFacingEyePair(ctx, '#FFE047', { y: -6, size: 3.6, halfGap: 11, look: 'glow' });
+  if (isFacingBack(pose)) {
+    drawNeonGlowRect(ctx, -18, -20, 36, 40, '#FF6B00', 0.35, null);
   }
-  // Molten armor "eyes" along the fissure
-  drawFacingEyePair(ctx, '#facc15', { y: -6, size: 3.4, halfGap: 11, look: 'glow' });
 }
 
 function drawMadnessOfDeathwing(ctx: CanvasRenderingContext2D, tickCount: number) {
-  // Madness of Deathwing - Colossal Molten Corrupted Dragon Head & Elementium Jaw
+  const pose = getActiveFacingPose();
   const jawDrop = Math.sin(tickCount * 0.1) * 4;
-  // Molten Wings in background
-  ctx.fillStyle = 'rgba(185, 28, 28, 0.85)';
-  ctx.beginPath();
-  ctx.moveTo(-20, -25);
-  ctx.quadraticCurveTo(-75, -65, -85, -15);
-  ctx.quadraticCurveTo(-60, 20, -15, 0);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.moveTo(20, -25);
-  ctx.quadraticCurveTo(75, -65, 85, -15);
-  ctx.quadraticCurveTo(60, 20, 15, 0);
-  ctx.fill();
-  // Elementium Plated Neck & Body
-  ctx.fillStyle = '#1c1917';
-  ctx.fillRect(-28, -25, 56, 58);
-  // Molten Lava Fissures
-  ctx.fillStyle = '#ea580c';
-  ctx.fillRect(-6, -20, 12, 45);
-  ctx.fillStyle = '#facc15';
-  ctx.fillRect(-3, -15, 6, 35);
-  // Great Dragon Head
-  ctx.fillStyle = '#292524';
-  ctx.beginPath();
-  ctx.arc(0, -45, 20, 0, Math.PI * 2);
-  ctx.fill();
-  // Great Horns of the Destroyer
-  ctx.fillStyle = '#0c0a09';
-  ctx.beginPath();
-  ctx.moveTo(-10, -55);
-  ctx.lineTo(-30, -78);
-  ctx.lineTo(-16, -48);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.moveTo(10, -55);
-  ctx.lineTo(30, -78);
-  ctx.lineTo(16, -48);
-  ctx.fill();
-  // Elementium Bolted Lower Jaw
-  ctx.fillStyle = '#57534e';
-  ctx.fillRect(-16, -34 + jawDrop, 32, 14);
-  ctx.fillStyle = '#ea580c';
-  ctx.fillRect(-12, -30 + jawDrop, 24, 6); // Fire breathing maw
-  // Blazing Golden Lava Eyes — eight-dir bias
-  drawFacingEyePair(ctx, '#fde047', { y: -48, size: 4, halfGap: 8, look: 'glow' });
+  const drawBack = () => {
+    ctx.fillStyle = NEON_INK;
+    ctx.beginPath();
+    ctx.moveTo(-20, -25); ctx.quadraticCurveTo(-78, -68, -88, -15);
+    ctx.quadraticCurveTo(-60, 22, -15, 0); ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(20, -25); ctx.quadraticCurveTo(78, -68, 88, -15);
+    ctx.quadraticCurveTo(60, 22, 15, 0); ctx.fill();
+    ctx.fillStyle = 'rgba(185, 28, 28, 0.88)';
+    ctx.beginPath();
+    ctx.moveTo(-20, -25); ctx.quadraticCurveTo(-75, -65, -85, -15);
+    ctx.quadraticCurveTo(-60, 20, -15, 0); ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(20, -25); ctx.quadraticCurveTo(75, -65, 85, -15);
+    ctx.quadraticCurveTo(60, 20, 15, 0); ctx.fill();
+    drawNeonGlowLine(ctx, -20, -20, -76, -24, 2.5, '#FF6B00', 1, '#FFE047');
+    drawNeonGlowLine(ctx, 20, -20, 76, -24, 2.5, '#FF6B00', 1, '#FFE047');
+  };
+  const drawCore = () => {
+    drawCyberBox(ctx, -28, -25, 56, 58, '#141210', NEON_INK, '#FF6B00', 2);
+    drawNeonGlowRect(ctx, -6, -20, 12, 45, '#FF6B00', 1, '#FFE047');
+    ctx.fillStyle = NEON_INK;
+    ctx.beginPath(); ctx.arc(0, -45, 21.5, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#292524';
+    ctx.beginPath(); ctx.arc(0, -45, 20, 0, Math.PI * 2); ctx.fill();
+    drawNeonGlowLine(ctx, -12, -55, -30, -78, 4, '#FF6B00', 0.9, '#090B14');
+    drawNeonGlowLine(ctx, 12, -55, 30, -78, 4, '#FF6B00', 0.9, '#090B14');
+    drawCyberBox(ctx, -16, -34 + jawDrop, 32, 14, '#57534e', NEON_INK, '#94a3b8', 1.4);
+    drawNeonGlowRect(ctx, -12, -30 + jawDrop, 24, 6, '#FF6B00', 1, '#FFE047');
+    drawFacingEyePair(ctx, '#FFE047', { y: -48, size: 4.2, halfGap: 8, look: 'glow' });
+  };
+  drawEightDirLayers(pose, { back: drawBack, core: drawCore });
 }
 
 function drawBossModel(
@@ -982,10 +911,12 @@ function drawBossModel(
   }
 
   const bId = (bossUnit.id || '').toLowerCase();
-  const sfkIds = new Set(['ashbury', 'silverlaine', 'springvale', 'walden', 'godfrey']);
-  const bossOpts: BossEightDirOpts | undefined = sfkIds.has(bId)
-    ? { hideHands: true, hideMouth: true, shoeColor: NEON_INK, backShadeAlpha: 0.08 }
-    : undefined;
+  const bossOpts: BossEightDirOpts = {
+    hideHands: true,
+    hideMouth: true,
+    shoeColor: NEON_INK,
+    backShadeAlpha: 0.08,
+  };
 
   // 连续朝向：肩宽/深度/五官；铭牌与施法条不受姿态变换影响
   withBossEightDirFacing(ctx, facingRad, () => {
@@ -4929,12 +4860,9 @@ export const CombatCanvas: React.FC<Props> = ({
       const unitsById = new Map<string, Unit>();
       for (const u of units) unitsById.set(u.id, u);
       if (bossUnit) unitsById.set(bossUnit.id, bossUnit);
-      const livingAdds =
-        runPhase !== 'TRAVEL_RECOVERY'
-          ? enemyUnitsRef.current.filter(
-              (e) => (!bossUnit || e.id !== bossUnit.id) && (e.isAlive ?? e.alive) && e.hp > 0
-            )
-          : [];
+      const livingAdds = enemyUnitsRef.current.filter(
+        (e) => (!bossUnit || e.id !== bossUnit.id) && (e.isAlive ?? e.alive) && e.hp > 0
+      );
       for (const add of livingAdds) unitsById.set(add.id, add);
 
       if (pendingAoeActionsRef.current.length > 0) {
@@ -5105,6 +5033,100 @@ export const CombatCanvas: React.FC<Props> = ({
           ctx.font = 'bold 10px sans-serif';
           ctx.textAlign = 'center';
           ctx.fillText('🔥 火墙', effect.x, effect.y - 12);
+        } else if (effect.spellId === 'morchok_pillar') {
+          const px = effect.x;
+          const py = effect.y;
+          // 虚线安全区边界
+          ctx.strokeStyle = 'rgba(52, 211, 153, 0.85)';
+          ctx.lineWidth = 1.8;
+          ctx.setLineDash([5, 4]);
+          ctx.beginPath();
+          ctx.arc(px, py, effect.radius || 55, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          // 2.5D 碎石柱石块
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+          ctx.beginPath();
+          ctx.ellipse(px, py + 4, 18, 8, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = '#57534E';
+          ctx.beginPath();
+          ctx.moveTo(px - 14, py + 2);
+          ctx.lineTo(px - 10, py - 24);
+          ctx.lineTo(px + 2, py - 28);
+          ctx.lineTo(px + 14, py - 18);
+          ctx.lineTo(px + 14, py + 2);
+          ctx.closePath();
+          ctx.fill();
+          ctx.fillStyle = '#A8A29E';
+          ctx.beginPath();
+          ctx.moveTo(px - 10, py - 24);
+          ctx.lineTo(px + 2, py - 28);
+          ctx.lineTo(px + 14, py - 18);
+          ctx.lineTo(px + 2, py - 14);
+          ctx.closePath();
+          ctx.fill();
+          ctx.strokeStyle = '#D6D3D1';
+          ctx.lineWidth = 1;
+          ctx.stroke();
+          ctx.font = 'bold 10px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+          ctx.fillText('🛡️ 碎石柱安全区', px + 1, py - 33);
+          ctx.fillStyle = '#6EE7B7';
+          ctx.fillText('🛡️ 碎石柱安全区', px, py - 34);
+        } else if (effect.spellId === 'resonating_crystal') {
+          const cx = effect.x;
+          const cy = effect.y;
+          ctx.strokeStyle = 'rgba(96, 165, 250, 0.85)';
+          ctx.lineWidth = 1.5;
+          ctx.setLineDash([4, 4]);
+          ctx.beginPath();
+          ctx.arc(cx, cy, effect.radius || 28, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.fillStyle = '#3B82F6';
+          ctx.beginPath();
+          ctx.moveTo(cx, cy - 20);
+          ctx.lineTo(cx + 9, cy - 6);
+          ctx.lineTo(cx + 5, cy + 4);
+          ctx.lineTo(cx - 5, cy + 4);
+          ctx.lineTo(cx - 9, cy - 6);
+          ctx.closePath();
+          ctx.fill();
+          ctx.strokeStyle = '#DBEAFE';
+          ctx.lineWidth = 1.2;
+          ctx.stroke();
+          ctx.font = 'bold 10px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+          ctx.fillText('💎 靠近吸收', cx + 1, cy - 25);
+          ctx.fillStyle = '#93C5FD';
+          ctx.fillText('💎 靠近吸收', cx, cy - 26);
+        } else if ((effect.spellId || '').startsWith('cauldron_marker_')) {
+          const cx = effect.x;
+          const cy = effect.y;
+          const kind = (effect.spellId || '').replace('cauldron_marker_', '');
+          const fill = kind === 'frost' ? '#38BDF8' : kind === 'fire' ? '#F97316' : '#84CC16';
+          const label = kind === 'frost' ? '❄️ 冰釜' : kind === 'fire' ? '🔥 火釜' : '☠️ 毒釜';
+          // 铁锅底座 + 药水液面
+          ctx.fillStyle = '#334155';
+          ctx.beginPath();
+          ctx.ellipse(cx, cy + 2, 11, 7, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = fill;
+          ctx.beginPath();
+          ctx.ellipse(cx, cy - 1, 8, 4.5, 0, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = '#E2E8F0';
+          ctx.lineWidth = 1;
+          ctx.stroke();
+          ctx.font = 'bold 10px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+          ctx.fillText(label, cx + 1, cy - 13);
+          ctx.fillStyle = '#FFFFFF';
+          ctx.fillText(label, cx, cy - 14);
         }
         ctx.restore();
       }

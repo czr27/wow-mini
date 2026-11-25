@@ -304,7 +304,11 @@ export function syncPersistentRingsFromGround(
     liveIds.add(g.id);
     const owner = unitsById.get(g.ownerId);
     const isHealFill = isHealFillGroundEffect(g);
-    const friendlyCaster = !isEnemyActorUnit(owner);
+    const isSafeCover =
+      g.spellId === 'morchok_pillar' ||
+      g.spellId === 'resonating_crystal' ||
+      (g.spellId || '').startsWith('cauldron_marker_');
+    const friendlyCaster = isSafeCover || !isEnemyActorUnit(owner);
     // 填充只看分类：绿治疗 / 黄增益 / 红伤害；描边看敌我
     const finalTone = resolveAoeTone({
       groundKind: g.kind,

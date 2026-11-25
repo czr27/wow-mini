@@ -175,9 +175,9 @@ export const TravelRecovery: React.FC<Props> = ({
     >
       <div className="px-3 pt-2.5 pb-2 flex items-center gap-2.5">
         {/* Status badge (fixed auto-march, no manual control in maze) */}
-        <div className="shrink-0 flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 border bg-cyan-500/15 border-cyan-400/45 text-cyan-100 shadow-[0_0_16px_rgba(34,211,238,0.12)]">
+        <div className="shrink-0 h-8 flex items-center gap-1.5 rounded-xl px-3 border bg-cyan-500/15 border-cyan-400/45 text-cyan-100 shadow-[0_0_16px_rgba(34,211,238,0.12)]">
           <span className="inline-block w-1.5 h-1.5 rounded-full bg-cyan-300 animate-pulse" />
-          <span className="text-[11px] font-bold tracking-wide whitespace-nowrap">
+          <span className="text-[11px] font-bold tracking-wide leading-none whitespace-nowrap">
             队伍行军
           </span>
         </div>
@@ -218,8 +218,8 @@ export const TravelRecovery: React.FC<Props> = ({
           <button
             type="button"
             onClick={onFastForward}
-            title={`发起跳过行军（联机需多数同意）；单机立即开启与【${targetBossName}】的战斗`}
-            className="group relative px-3.5 py-2 rounded-xl text-[11px] font-extrabold tracking-wide text-[#1a1205] border border-amber-300/70 transition-transform hover:scale-[1.03] active:scale-[0.97] shadow-[0_4px_18px_rgba(245,158,11,0.35)]"
+            title={`发起跳过（联机需多数同意）；单机立即开启与【${targetBossName}】的战斗`}
+            className="group relative h-8 flex items-center px-3.5 rounded-xl text-[11px] font-extrabold tracking-wide leading-none text-[#1a1205] border border-amber-300/70 transition-transform hover:scale-[1.03] active:scale-[0.97] shadow-[0_4px_18px_rgba(245,158,11,0.35)]"
             style={{
               background: 'linear-gradient(160deg, #fbbf24 0%, #f59e0b 48%, #d97706 100%)',
             }}
@@ -228,7 +228,7 @@ export const TravelRecovery: React.FC<Props> = ({
               <span aria-hidden className="opacity-80 text-[10px]">
                 ▶▶
               </span>
-              跳过行军
+              跳过
             </span>
           </button>
         </div>

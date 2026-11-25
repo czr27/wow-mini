@@ -674,8 +674,8 @@ function drawCyberDruidEightDir(
     const pH = 7.2;
     const leftPX = -12.5 + sway + e * 0.2;
     const rightPX = 12.5 - pW + sway + e * 0.2;
-    drawCyberBox(ctx, leftPX, -13.5, pW, pH, palette.armor, NEON_INK, palette.neon, 1.5);
-    drawCyberBox(ctx, rightPX, -13.5, pW, pH, palette.armor, NEON_INK, palette.neonAlt, 1.5);
+    drawCyberBox(ctx, leftPX, -13.5, pW, pH, palette.armor, NEON_INK, '#FF7D0A', 1.6);
+    drawCyberBox(ctx, rightPX, -13.5, pW, pH, palette.armor, NEON_INK, palette.neon, 1.5);
 
     ctx.fillStyle = NEON_INK;
     ctx.beginPath();
@@ -795,6 +795,386 @@ function drawCyberDruidEightDir(
   drawEightDirLayers(pose, { back: drawBack, core: drawCore, front: drawFront });
 }
 
+type CyberHeroStyle = {
+  chassis: string;
+  armor: string;
+  classColor: string;
+  specNeon: string;
+  cloak: string;
+  helm: string;
+  eye: string;
+  eyeLook: EyeLook;
+  plate?: boolean;
+  alpha?: number;
+};
+
+/** 通用赛博英雄骨架：职业主色绑定胸甲/大肩甲/披风边缘 + 八向三层遮挡 */
+function drawCyberHeroWithSpecs(
+  ctx: CanvasRenderingContext2D,
+  sway: number,
+  pose: FacingPose,
+  fx: number,
+  style: CyberHeroStyle,
+  hooks: {
+    backDetail?: () => void;
+    helmDetail?: () => void;
+    frontWeapon: () => void;
+  }
+): void {
+  const sf = clamp01(pose.sideFactor);
+  const e = pose.eyeBiasX;
+  const a0 = ctx.globalAlpha;
+  if (style.alpha !== undefined) ctx.globalAlpha = a0 * style.alpha;
+
+  const drawBack = () => {
+    const cloakW = isFacingBack(pose) ? 18 : 14;
+    drawCyberBox(
+      ctx,
+      -cloakW / 2 + sway - e * 0.2,
+      -12,
+      cloakW,
+      23,
+      style.cloak,
+      NEON_INK,
+      style.classColor,
+      1.7
+    );
+    if (isFacingBack(pose)) hooks.backDetail?.();
+  };
+
+  const drawCore = () => {
+    const torsoW = style.plate ? 19 : 17;
+    drawCyberBox(ctx, -torsoW / 2 + sway, -12.5, torsoW, 22.5, style.chassis, NEON_INK);
+    // 职业主色胸甲锚点
+    drawCyberBox(
+      ctx,
+      -(torsoW - 3) / 2 + sway,
+      -11,
+      torsoW - 3,
+      7.5,
+      style.classColor,
+      NEON_INK,
+      style.specNeon,
+      1.4
+    );
+    drawNeonGlowRect(ctx, -2 + sway + e * 0.2, -8.5, 4, 3, style.specNeon, fx);
+
+    // 魔兽标志性大肩甲（职业主色底 + 专精霓虹边）
+    const pW = lerp(style.plate ? 7.6 : 6.5, style.plate ? 9.2 : 8.2, sf);
+    const pH = style.plate ? 8 : 7;
+    const span = style.plate ? 13.5 : 12.2;
+    drawCyberBox(ctx, -span + sway + e * 0.2, -14, pW, pH, style.armor, NEON_INK, style.classColor, 1.8);
+    drawCyberBox(ctx, span - pW + sway + e * 0.2, -14, pW, pH, style.armor, NEON_INK, style.specNeon, 1.6);
+
+    // 头盔/头颅
+    ctx.fillStyle = NEON_INK;
+    ctx.beginPath();
+    ctx.arc(sway, -17.5, style.plate ? 8.8 : 8.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = style.helm;
+    ctx.beginPath();
+    ctx.arc(sway, -17.5, style.plate ? 7.6 : 7, 0, Math.PI * 2);
+    ctx.fill();
+
+    hooks.helmDetail?.();
+    drawFacingEyePair(ctx, style.eye, {
+      y: -18.5,
+      size: 2.5,
+      sway,
+      pose,
+      look: style.eyeLook,
+    });
+  };
+
+  drawEightDirLayers(pose, { back: drawBack, core: drawCore, front: hooks.frontWeapon });
+  ctx.globalAlpha = a0;
+}
+
+function drawCyberClassBodyByClassId(
+  ctx: CanvasRenderingContext2D,
+  u: Unit,
+  sway: number,
+  pose: FacingPose,
+  classColor: string,
+  fx: number,
+  tick: number
+): boolean {
+  const spec = (u.spec || '').toUpperCase();
+  const wSide = pose.weaponSide;
+  const hBias = facingHandBiasX(pose);
+  const wx = 10 * wSide + sway + hBias;
+  const ox = -10 * wSide + sway + hBias * 0.7;
+
+  switch (u.classId as ClassId) {
+    case 'DK': {
+      const s = spec === 'BLOOD' || spec === 'FROST' || spec === 'UNHOLY'
+        ? spec
+        : u.role === 'TANK' ? 'BLOOD' : 'FROST';
+      const specNeon = s === 'BLOOD' ? '#FF2A55' : s === 'FROST' ? '#00F0FF' : '#39FF14';
+      drawCyberHeroWithSpecs(ctx, sway, pose, fx, {
+        chassis: '#161124', armor: '#271e3d', classColor, specNeon, cloak: '#2c0b16',
+        helm: '#271e3d', eye: specNeon, eyeLook: 'rune', plate: true,
+      }, {
+        backDetail: () => {
+          drawNeonGlowLine(ctx, sway, -10, sway, 8, 2, specNeon, fx);
+        },
+        helmDetail: () => {
+          drawCyberBox(ctx, -10 + sway, -25, 3, 7, '#cbd5e1', NEON_INK, specNeon, 1.2);
+          drawCyberBox(ctx, 7 + sway, -25, 3, 7, '#cbd5e1', NEON_INK, specNeon, 1.2);
+        },
+        frontWeapon: () => {
+          if (s === 'FROST') {
+            drawCyberBox(ctx, wx - 1.5, -20, 3, 22, '#475569', NEON_INK, specNeon, 1.3);
+            drawCyberBox(ctx, ox - 1.5, -18, 3, 20, '#475569', NEON_INK, specNeon, 1.3);
+          } else {
+            drawCyberBox(ctx, wx - 2.2, -24, 4.4, 28, '#334155', NEON_INK, specNeon, 1.6);
+            drawNeonGlowLine(ctx, wx, -22, wx, 0, 1.5, specNeon, fx);
+          }
+        },
+      });
+      return true;
+    }
+    case 'SHAMAN': {
+      const s = spec === 'RESTORATION' || spec === 'ELEMENTAL' || spec === 'ENHANCEMENT'
+        ? spec
+        : u.role === 'HEALER' ? 'RESTORATION' : 'ELEMENTAL';
+      const specNeon = s === 'RESTORATION' ? '#00E5FF' : s === 'ELEMENTAL' ? '#38BDF8' : '#FF5500';
+      drawCyberHeroWithSpecs(ctx, sway, pose, fx, {
+        chassis: '#0e1b2e', armor: '#173052', classColor, specNeon, cloak: '#0c2747',
+        helm: '#1e3a5f', eye: specNeon, eyeLook: 'glow', plate: false,
+      }, {
+        backDetail: () => {
+          // 背面图腾柱
+          drawCyberBox(ctx, sway - 2.5, -14, 5, 20, '#451a03', NEON_INK, specNeon, 1.5);
+          drawNeonGlowCircle(ctx, sway, -15, 2.5, specNeon, fx);
+        },
+        helmDetail: () => {
+          ctx.fillStyle = classColor;
+          ctx.beginPath();
+          ctx.moveTo(-7 + sway, -22); ctx.lineTo(-4 + sway, -29); ctx.lineTo(-1 + sway, -22);
+          ctx.moveTo(1 + sway, -22); ctx.lineTo(4 + sway, -29); ctx.lineTo(7 + sway, -22);
+          ctx.fill();
+        },
+        frontWeapon: () => {
+          if (s === 'ENHANCEMENT') {
+            drawCyberBox(ctx, wx - 2, -16, 4, 20, '#64748b', NEON_INK, '#FF5500', 1.4);
+            drawCyberBox(ctx, ox - 2, -15, 4, 18, '#64748b', NEON_INK, '#00F0FF', 1.4);
+          } else {
+            drawCyberBox(ctx, wx - 1.5, -20, 3, 26, '#475569', NEON_INK, specNeon, 1.4);
+            drawNeonGlowCircle(ctx, wx, -22, 3.8, specNeon, fx);
+            drawCyberBox(ctx, ox - 3, -8, 6, 15, '#173052', NEON_INK, classColor, 1.4);
+          }
+        },
+      });
+      return true;
+    }
+    case 'MAGE': {
+      const s = spec === 'FIRE' || spec === 'FROST' || spec === 'ARCANE' ? spec : 'FIRE';
+      const specNeon = s === 'FIRE' ? '#FF6B00' : s === 'FROST' ? '#00F5FF' : '#E879F9';
+      drawCyberHeroWithSpecs(ctx, sway, pose, fx, {
+        chassis: '#131836', armor: '#1f2b5c', classColor, specNeon, cloak: '#172554',
+        helm: '#1e3a8a', eye: specNeon, eyeLook: 'glow',
+      }, {
+        backDetail: () => {
+          drawNeonGlowCircle(ctx, sway, -2, 3.2, specNeon, fx);
+        },
+        helmDetail: () => {
+          if (s === 'ARCANE' && fx > 0.35) {
+            ctx.strokeStyle = specNeon;
+            ctx.lineWidth = 1.6;
+            ctx.beginPath();
+            ctx.ellipse(sway, -26.5, 6.5, 2.2, 0, 0, Math.PI * 2);
+            ctx.stroke();
+          } else if (s === 'FROST') {
+            drawNeonGlowLine(ctx, -4 + sway, -24, -6 + sway, -29, 1.8, specNeon, fx);
+            drawNeonGlowLine(ctx, 4 + sway, -24, 6 + sway, -29, 1.8, specNeon, fx);
+          }
+        },
+        frontWeapon: () => {
+          drawCyberBox(ctx, wx - 1.3, -20, 2.6, 26, '#e2e8f0', NEON_INK);
+          drawNeonGlowCircle(ctx, wx, -22, 4.2, specNeon, fx);
+          if (fx >= 0.75) {
+            const ang = tick * 0.13;
+            drawNeonGlowCircle(ctx, sway + Math.cos(ang) * 14, -14 + Math.sin(ang) * 5, 1.8, specNeon, fx);
+          }
+        },
+      });
+      return true;
+    }
+    case 'ROGUE': {
+      const s = spec === 'COMBAT' || spec === 'ASSASSINATION' || spec === 'SUBTLETY' ? spec : 'COMBAT';
+      const specNeon = s === 'COMBAT' ? '#FFE600' : s === 'ASSASSINATION' ? '#4ADE80' : '#C084FC';
+      drawCyberHeroWithSpecs(ctx, sway, pose, fx, {
+        chassis: '#141418', armor: '#27272f', classColor, specNeon, cloak: '#18181b',
+        helm: '#27272a', eye: specNeon, eyeLook: 'slit', alpha: s === 'SUBTLETY' ? 0.88 : 1,
+      }, {
+        backDetail: () => {
+          if (s === 'ASSASSINATION') {
+            drawNeonGlowRect(ctx, sway - 5, 0, 3, 5, '#4ADE80', fx);
+            drawNeonGlowRect(ctx, sway + 2, 0, 3, 5, '#4ADE80', fx);
+          } else {
+            drawNeonGlowLine(ctx, sway - 5, -8, sway + 5, 6, 1.5, classColor, fx * 0.8, null);
+          }
+        },
+        frontWeapon: () => {
+          const len = s === 'COMBAT' ? 20 : 16;
+          drawCyberBox(ctx, wx - 1.5, -14, 3, len, '#94a3b8', NEON_INK, specNeon, 1.4);
+          drawCyberBox(ctx, ox - 1.5, -14, 3, len, '#94a3b8', NEON_INK, specNeon, 1.4);
+        },
+      });
+      return true;
+    }
+    case 'WARRIOR': {
+      const s = spec === 'PROTECTION' || spec === 'ARMS' || spec === 'FURY'
+        ? spec
+        : u.role === 'TANK' ? 'PROTECTION' : 'ARMS';
+      const specNeon = s === 'PROTECTION' ? '#F8FAFC' : s === 'ARMS' ? '#FF3B30' : '#EF4444';
+      drawCyberHeroWithSpecs(ctx, sway, pose, fx, {
+        chassis: '#261b12', armor: '#4a3524', classColor, specNeon, cloak: '#3b1515',
+        helm: '#475569', eye: specNeon, eyeLook: 'visor', plate: true,
+      }, {
+        backDetail: () => {
+          if (s === 'ARMS') {
+            drawCyberBox(ctx, sway - 2, -22, 4, 28, '#94a3b8', NEON_INK, specNeon, 1.3);
+          }
+        },
+        helmDetail: () => {
+          drawCyberBox(ctx, -2 + sway, -27.5, 4, 5.5, '#ef4444', NEON_INK, specNeon, 1.1);
+        },
+        frontWeapon: () => {
+          if (s === 'PROTECTION') {
+            drawCyberBox(ctx, wx - 1.5, -16, 3, 20, '#cbd5e1', NEON_INK);
+            drawCyberBox(ctx, ox - 3.5, -11, 7, 22, '#78350f', NEON_INK, classColor, 1.5);
+            drawNeonGlowRect(ctx, ox - 1, -6, 2, 12, '#FACC15', fx);
+          } else if (s === 'FURY') {
+            drawCyberBox(ctx, wx - 2, -24, 4, 28, '#cbd5e1', NEON_INK, specNeon, 1.4);
+            drawCyberBox(ctx, ox - 2, -22, 4, 26, '#cbd5e1', NEON_INK, specNeon, 1.4);
+          } else {
+            drawCyberBox(ctx, wx - 2, -25, 4, 30, '#cbd5e1', NEON_INK, specNeon, 1.5);
+            drawCyberBox(ctx, wx - 4, -5, 8, 3, '#b45309', NEON_INK);
+          }
+        },
+      });
+      return true;
+    }
+    case 'PALADIN': {
+      const s = spec === 'HOLY' || spec === 'PROTECTION' || spec === 'RETRIBUTION'
+        ? spec
+        : u.role === 'HEALER' ? 'HOLY' : u.role === 'TANK' ? 'PROTECTION' : 'RETRIBUTION';
+      const specNeon = s === 'HOLY' ? '#FFE047' : s === 'PROTECTION' ? '#FACC15' : '#FDE047';
+      drawCyberHeroWithSpecs(ctx, sway, pose, fx, {
+        chassis: '#241522', armor: '#4a2340', classColor, specNeon, cloak: '#422006',
+        helm: '#eab308', eye: specNeon, eyeLook: 'ring', plate: true,
+      }, {
+        backDetail: () => {
+          drawNeonGlowLine(ctx, sway, -10, sway, 8, 2, specNeon, fx);
+          drawNeonGlowLine(ctx, sway - 5, -3, sway + 5, -3, 2, specNeon, fx);
+        },
+        helmDetail: () => {
+          if (s === 'RETRIBUTION' && fx > 0.4) {
+            drawNeonGlowLine(ctx, -8 + sway, -18, -14 + sway, -26, 1.6, specNeon, fx);
+            drawNeonGlowLine(ctx, 8 + sway, -18, 14 + sway, -26, 1.6, specNeon, fx);
+          }
+        },
+        frontWeapon: () => {
+          if (s === 'RETRIBUTION') {
+            drawCyberBox(ctx, wx - 1.8, -22, 3.6, 28, '#94a3b8', NEON_INK);
+            drawCyberBox(ctx, wx - 5, -25, 10, 7, '#fde047', NEON_INK, '#ffffff', 1.4);
+          } else {
+            drawCyberBox(ctx, wx - 1.5, -18, 3, 24, '#94a3b8', NEON_INK);
+            drawCyberBox(ctx, wx - 4, -20, 8, 5, '#fde047', NEON_INK);
+            drawCyberBox(ctx, ox - 3.5, -10, 7, 20, '#1e293b', NEON_INK, specNeon, 1.5);
+          }
+        },
+      });
+      return true;
+    }
+    case 'HUNTER': {
+      const s = spec === 'BEAST_MASTERY' || spec === 'MARKSMANSHIP' || spec === 'SURVIVAL' ? spec : 'MARKSMANSHIP';
+      const specNeon = s === 'BEAST_MASTERY' ? '#FB923C' : s === 'MARKSMANSHIP' ? '#22C55E' : '#A3E635';
+      drawCyberHeroWithSpecs(ctx, sway, pose, fx, {
+        chassis: '#16240a', armor: '#2c4714', classColor, specNeon, cloak: '#1a2e05',
+        helm: '#365314', eye: specNeon, eyeLook: s === 'MARKSMANSHIP' ? 'visor' : 'beast',
+      }, {
+        backDetail: () => {
+          drawCyberBox(ctx, sway + 2, -12, 5, 18, '#78350f', NEON_INK, specNeon, 1.4);
+        },
+        frontWeapon: () => {
+          drawNeonGlowLine(ctx, wx, -18, wx, 6, 1.2, '#e2e8f0', 0.6, null);
+          ctx.strokeStyle = specNeon;
+          ctx.lineWidth = 2.4;
+          ctx.beginPath();
+          ctx.arc(wx - wSide, -6, 12, -Math.PI / 2.2, Math.PI / 2.2);
+          ctx.stroke();
+        },
+      });
+      return true;
+    }
+    case 'PRIEST': {
+      const s = spec === 'DISCIPLINE' || spec === 'HOLY' || spec === 'SHADOW'
+        ? spec
+        : u.role === 'DPS' ? 'SHADOW' : 'HOLY';
+      const isShadow = s === 'SHADOW';
+      const specNeon = isShadow ? '#D946EF' : s === 'DISCIPLINE' ? '#FEF08A' : '#38BDF8';
+      drawCyberHeroWithSpecs(ctx, sway, pose, fx, {
+        chassis: isShadow ? '#240c4d' : '#cbd5e1',
+        armor: isShadow ? '#4c1d95' : '#f8fafc',
+        classColor: isShadow ? '#7e22ce' : classColor,
+        specNeon,
+        cloak: isShadow ? '#1e0b38' : '#e2e8f0',
+        helm: isShadow ? '#4c1d95' : '#f8fafc',
+        eye: isShadow ? '#F0ABFC' : '#334155',
+        eyeLook: isShadow ? 'hollow' : 'cross',
+        alpha: isShadow ? 0.9 : 1,
+      }, {
+        backDetail: () => {
+          if (s === 'HOLY') {
+            drawNeonGlowLine(ctx, sway - 4, -8, sway - 12, -16, 1.8, '#FFFFFF', fx);
+            drawNeonGlowLine(ctx, sway + 4, -8, sway + 12, -16, 1.8, '#FFFFFF', fx);
+          }
+        },
+        helmDetail: () => {
+          ctx.strokeStyle = specNeon;
+          ctx.lineWidth = 1.8;
+          ctx.beginPath();
+          ctx.ellipse(sway, -26.5, 6.2, 2.2, 0, 0, Math.PI * 2);
+          ctx.stroke();
+        },
+        frontWeapon: () => {
+          drawCyberBox(ctx, wx - 1.3, -20, 2.6, 28, isShadow ? '#581c87' : '#eab308', NEON_INK);
+          drawNeonGlowCircle(ctx, wx, -22.5, 4, specNeon, fx);
+        },
+      });
+      return true;
+    }
+    case 'WARLOCK': {
+      const s = spec === 'AFFLICTION' || spec === 'DEMONOLOGY' || spec === 'DESTRUCTION' ? spec : 'AFFLICTION';
+      const specNeon = s === 'AFFLICTION' ? '#A855F7' : s === 'DEMONOLOGY' ? '#E879F9' : '#84CC16';
+      drawCyberHeroWithSpecs(ctx, sway, pose, fx, {
+        chassis: '#190e2e', armor: '#341c5e', classColor, specNeon, cloak: '#1e1033',
+        helm: '#3b0764', eye: specNeon, eyeLook: 'toxic',
+      }, {
+        backDetail: () => {
+          if (fx >= 0.5) drawNeonGlowCircle(ctx, sway, -2, 2.8, specNeon, fx);
+        },
+        helmDetail: () => {
+          if (s === 'DEMONOLOGY') {
+            drawNeonGlowLine(ctx, -6 + sway, -21, -12 + sway, -28, 2, specNeon, fx);
+            drawNeonGlowLine(ctx, 6 + sway, -21, 12 + sway, -28, 2, specNeon, fx);
+          }
+        },
+        frontWeapon: () => {
+          drawCyberBox(ctx, wx - 1.3, -20, 2.6, 26, '#581c87', NEON_INK);
+          drawNeonGlowCircle(ctx, wx, -22, 4.2, specNeon, fx);
+        },
+      });
+      return true;
+    }
+    default:
+      return false;
+  }
+}
+
 /** 职业身体（脚下原点，已 translate）；facingRad 连续弧度 */
 export function drawClassEightDirBody(
   ctx: CanvasRenderingContext2D,
@@ -810,225 +1190,19 @@ export function drawClassEightDirBody(
   activeFacingPose = pose;
   ctx.save();
   applyFacingPoseTransform(ctx, pose);
-  const wSide = pose.weaponSide;
-  const hBias = facingHandBiasX(pose);
   const classColor = CLASS_COLORS[u.classId as keyof typeof CLASS_COLORS] || '#888';
+  const fx = volumeOpts?.fxIntensity ?? 1;
+  const tick = volumeOpts?.tickCount ?? 0;
 
-  switch (u.classId as ClassId) {
-    case 'DK': {
-      ctx.fillStyle = '#1e1b2e';
-      ctx.fillRect(-10 + sway, -14, 20, 24);
-      ctx.fillStyle = '#C41F3B';
-      ctx.fillRect(-8 + sway, -12, 16, 8);
-      ctx.fillStyle = '#2d2845';
-      ctx.beginPath();
-      ctx.arc(0 + sway, -18, 8, 0, Math.PI * 2);
-      ctx.fill();
-      drawFacingEyePair(ctx, '#00ffff', { y: -20, size: 2.6, sway, pose, look: 'rune' });
-      ctx.fillStyle = '#94A3B8';
-      ctx.fillRect(-10 + sway, -24, 3, 7);
-      ctx.fillRect(7 + sway, -24, 3, 7);
-      ctx.fillStyle = '#475569';
-      ctx.fillRect(10 * wSide + sway + hBias, -8, 6 * wSide, 20);
-      ctx.fillStyle = '#38BDF8';
-      ctx.fillRect(12 * wSide + sway + hBias, -4, 2 * wSide, 12);
-      break;
-    }
-    case 'DRUID': {
-      drawCyberDruidEightDir(
-        ctx,
-        u,
-        sway,
-        pose,
-        volumeOpts?.fxIntensity ?? 1,
-        volumeOpts?.tickCount ?? 0
-      );
-      break;
-    }
-    case 'SHAMAN': {
-      ctx.fillStyle = '#1e293b';
-      ctx.fillRect(-9 + sway, -12, 18, 22);
-      ctx.fillStyle = '#0070DE';
-      ctx.fillRect(-7 + sway, -10, 14, 8);
-      ctx.fillStyle = '#334155';
-      ctx.beginPath();
-      ctx.arc(0 + sway, -17, 8, 0, Math.PI * 2);
-      ctx.fill();
-      drawFacingEyePair(ctx, '#7dd3fc', { y: -18.5, size: 2.3, sway, pose, look: 'glow' });
-      ctx.fillStyle = '#0284c7';
-      ctx.beginPath();
-      ctx.moveTo(-7 + sway, -23);
-      ctx.lineTo(-4 + sway, -29);
-      ctx.lineTo(-1 + sway, -23);
-      ctx.moveTo(1 + sway, -23);
-      ctx.lineTo(4 + sway, -29);
-      ctx.lineTo(7 + sway, -23);
-      ctx.fill();
-      ctx.fillStyle = '#94A3B8';
-      ctx.fillRect(9 * wSide + sway + hBias, -16, 4 * wSide, 22);
-      ctx.fillStyle = '#38BDF8';
-      ctx.fillRect(7 * wSide + sway + hBias, -18, 8 * wSide, 5);
-      break;
-    }
-    case 'MAGE': {
-      ctx.fillStyle = '#1e1b4b';
-      ctx.fillRect(-8 + sway, -12, 16, 24);
-      ctx.fillStyle = '#40C7EB';
-      ctx.fillRect(-6 + sway, -10, 12, 7);
-      ctx.fillStyle = '#312e81';
-      ctx.beginPath();
-      ctx.arc(0 + sway, -17, 7, 0, Math.PI * 2);
-      ctx.fill();
-      drawFacingEyePair(ctx, '#e0f2fe', { y: -18.5, size: 2.2, sway, pose, look: 'glow' });
-      ctx.fillStyle = '#E2E8F0';
-      ctx.fillRect(9 * wSide + sway + hBias, -18, 2.5 * wSide, 24);
-      ctx.fillStyle = '#F97316';
-      ctx.beginPath();
-      ctx.arc(10.5 * wSide + sway + hBias, -20, 4, 0, Math.PI * 2);
-      ctx.fill();
-      break;
-    }
-    case 'ROGUE': {
-      ctx.fillStyle = '#18181b';
-      ctx.fillRect(-8 + sway, -12, 16, 22);
-      ctx.fillStyle = '#27272a';
-      ctx.fillRect(-7 + sway, -10, 14, 8);
-      ctx.fillStyle = '#3f3f46';
-      ctx.beginPath();
-      ctx.arc(0 + sway, -17, 7, 0, Math.PI * 2);
-      ctx.fill();
-      drawFacingEyePair(ctx, '#FFF569', { y: -18.2, size: 2.2, sway, pose, look: 'slit' });
-      ctx.fillStyle = '#71717a';
-      ctx.fillRect(8 * wSide + sway + hBias, -14, 3 * wSide, 18);
-      ctx.fillRect(-11 * wSide + sway + hBias, -14, 3 * wSide, 18);
-      ctx.fillStyle = '#84CC16';
-      ctx.fillRect(7 * wSide + sway + hBias, -16, 5 * wSide, 3);
-      ctx.fillRect(-12 * wSide + sway + hBias, -16, 5 * wSide, 3);
-      break;
-    }
-    case 'WARRIOR': {
-      ctx.fillStyle = '#3f2e21';
-      ctx.fillRect(-10 + sway, -13, 20, 23);
-      ctx.fillStyle = '#C79C6E';
-      ctx.fillRect(-11 + sway, -13, 22, 6);
-      ctx.fillStyle = '#64748b';
-      ctx.beginPath();
-      ctx.arc(0 + sway, -18, 7.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = '#ef4444';
-      ctx.fillRect(-2 + sway, -27, 4, 5);
-      drawFacingEyePair(ctx, '#f8fafc', { y: -19.2, size: 2.3, sway, pose, look: 'visor' });
-      if (u.role === 'TANK') {
-        ctx.fillStyle = '#78350f';
-        ctx.fillRect(10 * wSide + sway + hBias, -9, 6 * wSide, 20);
-        ctx.fillStyle = '#facc15';
-        ctx.fillRect(12 * wSide + sway + hBias, -5, 2 * wSide, 12);
-      } else {
-        ctx.fillStyle = '#cbd5e1';
-        ctx.fillRect(10 * wSide + sway + hBias, -24, 3.5 * wSide, 28);
-        ctx.fillStyle = '#b45309';
-        ctx.fillRect(8 * wSide + sway + hBias, -4, 7.5 * wSide, 3);
-      }
-      break;
-    }
-    case 'PALADIN': {
-      ctx.fillStyle = '#1e293b';
-      ctx.fillRect(-10 + sway, -13, 20, 23);
-      ctx.fillStyle = '#F58CBA';
-      ctx.fillRect(-8 + sway, -11, 16, 7);
-      ctx.fillStyle = '#FACC15';
-      ctx.fillRect(-1.5 + sway, -10, 3, 14);
-      ctx.fillRect(-5 + sway, -6, 10, 3);
-      ctx.fillStyle = '#eab308';
-      ctx.beginPath();
-      ctx.arc(0 + sway, -18, 7.5, 0, Math.PI * 2);
-      ctx.fill();
-      drawFacingEyePair(ctx, '#fef08a', { y: -20, size: 2.3, sway, pose, look: 'ring' });
-      ctx.fillStyle = '#94a3b8';
-      ctx.fillRect(10 * wSide + sway + hBias, -18, 3 * wSide, 24);
-      ctx.fillStyle = '#fde047';
-      ctx.fillRect(7 * wSide + sway + hBias, -21, 9 * wSide, 6);
-      break;
-    }
-    case 'HUNTER': {
-      ctx.fillStyle = '#1a2e05';
-      ctx.fillRect(-8 + sway, -12, 16, 22);
-      ctx.fillStyle = '#ABD473';
-      ctx.fillRect(-7 + sway, -10, 14, 7);
-      ctx.fillStyle = '#365314';
-      ctx.beginPath();
-      ctx.arc(0 + sway, -17, 7, 0, Math.PI * 2);
-      ctx.fill();
-      drawFacingEyePair(ctx, '#bef264', { y: -18.2, size: 2.2, sway, pose, look: 'beast' });
-      ctx.strokeStyle = '#d97706';
-      ctx.lineWidth = 2.2;
-      ctx.beginPath();
-      ctx.arc(9 * wSide + sway + hBias, -6, 12, -Math.PI / 2.2, Math.PI / 2.2);
-      ctx.stroke();
-      ctx.strokeStyle = '#e2e8f0';
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(10 * wSide + sway + hBias, -17);
-      ctx.lineTo(10 * wSide + sway + hBias, 5);
-      ctx.stroke();
-      break;
-    }
-    case 'PRIEST': {
-      const isShadow = u.role === 'DPS';
-      ctx.fillStyle = isShadow ? '#2e1065' : '#e2e8f0';
-      ctx.fillRect(-8 + sway, -12, 16, 24);
-      ctx.fillStyle = isShadow ? '#9333ea' : '#facc15';
-      ctx.fillRect(-6 + sway, -10, 12, 6);
-      ctx.fillStyle = isShadow ? '#4c1d95' : '#f8fafc';
-      ctx.beginPath();
-      ctx.arc(0 + sway, -17, 7, 0, Math.PI * 2);
-      ctx.fill();
-      drawFacingEyePair(ctx, isShadow ? '#e9d5ff' : '#334155', {
-        y: -18.5,
-        size: 2.2,
-        sway,
-        pose,
-        look: isShadow ? 'hollow' : 'cross',
-      });
-      ctx.strokeStyle = isShadow ? '#c084fc' : '#fde047';
-      ctx.lineWidth = 1.6;
-      ctx.beginPath();
-      ctx.ellipse(0 + sway, -26, 6, 2.2, 0, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.fillStyle = isShadow ? '#7e22ce' : '#eab308';
-      ctx.fillRect(9 * wSide + sway + hBias, -20, 2.5 * wSide, 28);
-      ctx.fillStyle = isShadow ? '#e879f9' : '#fef08a';
-      ctx.beginPath();
-      ctx.arc(10.2 * wSide + sway + hBias, -22, 4, 0, Math.PI * 2);
-      ctx.fill();
-      break;
-    }
-    case 'WARLOCK': {
-      ctx.fillStyle = '#1e1033';
-      ctx.fillRect(-8 + sway, -12, 16, 24);
-      ctx.fillStyle = '#9482C9';
-      ctx.fillRect(-6 + sway, -10, 12, 6);
-      ctx.fillStyle = '#3b0764';
-      ctx.beginPath();
-      ctx.arc(0 + sway, -17, 7, 0, Math.PI * 2);
-      ctx.fill();
-      drawFacingEyePair(ctx, '#a3e635', { y: -18.2, size: 2.2, sway, pose, look: 'toxic' });
-      ctx.fillStyle = '#581c87';
-      ctx.fillRect(9 * wSide + sway + hBias, -19, 2.5 * wSide, 26);
-      ctx.fillStyle = '#84cc16';
-      ctx.beginPath();
-      ctx.arc(10.2 * wSide + sway + hBias, -21, 4.2, 0, Math.PI * 2);
-      ctx.fill();
-      break;
-    }
-    default: {
-      ctx.fillStyle = classColor;
-      ctx.fillRect(-8 + sway, -12, 16, 22);
-      ctx.beginPath();
-      ctx.arc(0 + sway, -16, 7, 0, Math.PI * 2);
-      ctx.fill();
-      drawFacingEyePair(ctx, '#f8fafc', { y: -17.5, size: 2.2, sway, pose });
-    }
+  if (u.classId === 'DRUID') {
+    drawCyberDruidEightDir(ctx, u, sway, pose, fx, tick);
+  } else if (!drawCyberClassBodyByClassId(ctx, u, sway, pose, classColor, fx, tick)) {
+    ctx.fillStyle = classColor;
+    ctx.fillRect(-8 + sway, -12, 16, 22);
+    ctx.beginPath();
+    ctx.arc(0 + sway, -16, 7, 0, Math.PI * 2);
+    ctx.fill();
+    drawFacingEyePair(ctx, '#f8fafc', { y: -17.5, size: 2.2, sway, pose });
   }
 
   const mouthColor =
