@@ -114,7 +114,8 @@ export function computeEffectiveGain(
   if (masterVol <= 0.001) return 0;
   const distFactor = role === 'self' ? 1.0 : computeDistanceAttenuation(actorPos, listenerPos);
   if (distFactor <= 0.001) return 0;
-  return masterVol * ROLE_WEIGHT[role] * distFactor;
+  // 2x gain boost so default 30% feels punchy and audible
+  return Math.min(1.0, masterVol * 2.0 * ROLE_WEIGHT[role] * distFactor);
 }
 
 export function inferSpellSchool(spellId?: string, spellName?: string): SfxSchool {

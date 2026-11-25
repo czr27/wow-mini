@@ -22,6 +22,43 @@ import {
   getUnitResourceAmount,
 } from './SkillMetricEvaluator.js';
 
+const PRIORITY_ADD_PREFIXES = [
+  'jindo_brittle_barrier',
+  'hagara_ice_tomb',
+  'hagara_conductive_crystal',
+  'madness_elementium_bolt',
+  'madness_limb',
+  'venoxis_bloodvenom',
+  'ripsnarl_vapor',
+  'kilnara_panther',
+  'zonozz_void_tentacle',
+  'yorsahj_blood_',
+  'zanzil_zanzili_zombie',
+  'zanzil_gurubashi_berserker',
+];
+
+export function selectDpsPriorityEnemies(livingEnemies: Unit[], boss: Unit | undefined): Unit[] {
+  if (livingEnemies.length <= 1) return livingEnemies;
+  const priorityAdd = livingEnemies.find(
+    (e) =>
+      (!boss || e.id !== boss.id) &&
+      !!e.summonSpellId &&
+      PRIORITY_ADD_PREFIXES.some((p) => e.summonSpellId!.startsWith(p))
+  );
+  if (priorityAdd) {
+    return [priorityAdd, ...livingEnemies.filter((e) => e.id !== priorityAdd.id)];
+  }
+  // If boss has immunity/deflection buff, switch to any living add
+  const bossImmune = boss?.buffs?.some(
+    (b) => b.spellId === 'arcane_bubble' || b.spellId === 'vanessa_deflection' || b.spellId === 'divine_shield' || b.spellId === 'ice_block'
+  );
+  if (bossImmune && boss) {
+    const anyAdd = livingEnemies.find((e) => e.id !== boss.id);
+    if (anyAdd) return [anyAdd, ...livingEnemies.filter((e) => e.id !== anyAdd.id)];
+  }
+  return livingEnemies;
+}
+
 export class DpsAI implements RoleAI {
   constructor(private readonly interruptPriority: number = 0) {}
 
@@ -71,11 +108,13 @@ export class DpsAI implements RoleAI {
       useShortId: false,
     });
 
+    const orderedEnemies = selectDpsPriorityEnemies(livingEnemies, boss);
+
     const decision = evaluateUniversalAIDecision({
       caster: unit,
       personality,
       allies: livingAllies,
-      enemies: livingEnemies,
+      enemies: orderedEnemies,
       usableSkills: candidates,
       tickCount: Math.floor((gs.elapsedMs || 0) / 100),
     });

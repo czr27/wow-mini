@@ -11,6 +11,7 @@ import {
   findLooseAddForTank,
   isTankHealthy,
   orderTanksByThreatPriority,
+  selectDpsPriorityEnemies,
   getUnitPersonality,
   evaluateUniversalAIDecision,
   getSpellsForClassSpec,
@@ -971,9 +972,11 @@ export function runFriendlyAiCombatTick(ctx: FriendlyAiCombatTickCtx): void {
 
     const rawEnemies = tankLooseAdd
       ? [tankLooseAdd, ...ctx.livingEnemies.filter((e) => e.id !== tankLooseAdd!.id)]
-      : ctx.livingEnemies.length > 0
-        ? ctx.livingEnemies
-        : [boss];
+      : u.role === 'DPS'
+        ? selectDpsPriorityEnemies(ctx.livingEnemies.length > 0 ? ctx.livingEnemies : [boss], boss)
+        : ctx.livingEnemies.length > 0
+          ? ctx.livingEnemies
+          : [boss];
 
     const aiEnemies =
       u.role !== 'TANK' && u.role !== 'HEALER'

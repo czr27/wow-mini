@@ -133,7 +133,7 @@ export const MadnessEncounter: BossEncounterModule = {
         name: '大灾变',
         castTimeMs: 8000,
         cooldownMs: 999_999_999,
-        lastCastMs: -999_999_999,
+        lastCastMs: 0,
         interruptible: false,
         school: 'FIRE',
         range: 600,

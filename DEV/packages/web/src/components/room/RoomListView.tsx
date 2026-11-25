@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import { getSfxVolume, setSfxVolume } from '../../utils/combatSfx.js';
 import type {
   ClassId,
   DungeonDifficulty,
@@ -103,7 +102,6 @@ export const RoomListView: React.FC<RoomListViewProps> = ({
   onBackToCharacterSelect,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
-  const [sfxVolPct, setSfxVolPct] = useState(() => Math.round(getSfxVolume() * 100));
   const [selectedMapFilter, setSelectedMapFilter] = useState<string>('ALL');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [newRoomName, setNewRoomName] = useState(`${player.name}的队伍`);
@@ -161,38 +159,14 @@ export const RoomListView: React.FC<RoomListViewProps> = ({
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
-          <label
-            className="flex items-center gap-2 px-2.5 py-1 rounded bg-slate-800/90 border border-slate-700 text-xs text-slate-300"
-            title="战斗与施法音效音量（默认 30%）"
+        {onBackToCharacterSelect && (
+          <button
+            onClick={onBackToCharacterSelect}
+            className="px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600 text-xs transition"
           >
-            <span>{sfxVolPct === 0 ? '🔇' : '🔊'}</span>
-            <span className="hidden sm:inline text-slate-400">音效</span>
-            <input
-              type="range"
-              min={0}
-              max={100}
-              step={5}
-              value={sfxVolPct}
-              onChange={(e) => {
-                const pct = Number(e.target.value);
-                setSfxVolPct(pct);
-                setSfxVolume(pct / 100);
-              }}
-              className="w-20 accent-amber-500 cursor-pointer"
-            />
-            <span className="w-8 text-right tabular-nums text-amber-300">{sfxVolPct}%</span>
-          </label>
-
-          {onBackToCharacterSelect && (
-            <button
-              onClick={onBackToCharacterSelect}
-              className="px-3 py-1.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600 text-xs transition"
-            >
-              返回角色选择
-            </button>
-          )}
-        </div>
+            返回角色选择
+          </button>
+        )}
       </div>
 
       {/* Main Content Area — full-bleed; room table scrolls when many rooms */}

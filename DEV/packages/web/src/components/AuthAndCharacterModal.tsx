@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { getSfxVolume, setSfxVolume } from '../utils/combatSfx.js';
 import type {
   CharacterRecord,
   ClassId,
@@ -390,6 +391,7 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
   const [sniffingSlotIdx, setSniffingSlotIdx] = useState<number | null>(null);
   const [inspectedSpellId, setInspectedSpellId] = useState<string | null>(null);
   const [hoveredCertId, setHoveredCertId] = useState<string | null>(null);
+  const [sfxVolPct, setSfxVolPct] = useState(() => Math.round(getSfxVolume() * 100));
   const [isCreating, setIsCreating] = useState(false);
   const [isSkillBookOpen, setIsSkillBookOpen] = useState(false);
   const [newCharName, setNewCharName] = useState('');
@@ -1188,15 +1190,15 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
 
                     return (
                       <div className="relative">
-                        <div className={certRows > 3 ? 'max-h-[156px] overflow-y-auto pr-0.5' : ''}>
-                          <div className="grid grid-cols-12 gap-0.5 w-full border border-[#3b3b5c] rounded-lg p-1 bg-[#0c0c18] shadow-inner">
+                        <div className={certRows > 3 ? 'max-h-[138px] overflow-y-auto pr-1 w-fit' : 'w-fit'}>
+                          <div className="grid grid-cols-12 gap-0.5 w-fit border border-[#3b3b5c] rounded-lg p-1 bg-[#0c0c18] shadow-inner">
                             {Array.from({ length: totalBagSlots }).map((_, idx) => {
                               const cert = certs[idx];
                               if (!cert) {
                                 return (
                                   <div
                                     key={`empty-${idx}`}
-                                    className="aspect-square rounded border border-[#22223a] bg-[#090914] opacity-60"
+                                    className="w-9 h-9 sm:w-10 sm:h-10 rounded border border-[#22223a] bg-[#090914] opacity-60"
                                   />
                                 );
                               }
@@ -1212,7 +1214,7 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
                                   onMouseEnter={() => setHoveredCertId(cert.id)}
                                   onMouseLeave={() => setHoveredCertId(prev => (prev === cert.id ? null : prev))}
                                   title={`${cert.dungeonName} · ${specLabel}`}
-                                  className="aspect-square rounded border border-amber-500/60 hover:border-amber-300 bg-gradient-to-br from-[#1d192b] to-[#111120] hover:from-[#2b243f] hover:to-[#18182e] transition flex flex-col items-center justify-center relative group shadow-sm"
+                                  className="w-9 h-9 sm:w-10 sm:h-10 rounded border border-amber-500/60 hover:border-amber-300 bg-gradient-to-br from-[#1d192b] to-[#111120] hover:from-[#2b243f] hover:to-[#18182e] transition flex flex-col items-center justify-center relative group shadow-sm"
                                   style={{ boxShadow: `inset 0 0 0 1px ${classColor}33` }}
                                 >
                                   <span className="text-sm leading-none">📜</span>
@@ -1292,94 +1294,117 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
                     );
                     return (
                       <div className="space-y-3">
-                        <div>
-                          <div className="text-[10px] text-amber-400/80 font-bold mb-1.5">DBM 播报（房主权威同步）</div>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-1.5">
+                        {/* 1. 声音与播报 */}
+                        <div className="bg-[#121224] border border-[#272744] rounded-lg p-3 space-y-2.5">
+                          <div className="text-[10px] text-amber-400/90 font-bold">声音与播报</div>
+                          <label className="flex items-center gap-3 text-[11px] text-gray-300">
+                            <span className="shrink-0 flex items-center gap-1.5">
+                              <span>{sfxVolPct === 0 ? '🔇' : '🔊'}</span>
+                              <span>战斗与施法音效</span>
+                            </span>
+                            <input
+                              type="range"
+                              min={0}
+                              max={100}
+                              step={5}
+                              value={sfxVolPct}
+                              onChange={(e) => {
+                                const pct = Number(e.target.value);
+                                setSfxVolPct(pct);
+                                setSfxVolume(pct / 100);
+                              }}
+                              className="flex-1 max-w-xs accent-amber-500 cursor-pointer"
+                            />
+                            <span className="w-9 text-right tabular-nums text-amber-300 font-semibold">
+                              {sfxVolPct}%
+                            </span>
+                          </label>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-1.5 pt-1 border-t border-[#20203a]">
                             <Check label="DBM 文字播报（分散/分摊/打断/小怪）" k="enableDbm" />
                             <Check label="DBM 短语音播报（4字战术语音）" k="enableDbmVoice" />
                           </div>
                         </div>
-                        <div>
-                          <div className="text-[10px] text-amber-400/80 font-bold mb-1.5">战斗统计插件 (Details!)</div>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-1.5">
+
+                        {/* 2. 视角与插件 */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <div className="bg-[#121224] border border-[#272744] rounded-lg p-3 space-y-2">
+                            <div className="text-[10px] text-amber-400/90 font-bold">视角</div>
+                            <label className="flex items-center gap-1.5 text-[11px] text-gray-300 cursor-pointer select-none hover:text-white">
+                              <input
+                                type="checkbox"
+                                checked={prefs.canvasViewMode === 'ISO'}
+                                onChange={(e) =>
+                                  patchDisplay({
+                                    ...prefs,
+                                    canvasViewMode: e.target.checked ? 'ISO' : 'TOPDOWN',
+                                  })
+                                }
+                                className="accent-amber-500"
+                              />
+                              <span>2.5D 立体视角</span>
+                            </label>
+                            {prefs.canvasViewMode === 'ISO' && (() => {
+                              const orbitSens = clampIsoViewSensitivity(
+                                prefs.isoOrbitSensitivity as number
+                              );
+                              const pitchSens = clampIsoViewSensitivity(
+                                prefs.isoPitchSensitivity as number
+                              );
+                              return (
+                              <div className="pt-1 space-y-1.5 border-t border-[#20203a]">
+                                <label className="flex flex-col gap-0.5 text-[11px] text-gray-300">
+                                  <span className="flex justify-between gap-2">
+                                    <span>环绕灵敏度</span>
+                                    <span className="text-amber-400/90 tabular-nums">
+                                      {orbitSens.toFixed(2)}
+                                    </span>
+                                  </span>
+                                  <input
+                                    type="range"
+                                    min={0.5}
+                                    max={1.5}
+                                    step={0.05}
+                                    value={orbitSens}
+                                    onChange={(e) =>
+                                      patchDisplay({
+                                        ...prefs,
+                                        isoOrbitSensitivity: Number(e.target.value),
+                                      })
+                                    }
+                                    className="w-full accent-amber-500"
+                                  />
+                                </label>
+                                <label className="flex flex-col gap-0.5 text-[11px] text-gray-300">
+                                  <span className="flex justify-between gap-2">
+                                    <span>俯仰灵敏度</span>
+                                    <span className="text-amber-400/90 tabular-nums">
+                                      {pitchSens.toFixed(2)}
+                                    </span>
+                                  </span>
+                                  <input
+                                    type="range"
+                                    min={0.5}
+                                    max={1.5}
+                                    step={0.05}
+                                    value={pitchSens}
+                                    onChange={(e) =>
+                                      patchDisplay({
+                                        ...prefs,
+                                        isoPitchSensitivity: Number(e.target.value),
+                                      })
+                                    }
+                                    className="w-full accent-amber-500"
+                                  />
+                                </label>
+                              </div>
+                              );
+                            })()}
+                          </div>
+
+                          <div className="bg-[#121224] border border-[#272744] rounded-lg p-3 space-y-2">
+                            <div className="text-[10px] text-amber-400/90 font-bold">战斗统计插件 (Details!)</div>
                             <Check label="按照 Boss 房间自动清空计算" k="detailsResetPerBossRoom" />
                           </div>
-                        </div>
-                        <div>
-                          <div className="text-[10px] text-amber-400/80 font-bold mb-1.5">视角</div>
-                          <label className="flex items-center gap-1.5 text-[11px] text-gray-300 cursor-pointer select-none hover:text-white">
-                            <input
-                              type="checkbox"
-                              checked={prefs.canvasViewMode === 'ISO'}
-                              onChange={(e) =>
-                                patchDisplay({
-                                  ...prefs,
-                                  canvasViewMode: e.target.checked ? 'ISO' : 'TOPDOWN',
-                                })
-                              }
-                              className="accent-amber-500"
-                            />
-                            <span>2.5D</span>
-                          </label>
-                          {prefs.canvasViewMode === 'ISO' && (() => {
-                            const orbitSens = clampIsoViewSensitivity(
-                              prefs.isoOrbitSensitivity as number
-                            );
-                            const pitchSens = clampIsoViewSensitivity(
-                              prefs.isoPitchSensitivity as number
-                            );
-                            return (
-                            <div className="mt-2 space-y-2 pl-0.5">
-                              <label className="flex flex-col gap-1 text-[11px] text-gray-300">
-                                <span className="flex justify-between gap-2">
-                                  <span>环绕灵敏度</span>
-                                  <span className="text-amber-400/90 tabular-nums">
-                                    {orbitSens.toFixed(2)}
-                                  </span>
-                                </span>
-                                <input
-                                  type="range"
-                                  min={0.5}
-                                  max={1.5}
-                                  step={0.05}
-                                  value={orbitSens}
-                                  onChange={(e) =>
-                                    patchDisplay({
-                                      ...prefs,
-                                      isoOrbitSensitivity: Number(e.target.value),
-                                    })
-                                  }
-                                  className="w-full accent-amber-500"
-                                />
-                              </label>
-                              <label className="flex flex-col gap-1 text-[11px] text-gray-300">
-                                <span className="flex justify-between gap-2">
-                                  <span>俯仰灵敏度</span>
-                                  <span className="text-amber-400/90 tabular-nums">
-                                    {pitchSens.toFixed(2)}
-                                  </span>
-                                </span>
-                                <input
-                                  type="range"
-                                  min={0.5}
-                                  max={1.5}
-                                  step={0.05}
-                                  value={pitchSens}
-                                  onChange={(e) =>
-                                    patchDisplay({
-                                      ...prefs,
-                                      isoPitchSensitivity: Number(e.target.value),
-                                    })
-                                  }
-                                  className="w-full accent-amber-500"
-                                />
-                              </label>
-                              <p className="text-[10px] text-gray-500">
-                                默认 1.00，可调 ±50%（0.50–1.50）
-                              </p>
-                            </div>
-                            );
-                          })()}
                         </div>
                         <div>
                           <div className="text-[10px] text-amber-400/80 font-bold mb-1.5">血条 · 名称</div>

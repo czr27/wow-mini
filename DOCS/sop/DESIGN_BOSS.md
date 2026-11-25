@@ -60,3 +60,9 @@ npx --yes tsx --test DEV/packages/engine/src/__tests__/classes_and_universal_ai.
   DEV/packages/engine/src/__tests__/dbm_alerts.test.ts \
   QA/tests/smart_ai_metrics_and_personality.test.ts
 ```
+
+## 强制验收：全随机 AI 普通模式通关测试
+每完成一个首领（或机制改动）后，**必须**新增/运行普通模式全随机 AI 通关测试（参考 `DEV/packages/engine/src/__tests__/dungeon_normal_ai_clear.test.ts`）：
+1. **随机填满队伍**：按副本规模填满全 AI 队伍（5 人本：1 坦 1 治 3 DPS），各位置从可用职业池中**随机抽取**。
+2. **至少重复 3 轮**：连续跑 **3 轮**以上不同职业组合，确保覆盖多职业搭配。
+3. **必须通关普通模式**：每轮均须在合理战斗时长内击杀首领并通关普通模式；若未通过，必须排查是 **AI 未理解机制**（如未打断、未躲圈、未拉小怪）还是 **Boss 数值/机制设计不合理**，修复后再提交。

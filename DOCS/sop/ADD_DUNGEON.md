@@ -54,7 +54,19 @@
 
 ## 5. 最小验收与测试命令
 
-```bash
+```
+
+## 强制验收：全随机 AI 普通模式通关测试
+每新增一个副本，设计完成后**必须**补充普通模式全随机 AI 通关测试（参考 `DEV/packages/engine/src/__tests__/dungeon_normal_ai_clear.test.ts`）：
+- 使用随机职业组合填满 AI 队伍，**至少重复 3 轮**覆盖多职业；
+- 验证全随机 AI 队伍能够稳定通关该副本的**普通模式**；
+- 若出现灭团或超时，必须定位是 **AI 未理解副本机制** 还是 **Boss 数值/机制设计存在缺陷** 并修复。bash
 npx --yes tsx --test DEV/packages/engine/src/__tests__/room_lifecycle_and_sync.test.ts \
   QA/tests/lobby_room_queue_substitution.test.ts
 ```
+
+## 强制验收：全随机 AI 普通模式通关测试
+每新增一个副本，设计完成后**必须**补充普通模式全随机 AI 通关测试（参考 `DEV/packages/engine/src/__tests__/dungeon_normal_ai_clear.test.ts`）：
+- 使用随机职业组合填满 AI 队伍，**至少重复 3 轮**覆盖多职业；
+- 验证全随机 AI 队伍能够稳定通关该副本的**普通模式**；
+- 若出现灭团或超时，必须定位是 **AI 未理解副本机制** 还是 **Boss 数值/机制设计存在缺陷** 并修复。

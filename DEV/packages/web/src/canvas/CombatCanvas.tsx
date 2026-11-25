@@ -2153,61 +2153,113 @@ function drawArenaVignetteScreen(
   ctx.fillRect(0, 0, width, height);
 }
 
+/** Cached seamless tile pattern for maze outer cavern / rock texture */
+const mazeFloorPatternCache = new Map<string, CanvasPattern | null>();
+
+function getOrCreateMazeRockPattern(
+  ctx: CanvasRenderingContext2D,
+  theme: { id?: string; ambienceColor?: string; wallColor?: string; floorColor?: string; pathAccent?: string } | null | undefined,
+  is20Man: boolean
+): CanvasPattern | null {
+  const wallColor = theme?.wallColor || (is20Man ? '#1c0b10' : '#121324');
+  const ambienceColor = theme?.ambienceColor || (is20Man ? '#110508' : '#080814');
+  const key = `${theme?.id || (is20Man ? '20m' : '5m')}|${wallColor}|${ambienceColor}`;
+  if (mazeFloorPatternCache.has(key)) {
+    return mazeFloorPatternCache.get(key) ?? null;
+  }
+
+  const size = 140;
+  const tile = document.createElement('canvas');
+  tile.width = size;
+  tile.height = size;
+  const tctx = tile.getContext('2d');
+  if (!tctx) return null;
+
+  // Base matches maze wallColor so outer region blends seamlessly with maze walls
+  tctx.fillStyle = wallColor;
+  tctx.fillRect(0, 0, size, size);
+
+  // Subtle deterministic rock strata / cobblestone blocks
+  let s = 1337;
+  const rand = () => {
+    s = (Math.imul(1664525, s) + 1013904223) >>> 0;
+    return s / 0x100000000;
+  };
+
+  for (let i = 0; i < 28; i++) {
+    const rx = rand() * size;
+    const ry = rand() * size;
+    const rw = 16 + rand() * 26;
+    const rh = 12 + rand() * 20;
+    tctx.fillStyle = rand() > 0.5 ? 'rgba(0, 0, 0, 0.16)' : 'rgba(255, 255, 255, 0.03)';
+    // Draw wrapped for seamless tiling
+    for (const ox of [-size, 0, size]) {
+      for (const oy of [-size, 0, size]) {
+        tctx.beginPath();
+        tctx.ellipse(rx + ox, ry + oy, rw * 0.5, rh * 0.5, rand() * Math.PI, 0, Math.PI * 2);
+        tctx.fill();
+      }
+    }
+  }
+
+  // Subtle rock mortar / fissure lines
+  tctx.strokeStyle = is20Man ? 'rgba(239, 68, 68, 0.16)' : 'rgba(0, 0, 0, 0.25)';
+  tctx.lineWidth = 1;
+  for (let y = 0; y < size; y += 35) {
+    tctx.beginPath();
+    tctx.moveTo(0, y + 0.5);
+    tctx.lineTo(size, y + 0.5);
+    tctx.stroke();
+  }
+  for (let x = 0; x < size; x += 35) {
+    tctx.beginPath();
+    tctx.moveTo(x + 0.5, 0);
+    tctx.lineTo(x + 0.5, size);
+    tctx.stroke();
+  }
+
+  // 20-man molten magma hairline veins
+  if (is20Man) {
+    tctx.strokeStyle = 'rgba(249, 115, 22, 0.22)';
+    tctx.lineWidth = 1.5;
+    tctx.beginPath();
+    tctx.moveTo(0, 48);
+    tctx.quadraticCurveTo(45, 62, 88, 36);
+    tctx.quadraticCurveTo(118, 22, 140, 48);
+    tctx.stroke();
+  }
+
+  const pattern = ctx.createPattern(tile, 'repeat');
+  mazeFloorPatternCache.set(key, pattern);
+  return pattern;
+}
+
 /**
  * Maze / Cavern floor in *world* space — drawn after applyCanvasViewTransform.
- * Expands beyond screen bounds to world AABB covering canvas under all yaw / pitch / zoom,
- * with extra margin so no boundary can ever be seen in 2.5D.
+ * Uses GPU-accelerated seamless maze rock pattern across the entire 2.5D frustum AABB,
+ * eliminating per-frame grid line loops and completely hiding outer canvas boundaries.
  */
 function drawMazeCavernFloorWorld(
   ctx: CanvasRenderingContext2D,
   cam: ViewCamera,
   canvasW: number,
   canvasH: number,
-  theme: { ambienceColor?: string; wallColor?: string } | null | undefined,
+  theme: { id?: string; ambienceColor?: string; wallColor?: string; floorColor?: string; pathAccent?: string } | null | undefined,
   is20Man: boolean
 ) {
-  // Pad px 350 ensures full bleed even at extreme pitch (20°) and low zoom (0.5)
-  const aabb = worldAabbCoveringCanvas(cam, canvasW, canvasH, 350);
+  // Pad 420px ensures full coverage even at min pitch (20°) and min zoom (0.5)
+  const aabb = worldAabbCoveringCanvas(cam, canvasW, canvasH, 420);
   const { minX, minY, maxX, maxY } = aabb;
   const w = maxX - minX;
   const h = maxY - minY;
 
-  // Base cavern floor fill
-  ctx.fillStyle = theme?.ambienceColor || (is20Man ? '#110508' : '#080814');
+  const pattern = getOrCreateMazeRockPattern(ctx, theme, is20Man);
+  ctx.fillStyle = pattern || theme?.wallColor || (is20Man ? '#1c0b10' : '#121324');
   ctx.fillRect(minX, minY, w, h);
-
-  // World-space cavern grid texture (moves and turns with world, infinite bleed)
-  const gridSize = 35;
-  const x0 = Math.floor(minX / gridSize) * gridSize;
-  const y0 = Math.floor(minY / gridSize) * gridSize;
-
-  ctx.strokeStyle = is20Man ? 'rgba(239, 68, 68, 0.20)' : '#121124';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  for (let x = x0; x <= maxX; x += gridSize) {
-    ctx.moveTo(x, minY);
-    ctx.lineTo(x, maxY);
-  }
-  for (let y = y0; y <= maxY; y += gridSize) {
-    ctx.moveTo(minX, y);
-    ctx.lineTo(maxX, y);
-  }
-  ctx.stroke();
-
-  // 20-man volcanic lava fissure veins across world space
-  if (is20Man) {
-    ctx.strokeStyle = 'rgba(249, 115, 22, 0.28)';
-    ctx.lineWidth = 2.5;
-    ctx.beginPath();
-    ctx.moveTo(minX + 60, minY + h * 0.35);
-    ctx.quadraticCurveTo(minX + w * 0.4, minY + h * 0.45, minX + w * 0.65, minY + h * 0.3);
-    ctx.quadraticCurveTo(minX + w * 0.85, minY + h * 0.2, maxX - 50, minY + h * 0.5);
-    ctx.stroke();
-  }
 }
 
 /**
- * Screen-space radial vignette for maze cavern to naturally fade distant edges into deep shadow.
+ * Subtle screen-space radial vignette for maze cavern.
  */
 function drawMazeCavernVignetteScreen(
   ctx: CanvasRenderingContext2D,
@@ -2217,13 +2269,13 @@ function drawMazeCavernVignetteScreen(
   const vignette = ctx.createRadialGradient(
     width / 2,
     height / 2,
-    Math.min(width, height) * 0.45,
+    Math.min(width, height) * 0.48,
     width / 2,
     height / 2,
-    Math.max(width, height) * 0.82
+    Math.max(width, height) * 0.85
   );
   vignette.addColorStop(0, 'rgba(0, 0, 0, 0)');
-  vignette.addColorStop(1, 'rgba(2, 2, 6, 0.62)');
+  vignette.addColorStop(1, 'rgba(2, 2, 6, 0.38)');
   ctx.fillStyle = vignette;
   ctx.fillRect(0, 0, width, height);
 }
@@ -2475,6 +2527,14 @@ export const CombatCanvas: React.FC<Props> = ({
     width: number;
     height: number;
     canvas: HTMLCanvasElement;
+  } | null>(null);
+  /** Cached wall candle positions per maze seed & canvas dimensions */
+  const mazeCandleSitesCacheRef = useRef<{
+    seed: number;
+    width: number;
+    height: number;
+    is20Man: boolean;
+    sites: Array<{ x: number; y: number }>;
   } | null>(null);
 
   // Live props for the RAF loop — travelRemainingMs was previously closed over stale
@@ -3693,17 +3753,6 @@ export const CombatCanvas: React.FC<Props> = ({
 
       // Proximity pull is handled inside STAGE B after entry snap + boss draw (avoid pre-snap false pulls)
 
-
-      // 玩家只走迷宫通路
-      if (runPhase === 'TRAVEL_RECOVERY' && mazeLayoutRef.current) {
-        const clamped = clampToMazePath(mazeLayoutRef.current, playerPosRef.current.x, playerPosRef.current.y, width, height);
-        // Soft pull toward path center (keep some control feel)
-        playerPosRef.current = {
-          x: playerPosRef.current.x * 0.35 + clamped.x * 0.65,
-          y: playerPosRef.current.y * 0.35 + clamped.y * 0.65,
-        };
-      }
-
       // ── STAGE A: TRAVEL_RECOVERY (Prim maze) ──
       if (runPhase === 'TRAVEL_RECOVERY') {
       /**
@@ -3943,33 +3992,6 @@ export const CombatCanvas: React.FC<Props> = ({
           }
         }
 
-        // 4) Ambience carve outer
-        offCtx.fillStyle = theme.ambienceColor || '#080814';
-        for (let r = 0; r < rows; r++) {
-          for (let c = 0; c < cols; c++) {
-            if (!onOuterBand(c, r) || nearPortal(c, r)) continue;
-            if (u01(c, r, 230) > 0.5) continue;
-            const { x, y } = cellCenter(c, r);
-            const nx = c <= 1 ? -1 : c >= cols - 2 ? 1 : (u01(c, r, 231) - 0.5) * 2;
-            const ny = r <= 1 ? -1 : r >= rows - 2 ? 1 : (u01(c, r, 232) - 0.5) * 2;
-            const push = cs * (0.15 + 0.85 * u01(c, r, 233));
-            fillCloud(
-              x + nx * push,
-              y + ny * push,
-              cs * (0.55 + 0.7 * u01(c, r, 234)),
-              c,
-              r,
-              240,
-              {
-                stretchX: 0.65 + 0.7 * u01(c, r, 235),
-                stretchY: 0.65 + 0.7 * u01(c, r, 236),
-                rot: (u01(c, r, 237) - 0.5) * Math.PI,
-                puffs: 2,
-              }
-            );
-          }
-        }
-
         mazeWallCanvasCacheRef.current = {
           seed: layout.seed,
           width,
@@ -4023,8 +4045,18 @@ export const CombatCanvas: React.FC<Props> = ({
         ctx.globalAlpha = 1;
       };
 
-      /** Wall cells bordering a path — rationally placed candles mounted on corridor wall surfaces. */
+      /** Wall cells bordering a path — cached by seed & dimensions to avoid per-frame grid scan. */
       const collectMazeWallCandleSites = (layout: MazeLayout): Array<{ x: number; y: number }> => {
+        const cachedCandles = mazeCandleSitesCacheRef.current;
+        if (
+          cachedCandles &&
+          cachedCandles.seed === layout.seed &&
+          cachedCandles.width === width &&
+          cachedCandles.height === height &&
+          cachedCandles.is20Man === is20Man
+        ) {
+          return cachedCandles.sites;
+        }
         const { originX, originY } = getMazeDrawOrigin(layout, width, height);
         const { cols, rows, cellSize, grid, seed } = layout;
         const entC = layout.entrance?.col ?? 1;
@@ -4108,50 +4140,48 @@ export const CombatCanvas: React.FC<Props> = ({
             y: originY + p.r * cellSize + cellSize / 2 + p.dy * cellSize,
           });
         }
+        mazeCandleSitesCacheRef.current = {
+          seed: layout.seed,
+          width,
+          height,
+          is20Man,
+          sites,
+        };
         return sites;
       };
 
-      /** Candles at 30% of the old hardcoded torch size. */
+      /** Candles at 30% of the old hardcoded torch size — fast direct coordinate draw without save/restore. */
       const drawMazeWallCandle = (
         x: number,
         y: number,
         torchColor: string,
         style: 'amber' | 'violet'
       ) => {
-        const S = 0.3;
-        ctx.save();
-        ctx.translate(x, y);
-        ctx.scale(S, S);
         if (style === 'violet') {
           ctx.fillStyle = '#1e1b2e';
-          ctx.fillRect(-3, -8, 6, 14);
-          const flicker = Math.sin(tickCount * 0.25 + x) * 3;
+          ctx.fillRect(x - 0.9, y - 2.4, 1.8, 4.2);
+          const flicker = Math.sin(tickCount * 0.25 + x) * 0.9;
           ctx.fillStyle = 'rgba(192, 38, 211, 0.28)';
           ctx.beginPath();
-          ctx.arc(0, 0, 16 + flicker, 0, Math.PI * 2);
+          ctx.arc(x, y, 4.8 + flicker, 0, Math.PI * 2);
           ctx.fill();
           ctx.fillStyle = '#c026d3';
           ctx.beginPath();
-          ctx.arc(0, 0, 4, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.fillStyle = '#f43f5e';
-          ctx.beginPath();
-          ctx.arc(0, 0, 2, 0, Math.PI * 2);
+          ctx.arc(x, y, 1.2, 0, Math.PI * 2);
           ctx.fill();
         } else {
           ctx.fillStyle = '#8B4513';
-          ctx.fillRect(-2, -6, 4, 12);
-          const flicker = Math.sin(tickCount * 0.2 + x) * 2;
+          ctx.fillRect(x - 0.6, y - 1.8, 1.2, 3.6);
+          const flicker = Math.sin(tickCount * 0.2 + x) * 0.6;
           ctx.fillStyle = 'rgba(245, 158, 11, 0.25)';
           ctx.beginPath();
-          ctx.arc(0, 0, 14 + flicker, 0, Math.PI * 2);
+          ctx.arc(x, y, 4.2 + flicker, 0, Math.PI * 2);
           ctx.fill();
           ctx.fillStyle = torchColor || '#F59E0B';
           ctx.beginPath();
-          ctx.arc(0, 0, 3.5, 0, Math.PI * 2);
+          ctx.arc(x, y, 1.1, 0, Math.PI * 2);
           ctx.fill();
         }
-        ctx.restore();
       };
 
         approachElapsedRef.current = 0;
