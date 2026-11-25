@@ -13,6 +13,7 @@ import {
   type ClassId,
   type CombatBatch,
   type CombatEffect,
+  type GameState,
   type LobbyRoom,
   type RoomMember,
   type NetworkCastTimeline,
@@ -545,12 +546,18 @@ export class RoomCombatSession {
 
   private tickServerAiTeammates(boss: Unit) {
     if (this.tickCount % 20 !== 0) return; // ~1s AI cadence
-    const gameState = {
-      boss,
-      friendlyUnits: this.engine.friendlyUnits,
-      enemyUnits: this.engine.enemyUnits,
-      nowMs: this.engine.nowMs,
-    } as any;
+    const bossCasting = this.bossAi?.currentCasting;
+    const gameState: GameState = {
+      phase: this.rsm.phase,
+      elapsedMs: this.engine.nowMs ?? 0,
+      units: [...this.engine.friendlyUnits, ...this.engine.enemyUnits],
+      bossId: boss.id,
+      bossChannelSpellId: bossCasting?.skill?.id ?? null,
+      bossChannelRemainingMs: bossCasting
+        ? Math.max(0, (bossCasting.skill.castTimeMs || 0) - bossCasting.elapsedMs)
+        : 0,
+      groundEffects: this.engine.effectsManager?.groundEffects,
+    };
 
     for (const u of this.engine.friendlyUnits) {
       if (!(u as any).isAi || !(u.isAlive ?? u.alive) || u.hp <= 0) continue;
