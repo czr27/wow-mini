@@ -16,7 +16,7 @@ function enemy(partial: Partial<Unit> & { id: string; x: number; y: number }): U
     position: { x: partial.x, y: partial.y },
     buffs: [],
     debuffs: [],
-  } as Unit;
+  } as unknown as Unit;
 }
 
 describe('pickNearestHostileExcluding', () => {

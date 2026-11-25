@@ -71,14 +71,15 @@ export const MAZE_VIEWPORT_FRACTION = 1;
  *        clients speed march/combat chase ×1.6 so clear time stays the same.
  * Rev 8: ≥6 trash packs spawned; 2–3 marked isEncounter on the march path.
  * Rev 9: non-encounter packs spawn only off the mandatory path (≥3 cells away).
+ * Rev 10: 迷宫宽度 +30% (scale 2.08) 且严格保持长宽比例，小怪按死胡同/阵型合理重布，烛台依内壁智能排布。
  */
-export const MAZE_LAYOUT_REVISION = 9;
+export const MAZE_LAYOUT_REVISION = 10;
 
 /** Non-encounter packs must sit at least this many PATH cells off the main route. */
 export const MAZE_AMBIENT_MIN_PATH_DIST = 3;
 
 /** Minimum trash packs visible in each maze (ambience + encounters). */
-export const MAZE_MIN_SPAWN_PACKS = 6;
+export const MAZE_MIN_SPAWN_PACKS = 8;
 /** Path encounters per maze (inclusive range). */
 export const MAZE_ENCOUNTER_PACKS_MIN = 2;
 export const MAZE_ENCOUNTER_PACKS_MAX = 3;
@@ -100,10 +101,11 @@ export const MAZE_BOTTOM_EXTEND_PX = 30;
 
 /**
  * Maze playfield / grid width scale vs rev6 (~70% band + base cols).
+ * Rev 10: 宽度在 rev7 基础上再增 30% (1.6 × 1.3 = 2.08)，保持长宽比例。
  * Longer path → clients multiply march/combat chase by the same factor so
  * targetTravelMs (过关时间) stays unchanged.
  */
-export const MAZE_WIDTH_COMPLEXITY_SCALE = 1.6;
+export const MAZE_WIDTH_COMPLEXITY_SCALE = 2.08;
 /** Same as width scale — use for lead / WASD / party lerp during travel. */
 export const MAZE_TRAVERSE_SPEED_SCALE = MAZE_WIDTH_COMPLEXITY_SCALE;
 
@@ -189,7 +191,7 @@ export function computeMazePlacement(
   const rawW = Math.max(1, cols * baseCellSize);
   const rawH = Math.max(1, rows * baseCellSize);
   const scale = Math.min(playW / rawW, playH / rawH);
-  const cellSize = Math.max(6, Math.floor(baseCellSize * scale));
+  const cellSize = Math.max(4, Math.floor(baseCellSize * scale));
   const mazeW = cols * cellSize;
   const mazeH = rows * cellSize;
   const originX = playX0 + (playW - mazeW) / 2;
@@ -288,19 +290,27 @@ export function scaleMazeParams(targetTravelMs: number, tier: '5man' | '20man'):
   cellSize: number;
 } {
   const sec = Math.max(8, Math.min(30, targetTravelMs / 1000));
-  // odd dimensions for classic Prim cell carving — rev6 base × width scale
+  // odd dimensions for classic Prim cell carving — rev10: width +30%, aspect ratio strictly preserved
   const base = tier === '20man' ? 29 : 21;
   const boost = Math.round((sec - 10) * 0.8);
   let cols = Math.round((base + boost) * MAZE_WIDTH_COMPLEXITY_SCALE);
-  let rows = Math.max(15, Math.round((base - 4 + Math.floor(boost / 2)) * Math.sqrt(MAZE_WIDTH_COMPLEXITY_SCALE)));
   if (cols % 2 === 0) cols += 1;
-  if (rows % 2 === 0) rows += 1;
-  cols = Math.max(15, Math.min(65, cols));
-  rows = Math.max(15, Math.min(41, rows));
-  // 路径遭遇 2–3 堆；场景总刷新 ≥6
+  // 保持迷宫长宽比例不变：5人目标比 31/21 (≈1.476)，20人目标比 51/33 (≈1.545)
+  const targetRatio = tier === '20man' ? 51 / 33 : 31 / 21;
+  let rows = Math.round(cols / targetRatio);
+  if (rows % 2 === 0) {
+    rows = Math.abs(cols / (rows - 1) - targetRatio) < Math.abs(cols / (rows + 1) - targetRatio) ? rows - 1 : rows + 1;
+  }
+  rows = Math.max(15, rows);
+  cols = Math.max(15, Math.min(85, cols));
+  rows = Math.max(15, Math.min(55, rows));
+  // 路径遭遇 2–3 堆；场景总刷新 5人 8 堆 / 20人 11 堆
   const packCount =
     tier === '20man' || sec >= 10 ? MAZE_ENCOUNTER_PACKS_MAX : MAZE_ENCOUNTER_PACKS_MIN;
-  const spawnPackCount = Math.max(MAZE_MIN_SPAWN_PACKS, packCount + 3);
+  const spawnPackCount = Math.max(
+    MAZE_MIN_SPAWN_PACKS,
+    tier === '20man' ? packCount + 8 : packCount + 5
+  );
   // 同画布内列更多 → 格子略小，通路仍能塞进 playfield
   const cellSize = tier === '20man' ? 18 : 22;
   return { cols, rows, packCount, spawnPackCount, cellSize };
@@ -566,7 +576,10 @@ function placeTrashSpawns(
   offPathCells: Array<{ c: number; r: number; dist: number }>,
   cellSize: number,
   originX: number,
-  originY: number
+  originY: number,
+  grid?: number[],
+  cols?: number,
+  rows?: number
 ): MazeTrashSpawnSpec[] {
   const segLens: number[] = [];
   let totalLen = 0;
@@ -613,35 +626,72 @@ function placeTrashSpawns(
     encounterSet.add(p);
   }
 
-  // Shuffle off-path sites for ambient packs
-  const sites = offPathCells.slice();
-  for (let i = sites.length - 1; i > 0; i--) {
-    const j = Math.floor(rand() * (i + 1));
-    [sites[i], sites[j]] = [sites[j], sites[i]];
+  // Rate off-path candidate sites: dead-ends (degree 1) and deep alcoves get highest priority
+  const isPath = (c: number, r: number) =>
+    !!(grid && cols && rows && c >= 0 && r >= 0 && c < cols && r < rows && grid[r * cols + c]);
+  const getDegree = (c: number, r: number) =>
+    (isPath(c + 1, r) ? 1 : 0) +
+    (isPath(c - 1, r) ? 1 : 0) +
+    (isPath(c, r + 1) ? 1 : 0) +
+    (isPath(c, r - 1) ? 1 : 0);
+
+  // Score candidate sites: dead ends (degree 1) > corners (degree 2) > intersections; distance adds bonus
+  const scoredSites = offPathCells.map((site) => {
+    const deg = grid && cols && rows ? getDegree(site.c, site.r) : 2;
+    const score = (deg === 1 ? 50 : deg === 2 ? 25 : 5) + site.dist * 3 + rand() * 15;
+    return { ...site, deg, score };
+  });
+  scoredSites.sort((a, b) => b.score - a.score);
+
+  // Pick ambient sites ensuring at least 3.8 cells of distance between any two packs
+  const ambientSites: Array<{ c: number; r: number }> = [];
+  const neededAmbient = totalPacks - encounterSet.size;
+  for (const cand of scoredSites) {
+    if (ambientSites.length >= neededAmbient) break;
+    const ok = ambientSites.every((s) => Math.hypot(s.c - cand.c, s.r - cand.r) >= 3.8);
+    if (ok) ambientSites.push({ c: cand.c, r: cand.r });
   }
-  let siteCursor = 0;
-  const usedSites = new Set<string>();
+  // Fallback distance >= 2 if needed
+  for (const cand of scoredSites) {
+    if (ambientSites.length >= neededAmbient) break;
+    if (ambientSites.some((s) => s.c === cand.c && s.r === cand.r)) continue;
+    const ok = ambientSites.every((s) => Math.hypot(s.c - cand.c, s.r - cand.r) >= 2);
+    if (ok) ambientSites.push({ c: cand.c, r: cand.r });
+  }
+  for (const cand of scoredSites) {
+    if (ambientSites.length >= neededAmbient) break;
+    if (ambientSites.some((s) => s.c === cand.c && s.r === cand.r)) continue;
+    ambientSites.push({ c: cand.c, r: cand.r });
+  }
+
+  let ambientCursor = 0;
+  let encounterIndex = 0;
 
   for (let p = 1; p <= totalPacks; p++) {
     const isEncounter = encounterSet.has(p);
     const mobsInPack = is20 ? 3 : 2;
 
     if (isEncounter) {
-      const pathT = (p / (totalPacks + 1)) * 0.85 + 0.08;
+      encounterIndex++;
+      // Distribute encounters evenly along the march progress (e.g. ~35% & ~70% for 2 packs; ~25%, ~50%, ~75% for 3 packs)
+      const pathT = (encounterIndex / (encounters + 1)) * 0.72 + 0.14;
       const base = getPoint(totalLen * pathT);
+
+      // Compact squad spread along path corridor (within cell boundaries, no wall clipping)
+      const spread = Math.min(cellSize * 0.35, 2.4);
       for (let m = 0; m < mobsInPack; m++) {
         const nameIdx = (stageIndex * 7 + p * 3 + m) % names.length;
         const modelIdx = (stageIndex * 5 + p * 2 + m) % models.length;
-        const ang = rand() * Math.PI * 2;
-        const rad = 10 + rand() * 14;
+        const ox = m === 0 ? spread : m === 1 ? -spread : 0;
+        const oy = m === 0 ? -spread * 0.4 : m === 1 ? spread * 0.4 : spread * 0.7;
         spawns.push({
           id: `${profile.dungeonId}_s${stageIndex}_p${p}_m${m}`,
           name: names[nameIdx],
           mobModel: models[modelIdx],
           packIndex: p,
           pathT,
-          offsetX: Math.cos(ang) * rad * (m === 0 ? 1 : -0.6),
-          offsetY: Math.sin(ang) * rad * (m === 0 ? 1 : -0.6),
+          offsetX: ox,
+          offsetY: oy,
           maxHp: is20
             ? Math.round(48000 + rand() * 16000 + p * 2000)
             : Math.round(20000 + rand() * 8000 + p * 1500),
@@ -652,28 +702,19 @@ function placeTrashSpawns(
       continue;
     }
 
-    // Ambient: must be off the mandatory route (≥3 PATH cells when possible)
-    let site = sites[siteCursor++];
-    while (site && usedSites.has(`${site.c},${site.r}`) && siteCursor < sites.length) {
-      site = sites[siteCursor++];
-    }
-    if (!site && sites.length > 0) {
-      site = sites[Math.floor(rand() * sites.length)];
-    }
-    if (site) usedSites.add(`${site.c},${site.r}`);
-
+    // Ambient pack: placed in chosen dead-end / side alcove
+    const site = ambientSites[ambientCursor++] || scoredSites[Math.floor(rand() * scoredSites.length)];
     const anchor = site
       ? cellToPixel(site.c, site.r, cellSize, originX, originY)
       : getPoint(totalLen * 0.5);
     const pathT = nearestPathT(pathPixels, totalLen, segLens, anchor.x, anchor.y);
 
+    const spread = Math.min(cellSize * 0.32, 2.0);
     for (let m = 0; m < mobsInPack; m++) {
       const nameIdx = (stageIndex * 7 + p * 3 + m) % names.length;
       const modelIdx = (stageIndex * 5 + p * 2 + m) % models.length;
-      const ang = rand() * Math.PI * 2;
-      const rad = 6 + rand() * 10;
-      const ox = Math.cos(ang) * rad * (m === 0 ? 1 : -0.55);
-      const oy = Math.sin(ang) * rad * (m === 0 ? 1 : -0.55);
+      const ox = m === 0 ? spread : m === 1 ? -spread : 0;
+      const oy = m === 0 ? -spread * 0.35 : m === 1 ? spread * 0.35 : spread * 0.65;
       spawns.push({
         id: `${profile.dungeonId}_s${stageIndex}_p${p}_m${m}`,
         name: names[nameIdx],
@@ -752,7 +793,10 @@ export function generateMazeLayout(opts: MazeGenerateOptions): MazeLayout {
     offPathCells,
     cellSize,
     originX,
-    originY
+    originY,
+    grid,
+    cols,
+    rows
   );
   const entrancePx = cellToPixel(startCol, startRow, cellSize, originX, originY);
   const exitPx = cellToPixel(endCol, endRow, cellSize, originX, originY);

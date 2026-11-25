@@ -76,7 +76,10 @@ describe('applyGuestNetworkCast', () => {
     const casts: Record<string, AiActiveCast> = {};
 
     // Prove spellBook path is empty in production-like setup
-    assert.equal(engine.getSpell('riptide') || engine.getSpell('shaman_riptide'), undefined);
+    assert.equal(
+      (engine as any).spellBook.get('riptide') || (engine as any).spellBook.get('shaman_riptide'),
+      undefined
+    );
 
     const input: GuestCastInput = {
       playerId: 'char_guest',

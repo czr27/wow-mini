@@ -591,7 +591,7 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
       }
 
       let baseKey = '';
-      if (e.key >= 'F1' && e.key <= 'F12') {
+      if (/^F([1-9]|1[0-2])$/i.test(e.key)) {
         baseKey = e.key.toUpperCase();
       } else if (e.code.startsWith('Digit')) {
         baseKey = e.code.replace('Digit', '');
@@ -1244,6 +1244,10 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
                     return (
                       <div className="space-y-3">
                         <div>
+                          <div className="text-[10px] text-amber-400/80 font-bold mb-1.5">插件与首领预警</div>
+                          <Check label="DBM 播报提醒（首领技能预告 / 治疗分散 / 小怪提示，房主同步权威）" k="enableDbm" />
+                        </div>
+                        <div>
                           <div className="text-[10px] text-amber-400/80 font-bold mb-1.5">视角</div>
                           <label className="flex items-center gap-1.5 text-[11px] text-gray-300 cursor-pointer select-none hover:text-white">
                             <input
@@ -1259,38 +1263,6 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
                             />
                             <span>2.5D</span>
                           </label>
-                          {(() => {
-                            const moveSens = clampIsoViewSensitivity(
-                              prefs.moveSensitivity as number
-                            );
-                            return (
-                              <label className="mt-2 flex flex-col gap-1 text-[11px] text-gray-300">
-                                <span className="flex justify-between gap-2">
-                                  <span>移动灵敏度 (WASD)</span>
-                                  <span className="text-amber-400/90 tabular-nums">
-                                    {moveSens.toFixed(2)}
-                                  </span>
-                                </span>
-                                <input
-                                  type="range"
-                                  min={0.5}
-                                  max={1.5}
-                                  step={0.05}
-                                  value={moveSens}
-                                  onChange={(e) =>
-                                    patchDisplay({
-                                      ...prefs,
-                                      moveSensitivity: Number(e.target.value),
-                                    })
-                                  }
-                                  className="w-full accent-amber-500"
-                                />
-                                <span className="text-[10px] text-gray-500">
-                                  默认 1.00，可调 ±50%（0.50–1.50）
-                                </span>
-                              </label>
-                            );
-                          })()}
                           {prefs.canvasViewMode === 'ISO' && (() => {
                             const orbitSens = clampIsoViewSensitivity(
                               prefs.isoOrbitSensitivity as number

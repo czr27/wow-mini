@@ -96,11 +96,13 @@ export function spendDkResourcesForSpell(
 }
 
 /** UI mapping for PlayerUnitFrame (type + cdMs). */
-export function dkRunesForHud(unit: Unit | null | undefined): Array<{ type: string; cdMs: number }> | undefined {
+export function dkRunesForHud(
+  unit: Unit | null | undefined
+): Array<{ type: 'FROST' | 'BLOOD' | 'UNHOLY'; cdMs: number }> | undefined {
   if (!unit || unit.classId !== 'DK') return undefined;
   ensureDkRunes(unit);
   return (unit.runes || []).map((r) => ({
-    type: r.runeType,
+    type: r.runeType as 'FROST' | 'BLOOD' | 'UNHOLY',
     cdMs: Math.max(0, Math.round(r.cooldownMs || 0)),
   }));
 }

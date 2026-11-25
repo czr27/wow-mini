@@ -12,7 +12,7 @@
 副本运行由 `RunStateMachine`（`DEV/packages/engine/src/engine/RunStateMachine.ts`）驱动，严格按以下阶段流转：
 
 ```
-  [房间开战] ──► TRAVEL_RECOVERY (12-15s 迷宫赶路 / 复活门禁)
+  [房间开战] ──► TRAVEL_RECOVERY (5人 7s / 20人 14s 赶路 / 复活门禁)
                         │ 全员存活且到达首领房
                         ▼
                  PULL_APPROACH (主坦领队平缓接怪，防瞬移)
@@ -35,11 +35,12 @@
 
 | 子模块 | 所在路径 | 职责边界 |
 |---|---|---|
-| **副本状态机** | `DEV/packages/engine/src/engine/RunStateMachine.ts` | 副本阶段流转、首领队列、全员复活门禁、灭团统计与战报生成 |
-| **副本规格与难度基线** | `DEV/packages/engine/src/engine/TierProfile.ts`<br>`DEV/packages/engine/src/types.ts` | 5 人本 / 20 人团本血量/伤害基准、`NORMAL` / `HEROIC` / `CUSTOM`（10 项独立系数 `CustomDifficultySettings`） |
-| **首领数据与 AI** | `DEV/packages/engine/src/bosses/*.ts`<br>`DEV/packages/engine/src/ai/BossAI.ts` | 首领技能时间轴、读条打断窗口、扇形/毒圈地面预警、点名 Debuff 与狂暴 |
+| **副本状态机** | `DEV/packages/engine/src/engine/RunStateMachine.ts` | 副本阶段流转、首领队列（5 人本 7s / 20 人 14s 赶路）、全员复活门禁、灭团统计与战报生成 |
+| **副本规格与难度基线** | `DEV/packages/engine/src/engine/TierProfile.ts`<br>`DEV/packages/engine/src/types.ts` | 5 人本 / 20 人团本血量/伤害基准（`BOSS_KILL_TIME_SEC` 动态 AI 秒伤预算模型）、`NORMAL` / `HEROIC` / `CUSTOM`（10 项独立系数 `CustomDifficultySettings`） |
+| **首领数据与模块化 AI** | `DEV/packages/engine/src/bosses/<dungeon>/`<br>`DEV/packages/engine/src/bosses/core/{BaseBossAI,BossRegistry}.ts` | 首领技能时间轴、读条打断窗口、扇形/毒圈地面预警、点名 Debuff 与狂暴；`ai/BossAI.ts` 仅保留兼容重导出，禁止向其堆砌业务代码 |
 | **地面法阵与几何判定** | `DEV/packages/engine/src/engine/EffectsManager.ts` | 圆形半径/60°扇形区域真实范围判定、治疗圈与敌方毒圈共存 |
-| **房间配置映射** | `DEV/packages/engine/src/room/RoomTypes.ts`<br>`DEV/packages/engine/src/room/RoomManager.ts` | `DUNGEON_ROLE_QUOTAS`（副本名额与 Boss 列表）、房间难度与自定义系数同步到引擎 |
+| **DBM 预警与权威播报** | `DEV/packages/engine/src/engine/DbmManager.ts` | 首领技能自动推导规则、显式 `skill.dbm` 语义覆盖、小怪/危险区运行时触发与房主权威同步队列 |
+| **房间配置映射** | `DEV/packages/engine/src/room/RoomTypes.ts`<br>`DEV/packages/engine/src/room/RoomManager.ts` | `DUNGEON_ROLE_QUOTAS`（现支持 6 大副本：影牙城堡、死亡矿井、血色修道院、斯坦索姆、祖尔格拉布、巨龙之魂）、房间难度与自定义系数同步到引擎 |
 
 ---
 

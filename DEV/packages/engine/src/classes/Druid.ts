@@ -217,9 +217,32 @@ export const DRUID: ClassSpec = {
       ],
     },
 
+    // 全专精基础驱散（平衡/野德用；恢复用下方自然之愈升级版）
     {
       id: 'druid_remove_corruption',
       name: '清除腐蚀',
+      castTimeMs: 0,
+      gcdType: 'normal',
+      gcdCategory: 'NORMAL',
+      cooldownMs: 8_000,
+      resourceCost: 'MANA',
+      resourceCostAmount: 800,
+      targetType: 'SINGLE_ALLY',
+      school: 'NATURE',
+      // 无 spec → 全专精可用；恢复动作条改用自然之愈
+      effects: [
+        {
+          type: 'DISPEL',
+          dispelTypes: ['CURSE', 'POISON'],
+          description: '驱散 1 个诅咒与 1 个中毒，CD 8s',
+        },
+      ],
+    },
+
+    // 恢复专精：自然之愈（可额外驱散魔法）
+    {
+      id: 'druid_natures_cure',
+      name: '自然之愈',
       castTimeMs: 0,
       gcdType: 'normal',
       gcdCategory: 'NORMAL',
@@ -232,7 +255,8 @@ export const DRUID: ClassSpec = {
       effects: [
         {
           type: 'DISPEL',
-          description: '驱散诅咒/中毒/魔法，CD 8s',
+          dispelTypes: ['MAGIC', 'CURSE', 'POISON'],
+          description: '驱散魔法/诅咒/中毒各 1 个，CD 8s（恢复专精）',
         },
       ],
     },
@@ -468,6 +492,35 @@ export const DRUID: ClassSpec = {
     },
 
     {
+      id: 'druid_sunfire',
+      name: '日火术',
+      castTimeMs: 0,
+      gcdType: 'normal',
+      gcdCategory: 'NORMAL',
+      cooldownMs: 0,
+      resourceCost: 'MANA',
+      resourceCostAmount: 1000,
+      targetType: 'SINGLE_ENEMY',
+      school: 'NATURE',
+      spec: 'BALANCE_DPS',
+      effects: [
+        {
+          type: 'SPELL_DAMAGE',
+          baseValue: 3500,
+          description: '一道烈日灼烧敌人，造成瞬发自然伤害',
+        },
+        {
+          type: 'DOT',
+          auraId: 'sunfire_dot',
+          baseValue: 1200,
+          durationMs: 18_000,
+          tickIntervalMs: 3_000,
+          description: '日火DoT，持续18s，每3秒造成一次自然伤害',
+        },
+      ],
+    },
+
+    {
       id: 'druid_hurricane',
       name: '飓风',
       castTimeMs: 2_500,
@@ -600,6 +653,40 @@ export const DRUID: ClassSpec = {
     },
 
     {
+      id: 'druid_rake',
+      name: '斜掠',
+      castTimeMs: 0,
+      gcdType: 'rogue',
+      gcdCategory: 'ROGUE',
+      cooldownMs: 0,
+      resourceCost: 'ENERGY',
+      resourceCostAmount: 35,
+      targetType: 'SINGLE_ENEMY',
+      school: 'PHYSICAL',
+      spec: 'FERAL',
+      effects: [
+        {
+          type: 'PHYSICAL_DAMAGE',
+          baseValue: 4200,
+          description: '斜掠目标造成物理伤害并奖励1点连击点数',
+        },
+        {
+          type: 'BUFF',
+          auraId: 'combo_point_add_1',
+          description: '生成1点连击点数',
+        },
+        {
+          type: 'DOT',
+          auraId: 'rake_dot',
+          baseValue: 1800,
+          durationMs: 15_000,
+          tickIntervalMs: 3_000,
+          description: '斜掠流血效果，持续15秒，每3秒造成一次物理流血伤害',
+        },
+      ],
+    },
+
+    {
       id: 'druid_rip',
       name: '割裂',
       castTimeMs: 0,
@@ -619,6 +706,27 @@ export const DRUID: ClassSpec = {
           durationMs: 16_000,
           tickIntervalMs: 2_000,
           description: '5星终结技：在16秒内每2秒造成高额流血伤害（共8跳，总伤害约19,200）',
+        },
+      ],
+    },
+
+    {
+      id: 'druid_ferocious_bite',
+      name: '凶猛撕咬',
+      castTimeMs: 0,
+      gcdType: 'rogue',
+      gcdCategory: 'ROGUE',
+      cooldownMs: 0,
+      resourceCost: 'COMBO_POINT',
+      resourceCostAmount: 5,
+      targetType: 'SINGLE_ENEMY',
+      school: 'PHYSICAL',
+      spec: 'FERAL',
+      effects: [
+        {
+          type: 'PHYSICAL_DAMAGE',
+          baseValue: 19500,
+          description: '终结技：消耗连击点数对目标造成高额物理伤害（80级满级爆发终结技）',
         },
       ],
     },
@@ -690,6 +798,48 @@ export const DRUID: ClassSpec = {
           type: 'PHYSICAL_DAMAGE',
           baseValue: 7800,
           description: '横扫面前所有敌人造成群体物理伤害（野性核心AOE）',
+        },
+      ],
+    },
+
+    {
+      id: 'druid_skull_bash',
+      name: '迎头痛击',
+      castTimeMs: 0,
+      gcdType: 'off',
+      gcdCategory: 'OFF_GCD',
+      cooldownMs: 10_000,
+      resourceCost: 'NONE',
+      resourceCostAmount: 0,
+      targetType: 'SINGLE_ENEMY',
+      school: 'PHYSICAL',
+      spec: 'FERAL',
+      effects: [
+        {
+          type: 'INTERRUPT',
+          description: '冲向目标并打断施法，使该系法术封锁4秒，CD 10s（不进GCD）',
+        },
+      ],
+    },
+
+    {
+      id: 'druid_berserk',
+      name: '狂暴',
+      castTimeMs: 0,
+      gcdType: 'off',
+      gcdCategory: 'OFF_GCD',
+      cooldownMs: 180_000,
+      resourceCost: 'NONE',
+      resourceCostAmount: 0,
+      targetType: 'SELF',
+      school: 'PHYSICAL',
+      spec: 'FERAL',
+      effects: [
+        {
+          type: 'BUFF',
+          auraId: 'berserk',
+          durationMs: 15_000,
+          description: '进入狂暴状态，持续15秒：使所有猎豹技能能量消耗降低50%，熊形态可打击最多3个目标（不进GCD）',
         },
       ],
     },

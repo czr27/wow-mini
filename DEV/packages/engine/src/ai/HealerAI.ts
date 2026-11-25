@@ -32,13 +32,35 @@ export class HealerAI implements RoleAI {
     const specId = (unit as any).spec as string | undefined;
     const ownedSpells = getSpellsForClassSpec(unit.classId as ClassId, specId);
 
-    // 1. 通用回蓝技能判定（只要拥有回蓝技能且蓝量低于30%）
+    // 1. 通用回蓝技能判定（蓝量低于35%时触发回蓝大招：激活、法力之潮、神圣祈求、希望赞美诗等）
     const curMana = getUnitResourceAmount(unit, 'MANA');
     const maxMana = getUnitResourceMax(unit, 'MANA');
-    if (maxMana > 0 && curMana / maxMana < 0.30) {
-      const manaRestoreSpell = ownedSpells.find(s => s.isResourceRestore && !s.isDamage);
+    if (maxMana > 0 && curMana / maxMana < 0.35) {
+      const manaRestoreSpell = ownedSpells.find(
+        s =>
+          (s.isResourceRestore && !s.isDamage) ||
+          s.id.includes('innervate') ||
+          s.id.includes('mana_tide') ||
+          s.id.includes('divine_plea') ||
+          s.id.includes('shadowfiend') ||
+          s.id.includes('hymn_of_hope')
+      );
       if (manaRestoreSpell) {
-        actions.push(act(manaRestoreSpell.id, unit.id, Priority.DEFENSIVE, true));
+        if (manaRestoreSpell.targetType === 'GROUND') {
+          const casterPos = unit.position || { x: 200, y: 200 };
+          actions.push({
+            priority: Priority.DEFENSIVE,
+            action: {
+              spellId: manaRestoreSpell.id,
+              targetId: unit.id,
+              immediate: true,
+              targetX: casterPos.x,
+              targetY: casterPos.y,
+            },
+          });
+        } else {
+          actions.push(act(manaRestoreSpell.id, unit.id, Priority.DEFENSIVE, true));
+        }
       }
     }
 

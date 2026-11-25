@@ -90,6 +90,8 @@ export interface Buff {
   healingReceivedMod?: number;
   /** Each stack's independent remaining ms for rolling HoTs like Lifebloom */
   stackRemainingMs?: number[];
+  /** Debuff category for cleansing: MAGIC, CURSE, POISON, DISEASE */
+  dispelType?: 'MAGIC' | 'CURSE' | 'POISON' | 'DISEASE' | string;
 }
 
 // ── Unit stats ────────────────────────────────────────────────
@@ -639,6 +641,8 @@ export interface CombatDisplayPrefs {
   isoDepthFogStrength: number;
   /** Flying proj/AoE cast a ground shadow at landing height. */
   isoFxHeightShadow: boolean;
+  /** DBM 首领预警与高威胁短建议播报（默认开启） */
+  enableDbm: boolean;
 }
 
 
@@ -688,7 +692,7 @@ export function clampIsoDepthFogStrength(value: number): number {
 }
 
 export const DEFAULT_COMBAT_DISPLAY_PREFS: CombatDisplayPrefs = {
-  canvasViewMode: 'TOPDOWN',
+  canvasViewMode: 'ISO',
   isoOrbitSensitivity: ISO_VIEW_SENSITIVITY_DEFAULT,
   isoPitchSensitivity: ISO_VIEW_SENSITIVITY_DEFAULT,
   moveSensitivity: ISO_VIEW_SENSITIVITY_DEFAULT,
@@ -730,13 +734,14 @@ export const DEFAULT_COMBAT_DISPLAY_PREFS: CombatDisplayPrefs = {
   isoDepthFog: true,
   isoDepthFogStrength: 0.4,
   isoFxHeightShadow: true,
+  enableDbm: true,
 };
 
 export function resolveCombatDisplayPrefs(
   partial?: Partial<CombatDisplayPrefs> | null
 ): CombatDisplayPrefs {
   const merged = { ...DEFAULT_COMBAT_DISPLAY_PREFS, ...(partial || {}) };
-  merged.canvasViewMode = partial?.canvasViewMode === 'ISO' ? 'ISO' : 'TOPDOWN';
+  merged.canvasViewMode = partial?.canvasViewMode === 'TOPDOWN' ? 'TOPDOWN' : 'ISO';
   merged.isoOrbitSensitivity = clampIsoViewSensitivity(merged.isoOrbitSensitivity as number);
   merged.isoPitchSensitivity = clampIsoViewSensitivity(merged.isoPitchSensitivity as number);
   merged.moveSensitivity = clampIsoViewSensitivity(merged.moveSensitivity as number);
@@ -751,6 +756,7 @@ export function resolveCombatDisplayPrefs(
   merged.isoDepthFog = merged.isoDepthFog !== false;
   merged.isoDepthFogStrength = clampIsoDepthFogStrength(merged.isoDepthFogStrength as number);
   merged.isoFxHeightShadow = merged.isoFxHeightShadow !== false;
+  merged.enableDbm = merged.enableDbm !== false;
   return merged;
 }
 

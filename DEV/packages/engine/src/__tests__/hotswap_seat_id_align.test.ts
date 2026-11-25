@@ -174,13 +174,14 @@ describe('hotswap seat id alignment', () => {
     assert.equal(engine.friendlyUnits.length, 3);
   });
 
-  it('自定义热加入：治疗优先顶同职责 AI，不先顶坦克', () => {
+  it('热加入踢 AI：优先 DPS → 奶 → 坦', () => {
     const ais = [
       { id: 't', role: 'TANK', classId: 'DK', name: '坦' },
       { id: 'h', role: 'HEALER', classId: 'PRIEST', name: '奶' },
       { id: 'd', role: 'DPS', classId: 'MAGE', name: '法' },
     ] as any[];
     const picked = pickHotJoinAiReplacement(ais, 'PRIEST', 'HEALER');
-    assert.equal(picked?.id, 'h');
+    assert.equal(picked?.id, 'd');
   });
 });
+

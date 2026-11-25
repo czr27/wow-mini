@@ -10,6 +10,10 @@ import {
   type SkillMetrics,
   type AIPersonality,
 } from '../../ai/SkillMetricEvaluator.js';
+import {
+  deriveBossSkillDbmRule,
+  type BossSkillDbmRule,
+} from '../../engine/DbmManager.js';
 
 /**
  * [BaseBossAI] 公共首领控制逻辑基类
@@ -36,6 +40,10 @@ export class BaseBossAI {
   /** 首领个性画像与技能性能评估指标缓存 */
   public bossPersonality: AIPersonality | null = null;
   public skillMetricsMap = new Map<string, SkillMetrics>();
+  /** 引擎初始化时自动推导/编译的 DBM 预警规则表 */
+  public dbmRulesMap = new Map<string, BossSkillDbmRule>();
+  private dbmPreWarnedCycle = new Map<string, number>();
+  private dbmLastAnnouncedCastSkillId: string | null = null;
 
   constructor(public bossId: string, public dungeonId?: string) {
     this.initBossSkills();
@@ -72,6 +80,9 @@ export class BaseBossAI {
 
     // 初始化首领所有技能的 DPS, HPS, CD密度, isAOE, 大小周期与性价比指标
     this.skillMetricsMap.clear();
+    this.dbmRulesMap.clear();
+    this.dbmPreWarnedCycle.clear();
+    this.dbmLastAnnouncedCastSkillId = null;
     for (const skill of this.skills) {
       const predefined = PREDEFINED_SKILL_INPUTS['boss_' + skill.id] || PREDEFINED_SKILL_INPUTS[skill.id];
       if (predefined) {
@@ -96,6 +107,8 @@ export class BaseBossAI {
           })
         );
       }
+      const computedMetrics = this.skillMetricsMap.get(skill.id);
+      this.dbmRulesMap.set(skill.id, deriveBossSkillDbmRule(skill, computedMetrics));
     }
   }
 
@@ -121,12 +134,19 @@ export class BaseBossAI {
       this.encounterModule.onTick(deltaMs, boss, engine, this);
     }
 
+    // 2.5 DBM 高威胁技能即将就绪预告（由 initBossSkills 自动推导的规则驱动）
+    this.tickDbmPreWarnings(engine);
+
     // 3. 推进当前施法读条
     if (this.currentCasting) {
       // 兼容 encounter 直接塞 currentCasting 的路径，保证头顶能显示技能名
       if (this.lastSkillName !== this.currentCasting.skill.name) {
         this.lastSkillName = this.currentCasting.skill.name;
         this.lastSkillAtMs = engine.nowMs;
+      }
+      if (this.dbmLastAnnouncedCastSkillId !== this.currentCasting.skill.id) {
+        this.dbmLastAnnouncedCastSkillId = this.currentCasting.skill.id;
+        this.emitSkillDbmAlert(engine, this.currentCasting.skill, 'CAST_START');
       }
       this.currentCasting.elapsedMs += deltaMs;
       if (this.currentCasting.elapsedMs >= this.currentCasting.skill.castTimeMs) {
@@ -138,9 +158,11 @@ export class BaseBossAI {
         this.lastSkillAtMs = engine.nowMs;
         this.emitSkillHitFx(boss, engine, finished, 'CAST_LAND');
         this.currentCasting = null;
+        this.dbmLastAnnouncedCastSkillId = null;
       }
       return;
     }
+    this.dbmLastAnnouncedCastSkillId = null;
 
     // 4. 智能技能评估与选择：遍历满足冷却与射程的候选技能，通过 DPS/HPS、大小周期与输出性价比多维评分择优释放
     const readyCandidates: { skill: BossSkill; metrics: SkillMetrics; score: number }[] = [];
@@ -218,14 +240,69 @@ export class BaseBossAI {
         this.currentCasting = { skill: chosen, elapsedMs: 0 };
         this.lastSkillName = chosen.name;
         this.lastSkillAtMs = engine.nowMs;
+        this.dbmLastAnnouncedCastSkillId = chosen.id;
+        this.emitSkillDbmAlert(engine, chosen, 'CAST_START');
       } else {
         chosen.execute(boss, engine);
         chosen.lastCastMs = engine.nowMs;
         this.lastSkillName = chosen.name;
         this.lastSkillAtMs = engine.nowMs;
         this.emitSkillHitFx(boss, engine, chosen, 'INSTANT');
+        this.emitSkillDbmAlert(engine, chosen, 'INSTANT');
       }
     }
+  }
+
+  private tickDbmPreWarnings(engine: CombatEngine): void {
+    if (typeof engine.emitDbmAlert !== 'function') return;
+    for (const skill of this.skills) {
+      const rule = this.dbmRulesMap.get(skill.id);
+      if (!rule || rule.preWarnMs <= 0) continue;
+      const elapsedSinceLast = engine.nowMs - skill.lastCastMs;
+      const remaining = skill.cooldownMs - elapsedSinceLast;
+      if (remaining > 0 && remaining <= rule.preWarnMs) {
+        const lastWarnedCast = this.dbmPreWarnedCycle.get(skill.id);
+        if (lastWarnedCast === skill.lastCastMs) continue;
+        this.dbmPreWarnedCycle.set(skill.id, skill.lastCastMs);
+        const sec = Math.max(1, Math.ceil(remaining / 1000));
+        engine.emitDbmAlert({
+          title: `即将施放：${skill.name} (${sec}s)`,
+          advice: rule.advice,
+          severity: rule.severity === 'CRITICAL' ? 'WARN' : rule.severity,
+          ttlMs: Math.min(3500, Math.max(2000, remaining + 600)),
+          roleHint: rule.roleHint,
+          spellId: skill.id,
+          bossId: this.bossId,
+          source: rule.source,
+          dedupeKey: `prewarn_${this.bossId}_${skill.id}`,
+          cooldownMs: Math.max(2500, rule.preWarnMs),
+        });
+      }
+    }
+  }
+
+  private emitSkillDbmAlert(
+    engine: CombatEngine,
+    skill: BossSkill,
+    phase: 'CAST_START' | 'INSTANT'
+  ): void {
+    if (typeof engine.emitDbmAlert !== 'function') return;
+    const rule = this.dbmRulesMap.get(skill.id);
+    if (!rule || !rule.announceOnCast) return;
+    if (phase === 'INSTANT' && rule.severity === 'INFO') return;
+    const prefix = phase === 'CAST_START' ? '正在施放' : '首领技能';
+    engine.emitDbmAlert({
+      title: `${prefix}：${skill.name}`,
+      advice: rule.advice,
+      severity: rule.severity,
+      ttlMs: rule.ttlMs,
+      roleHint: rule.roleHint,
+      spellId: skill.id,
+      bossId: this.bossId,
+      source: rule.source,
+      dedupeKey: `cast_${this.bossId}_${skill.id}`,
+      cooldownMs: 1800,
+    });
   }
 
   /** 为头顶铭牌配套：记一条可同步的命中特效（投掷物 / 切割 / AoE 光环） */

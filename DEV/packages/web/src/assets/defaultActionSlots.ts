@@ -124,7 +124,7 @@ export function getDefaultActionSlots(classId: ClassId, specId: string): ActionS
       add(4, 'sunfire', '日火术', '日', 0, '#FFA500');
       add(5, 'hurricane', '飓风', '飓', 0, '#38BDF8');
       add(6, 'starfall', '星辰坠落', '坠', 90000, '#A855F7');
-      add(7, 'remove_corruption', '清除腐蚀', '驱', 0, '#22C55E');
+      add(7, 'remove_corruption', '清除腐蚀', '驱', 8000, '#22C55E');
       add(8, 'innervate', '激活', '活', 180000, '#00CED1');
       add(9, 'revive', '起死回生', '起', 0, '#FACC15');
       add(10, 'rebirth', '复生', '复', 600000, '#10B981');
@@ -139,6 +139,7 @@ export function getDefaultActionSlots(classId: ClassId, specId: string): ActionS
       add(5, 'rip', '割裂', '割', 0, '#B91C1C');
       add(6, 'skull_bash', '迎头痛击', '断', 10000, '#EAB308');
       add(7, 'berserk', '狂暴', '狂', 180000, '#DC2626');
+      add(8, 'remove_corruption', '清除腐蚀', '驱', 8000, '#22C55E');
       add(12, 'barkskin', '树皮术', '皮', 60000, '#854D0E');
       add(13, 'rebirth', '复生', '复', 600000, '#10B981');
     } else {

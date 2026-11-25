@@ -11,6 +11,7 @@ import {
   viewToWorld,
   worldToView,
   viewDepthKey,
+  isMouseChordMoveActive,
   type ViewCamera,
 } from '../canvasViewMath.js';
 
@@ -45,6 +46,32 @@ describe('canvasViewMath', () => {
     assert.ok(Math.abs(back.y - 220) < 1e-6);
     // Center stays fixed
     assert.deepEqual(worldToView(390, 180, cam), { x: 390, y: 180 });
+  });
+
+  it('TOPDOWN maze 50% center zoom expands symmetrically around maze center', () => {
+    // Maze center at (390, 137) with 1.5x zoom
+    const cam: ViewCamera = {
+      mode: 'TOPDOWN',
+      yawRad: 0,
+      pivotX: 390,
+      pivotY: 137,
+      screenX: 390,
+      screenY: 137,
+      zoom: 1.5,
+    };
+    // Center point remains invariant
+    assert.deepEqual(worldToView(390, 137, cam), { x: 390, y: 137 });
+    assert.deepEqual(viewToWorld(390, 137, cam), { x: 390, y: 137 });
+
+    // Points at offset dx, dy expand by 1.5x
+    const p1 = worldToView(390 + 20, 137 - 30, cam);
+    assert.equal(p1.x, 390 + 30);
+    assert.equal(p1.y, 137 - 45);
+
+    // Invert view back to world
+    const w1 = viewToWorld(p1.x, p1.y, cam);
+    assert.ok(Math.abs(w1.x - (390 + 20)) < 1e-6);
+    assert.ok(Math.abs(w1.y - (137 - 30)) < 1e-6);
   });
 
   it('ISO maps pivot to screen center and round-trips', () => {
@@ -158,6 +185,17 @@ describe('canvasViewMath', () => {
     const left = viewDepthKey(50, 100, cam90);
     const right = viewDepthKey(150, 100, cam90);
     assert.ok(left > right, `left=${left} right=${right}`);
+  });
+
+  it('isMouseChordMoveActive: holding RMB + pressing LMB moves forward like W; releasing LMB stops', () => {
+    // 2.5D boss room allowed
+    assert.equal(isMouseChordMoveActive(true, true, true), true, 'Holding RMB + LMB should activate chord move');
+    assert.equal(isMouseChordMoveActive(true, true, false), false, 'Releasing LMB should stop chord move');
+    assert.equal(isMouseChordMoveActive(true, false, true), false, 'Releasing RMB should stop chord move');
+    assert.equal(isMouseChordMoveActive(true, false, false), false, 'Neither held should not move');
+
+    // Outside 2.5D boss room (e.g. 2D topdown or maze TRAVEL_RECOVERY)
+    assert.equal(isMouseChordMoveActive(false, true, true), false, 'Disabled when 2.5D boss room view is not active');
   });
 
 });

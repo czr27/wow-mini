@@ -335,14 +335,15 @@ export function scoreSkillCandidate(skill: SkillMetrics, ctx: SkillScoreContext)
 
   // 1. 通用资源可用性与健康线判定
   let isLowResource = false;
+  let mpRatio = 1.0;
   if (skill.resourceType !== 'NONE') {
     const cur = getUnitResourceAmount(caster, skill.resourceType);
     if (cur < skill.resourceCost) return -1;
 
     if (skill.resourceType === 'MANA') {
       const maxMp = getUnitResourceMax(caster, 'MANA');
-      const mpRatio = maxMp > 0 ? cur / maxMp : 1;
-      isLowResource = mpRatio < personality.resourceHealthyThreshold;
+      mpRatio = maxMp > 0 ? cur / maxMp : 1;
+      isLowResource = mpRatio < 0.65; // 三阶控蓝：低于 65% 即进入控蓝与节能关注
     } else if (skill.resourceType === 'ENERGY' || skill.resourceType === 'FOCUS') {
       isLowResource = cur < personality.energyReserveThreshold;
     } else if (skill.resourceType === 'RAGE') {
@@ -350,7 +351,7 @@ export function scoreSkillCandidate(skill: SkillMetrics, ctx: SkillScoreContext)
     }
   }
 
-  // 2. 吞吐量 vs 性价比权重分配
+  // 2. 吞吐量 vs 性价比权重分配（三阶控蓝阶梯）
   let throughputWeight: number;
   let efficiencyWeight: number;
 
@@ -358,12 +359,20 @@ export function scoreSkillCandidate(skill: SkillMetrics, ctx: SkillScoreContext)
     // 急救防猝死状态：纯吞吐量与出伤/出疗速度压倒一切，严禁贪省蓝
     throughputWeight = 0.94 + personality.throughputVsEfficiencyBias * 0.04;
     efficiencyWeight = 1 - throughputWeight;
+  } else if (skill.resourceType === 'MANA' && mpRatio < 0.35) {
+    // 极限节能期（蓝量 < 35%）：极度注重性价比，禁止挥霍
+    efficiencyWeight = 0.88;
+    throughputWeight = 0.12;
+  } else if (skill.resourceType === 'MANA' && mpRatio < 0.65) {
+    // 控蓝平稳期（35% ~ 65%）：高性价比优先，平刷控蓝
+    efficiencyWeight = 0.68 + (1 - personality.throughputVsEfficiencyBias) * 0.12;
+    throughputWeight = 1 - efficiencyWeight;
   } else if (isLowResource) {
-    // 低资源节能状态：优先高性价比技能
+    // 物理系低能量/集中值节能
     efficiencyWeight = 0.78 + (1 - personality.throughputVsEfficiencyBias) * 0.14;
     throughputWeight = 1 - efficiencyWeight;
   } else {
-    // 资源充沛常规期：兼顾输出与性价比，偏重吞吐量
+    // 资源充沛常规期（蓝量 >= 65%）：兼顾输出与性价比，偏重吞吐量
     throughputWeight = 0.66 + personality.throughputVsEfficiencyBias * 0.22;
     efficiencyWeight = 1 - throughputWeight;
   }
@@ -414,10 +423,14 @@ export function scoreSkillCandidate(skill: SkillMetrics, ctx: SkillScoreContext)
   const cdRate = skill.roleType === 'HEAL' ? skill.hpsPerCd : skill.dpsPerCd;
   const effRate = skill.roleType === 'HEAL' ? skill.hpsPerCost : skill.dpsPerCost;
 
-  // 低资源非紧急时，温和抑制高耗技能
+  // 低资源非紧急时，按三阶控蓝阶梯抑制高耗技能
   let costModifier = 1.0;
   if (isLowResource && skill.resourceType === 'MANA' && skill.resourceCost > 0 && !ctx.isEmergency) {
-    costModifier = Math.max(0.28, 1.0 - (skill.resourceCost - 1200) / 3000);
+    if (mpRatio < 0.35) {
+      costModifier = skill.resourceCost > 2000 ? Math.max(0.18, 2000 / skill.resourceCost) : 1.0;
+    } else if (mpRatio < 0.65) {
+      costModifier = skill.resourceCost > 3000 ? Math.max(0.50, 3000 / skill.resourceCost) : 1.0;
+    }
   }
 
   // 救急加速与慢速低疗惩罚：急救时快速/重型大疗获强加权，慢速低HPS填充技能大幅降权
@@ -1275,8 +1288,20 @@ export function evaluateUniversalAIDecision(input: UniversalAIDecisionInput): Un
       }
 
       // 场景 1B：Tank 在危险线上 (>=45%) 且多名其他玩家在健康线下 (<85%) -> 优先 AOE 治疗
-      const effectiveAoeThreshold = livingAllies.length <= 5 ? 2 : personality.aoeThresholdCount;
-      const shouldAoeHeal = isTankSafe && injuredOtherAllies.length >= effectiveAoeThreshold;
+      // 结合三阶控蓝阶梯：
+      // - 充沛期 (mpRatio >= 0.65): 达到基础阈值即积极释放 AOE 压制团血波动
+      // - 控蓝期 (0.35 <= mpRatio < 0.65): 提高 AOE 触发人数门槛（20人团本需 >= 5 人受创），控蓝平刷
+      // - 节能期 (mpRatio < 0.35): 锁定昂贵常规 AOE，严禁挥霍，仅在全团极危急(1A)时破例
+      const casterCurMp = getUnitResourceAmount(caster, 'MANA');
+      const casterMaxMp = getUnitResourceMax(caster, 'MANA');
+      const casterMpRatio = casterMaxMp > 0 ? casterCurMp / casterMaxMp : 1.0;
+
+      let effectiveAoeThreshold = livingAllies.length <= 5 ? 2 : personality.aoeThresholdCount;
+      if (casterMpRatio < 0.65) {
+        effectiveAoeThreshold = livingAllies.length <= 5 ? 3 : 5;
+      }
+      const canCastRoutineAoe = casterMpRatio >= 0.35;
+      const shouldAoeHeal = isTankSafe && canCastRoutineAoe && injuredOtherAllies.length >= effectiveAoeThreshold;
       if (shouldAoeHeal) {
         // 常规团血压力时优先常规/小周期 AOE（如治疗链、治疗之雨、野性成长、治疗之环、黎明圣光），留住 3 分钟大招应对全团危急
         const nonMajorAoe = aoeHealCandidates.filter(c => c.metrics.cycle !== 'MAJOR');
@@ -1310,7 +1335,8 @@ export function evaluateUniversalAIDecision(input: UniversalAIDecisionInput): Un
 
   // 对于 DPS / 坦克：可命中敌方目标 >= 3 个（多目标场景）优先放 AOE 伤害技能
   if (caster.role === 'DPS' || caster.role === 'TANK' || available.some(s => s.metrics.roleType === 'DAMAGE')) {
-    const shouldAoeDps = livingEnemies.length >= 3;
+    const aoeThreshold = caster.role === 'TANK' ? 2 : 3;
+    const shouldAoeDps = livingEnemies.length >= aoeThreshold;
     if (shouldAoeDps) {
       const aoeDpsCandidates = available.filter(s => s.isAOE && s.metrics.roleType === 'DAMAGE');
       if (aoeDpsCandidates.length > 0) {

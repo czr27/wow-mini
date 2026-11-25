@@ -60,5 +60,5 @@
 ```bash
 npx --yes tsx --test DEV/packages/engine/src/__tests__/cast_lifecycle_and_hud_reset.test.ts \
   DEV/packages/engine/src/__tests__/classes_and_universal_ai.test.ts \
-  DEV/packages/engine/src/__tests__/smart_ai_metrics_and_personality.test.ts
+  QA/tests/smart_ai_metrics_and_personality.test.ts
 ```

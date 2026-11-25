@@ -1,9 +1,10 @@
 import type { CombatEngine, Unit } from '@cata-raid-sim/engine';
 import type { AoeVisualTone } from '@cata-raid-sim/engine';
 import { isEnemyActorUnit } from '@cata-raid-sim/engine';
+import { publishCombatEffectAlreadyApplied } from './networkCombatAuthority.js';
 
 /**
- * Instant AoE → combat action with aoePulse.
+ * Instant AoE → combat action with aoePulse + network AOE_PULSE for remotes.
  * Canvas draws a feathered class-color disc (not flat terrain rings).
  */
 export function emitLocalAoePulse(
@@ -30,7 +31,7 @@ export function emitLocalAoePulse(
       : isEnemyActorUnit(opts.actor)
         ? 'ENEMY'
         : 'FRIENDLY');
-  return engine.logCombatAction({
+  const action = engine.logCombatAction({
     actorId: opts.actor.id,
     spellId: opts.spellId,
     spellName: opts.spellName,
@@ -42,4 +43,16 @@ export function emitLocalAoePulse(
     aoePulse: true,
     visualTone: tone,
   });
+  publishCombatEffectAlreadyApplied({
+    sourceId: opts.actor.id,
+    targetId: opts.targetId || opts.actor.id,
+    spellId: opts.spellId,
+    spellName: opts.spellName,
+    kind: 'AOE_PULSE',
+    x: opts.x,
+    y: opts.y,
+    radius: opts.radius,
+    visualTone: tone,
+  });
+  return action;
 }

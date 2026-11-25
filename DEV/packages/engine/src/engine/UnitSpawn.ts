@@ -132,6 +132,18 @@ export function createSpawnedUnit(opts: SpawnUnitOpts): Unit {
 export function spawnCombatUnit(engine: CombatEngine, opts: SpawnUnitOpts): Unit {
   const unit = createSpawnedUnit(opts);
   engine.addUnit(unit);
+  if (unit.unitKind === 'ADD' && unit.role === 'ENEMY') {
+    engine.emitDbmAlert?.({
+      title: `增援出现：${unit.name}`,
+      advice: '先杀小怪，注意转火与拉怪',
+      severity: 'WARN',
+      roleHint: 'DPS',
+      spellId: opts.summonSpellId,
+      source: 'RUNTIME',
+      dedupeKey: `add_${unit.name}`,
+      cooldownMs: 4500,
+    });
+  }
   return unit;
 }
 

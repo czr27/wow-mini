@@ -1,5 +1,22 @@
 # 📜 变更历史（Changelog）
 
+## [0.3.2] — 2026-11-24
+
+### 架构与核心演进
+- **首领系统模块化重构**：按副本拆分为 `DEV/packages/engine/src/bosses/<dungeon>/`，由 `BossRegistry` 统一注册管理，`ai/BossAI.ts` 降级为兼容导出；全面支持 6 大地下城（影牙城堡、死亡矿井、血色修道院、斯坦索姆、祖尔格拉布、巨龙之魂）。
+- **击杀时长血量预算模型**：`TierProfile.ts` 引入 `BOSS_KILL_TIME_SEC` 动态 AI 队伍 DPS 预算（5人 19,000 / 20人 73,000），取代静态血量定义；5人本赶路时间调整为 7s，20人团本调整为 14s。
+- **网络战斗权威与客机施法同步**：
+  - 新增 `networkCombatAuthority.ts`、`hostAuthorityTickGuard.ts` 与 `withNetworkVitals.ts`，防范非权威快照覆盖。
+  - 新增 `castLifecycleNet.ts`，实现客机施法状态网络同步与本地乐观反馈。
+- **战斗事件总线体系**：新增 `combatEffectBus.ts` 与 `applyCombatEffect.ts`，将直接伤害、治疗、护盾、驱散、击杀等战斗事件通道化，彻底解耦表现层与计算。
+- **死亡骑士独立符文/符能系统**：新增 `dkResources.ts`，为 DK 6 符文与符文能量设计独立刷新与消耗状态机。
+- **团队嗜血/心满意足机制**：新增 `raidLustBuff.ts`，实现全团嗜血/英勇/时间扭曲 40s 加成与 10min 衰竭 Debuff 互斥。
+- **本地战斗录像器**：新增 `localEncounterRecorder.ts`，支持首领战过程捕获与本地战报持久化。
+- **文档体系实时审计与修复**：
+  - 修复 `ADD_HERO_CLASS.md` 中的动作栏路径（`assets/defaultActionSlots.ts`）。
+  - 修复 `CAST_AND_AI_RULES.md` 和 `DESIGN_BOSS.md` 中的测试命令路径（`QA/tests/smart_ai_metrics_and_personality.test.ts`）。
+  - 同步 Boss 模块化、动态血量预算与战斗效果总线架构至 L1/L2。
+
 ## [0.3.1] — 2026-11-23
 
 ### 架构（App 瘦身 Phase-1〜8）

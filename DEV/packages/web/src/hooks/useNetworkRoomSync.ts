@@ -22,6 +22,7 @@ import type {
   CombatEffect,
   CombatBatch,
   OwnerSnapshot,
+  DbmAlert,
 } from '@cata-raid-sim/engine';
 import {
   roomManager,
@@ -32,33 +33,64 @@ import {
 import type { PlayerCastState } from '../components/ActionBar.js';
 import { netClient } from '../net/NetClient.js';
 import type { NetworkRoomFacade } from '../net/NetworkRoomFacade.js';
-import { buildCastFromTimeline } from '../net/netTimeline.js';
 import {
   pendingQuickPlayStartRef,
   type RoomLobbySubView,
   type StartAdventureOverrides,
 } from './useRoomLobby.js';
 import { applyGuestMazeSync } from '../combat/mazeSyncBridge.js';
+import { dispatchCombatFxActions } from '../combat/dispatchCombatFx.js';
+import { installSummonReporters } from '../combat/summonReport.js';
 import {
   applyCombatBatch,
   beginCombatEffectEpoch,
+  buildLocalOwnerSnapshot,
   configureCombatAuthority,
   hostReceiveCombatEffect,
   hostReceiveOwnerSnapshot,
+  ingestCombatEffect,
   makeGuestAuthorityPredicate,
   makeHostAuthorityPredicate,
   mergeOwnerSnapshotUnits,
+  publishOwnerSnapshot,
   setHostEffectHudHook,
 } from '../combat/networkCombatAuthority.js';
 import {
-  applyCastLifecycleToTimelines,
+  beginAuthorityPresenceEpoch,
+  clearAuthorityPresence,
+  endAuthorityPresenceEpoch,
+  isTrackedAuthority,
+  noteAuthorityPacket,
+  trackAuthoritySeat,
+} from '../combat/authorityPresence.js';
+import { serializeGroundEffectWire } from '../combat/summonReport.js';
+import {
+  applyRemoteCastEffect,
   companionCastsFromTimelines,
+  syncBossCastHud,
+  type CompanionCastHud,
 } from '../combat/castLifecycleNet.js';
+import {
+  applyWorldSnapshotsPreservingAuthority,
+  mergeGroundEffectsPreservingAuthority,
+  syncPreservedIdentityFromSnapshot,
+} from '../combat/applyWorldSnapshotPreserveAuth.js';
 import {
   getLocalEncounterRecorder,
   mergeHostEncounterReports,
   noteGuestCombatSnapshot,
 } from '../combat/localEncounterRecorder.js';
+import { clearOwnerCombatSpawns } from '../combat/clearOwnerCombatSpawns.js';
+import {
+  applyPlayerLeaveAiTakeover,
+  purgeStaleOwnerIfNotInRoom,
+} from '../combat/playerLeaveAiTakeover.js';
+import { ensureHotJoinedSeat } from '../combat/ensureHotJoinedSeat.js';
+import {
+  HOST_GONE_TIMEOUT_MS,
+  isHostAliveSignal,
+  shouldGuestLeaveOnHostSilence,
+} from '../combat/hostLeaveWatch.js';
 
 export type NetworkRoomSyncDeps = {
   currentChar: CharacterRecord | null;
@@ -83,6 +115,8 @@ export type NetworkRoomSyncDeps = {
   guestCastTimelinesRef: MutableRefObject<NetworkCastTimeline[]>;
   guestCdTimelinesRef: MutableRefObject<NetworkCooldownTimeline[]>;
   guestGcdTimelinesRef: MutableRefObject<NetworkGcdTimeline[]>;
+  companionCastsRef?: MutableRefObject<Record<string, CompanionCastHud>>;
+  guestBossOverheadSkillRef?: MutableRefObject<string | null>;
   playerCastRef: MutableRefObject<PlayerCastState | null>;
   pendingGuestInputsRef: MutableRefObject<PlayerInputPayload[]>;
   applyWipeVoteResultRef: MutableRefObject<(choice: 'RETRY' | 'FINISH') => void>;
@@ -112,12 +146,14 @@ export type NetworkRoomSyncDeps = {
   setPlayerGcdRemainingMs: Dispatch<SetStateAction<number>>;
   setPlayerGcdTotalMs: Dispatch<SetStateAction<number>>;
   setTravelRemainingMs: Dispatch<SetStateAction<number>>;
+  setTotalDurationSec?: Dispatch<SetStateAction<number>>;
   setWipeNetworkVote: Dispatch<SetStateAction<NetworkVoteState | null>>;
   setSkipTravelVote: Dispatch<SetStateAction<NetworkVoteState | null>>;
   setMyWipeVote: Dispatch<SetStateAction<'RETRY' | 'FINISH' | null>>;
   setMySkipVote: Dispatch<SetStateAction<'YES' | 'NO' | null>>;
   setGroundEffects: Dispatch<SetStateAction<GroundEffect[]>>;
   setFloatingTexts: Dispatch<SetStateAction<FloatingCombatText[]>>;
+  onDbmAlerts?: (alerts: DbmAlert[]) => void;
   setGuestBossCasting: Dispatch<
     SetStateAction<{
       spellName: string;
@@ -137,6 +173,10 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
   depsRef.current = deps;
   /** Guest: ignore stale/out-of-order COMBAT_STATE; newer full snapshots heal missed ones */
   const lastAppliedCombatSeqRef = useRef(0);
+  /** Guest: full unit mirror only on first seed or seq-gap recovery — steady state is deltas */
+  const guestUnitsSeededRef = useRef(false);
+  const fallbackBossOverheadSkillRef = useRef<string | null>(null);
+  const fallbackCompanionCastsRef = useRef<Record<string, CompanionCastHud>>({});
 
   const charId = deps.currentChar?.id;
   const charSpec = deps.currentChar?.lastSpec;
@@ -173,29 +213,119 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
       });
     }
 
+    /** Host live EFFECT + guest COMBAT_BATCH — same cast HUD path */
     const applyCastHud = (e: import('@cata-raid-sim/engine').CombatEffect) => {
       const myId = d().currentChar?.id || null;
       if (e.kind !== 'CAST_START' && e.kind !== 'CAST_LAND' && e.kind !== 'INTERRUPT') return;
-      d().guestCastTimelinesRef.current = applyCastLifecycleToTimelines(
-        d().guestCastTimelinesRef.current,
-        e,
-        myId
-      );
-      d().setCompanionCasts((prev) => {
-        const next = {
-          ...prev,
-          ...companionCastsFromTimelines(d().guestCastTimelinesRef.current, myId),
-        };
-        if (e.kind === 'CAST_LAND' || e.kind === 'INTERRUPT') delete next[e.sourceId];
-        return next;
+      const castsRef = d().companionCastsRef ?? fallbackCompanionCastsRef;
+      const overheadRef = d().guestBossOverheadSkillRef ?? fallbackBossOverheadSkillRef;
+      const applied = applyRemoteCastEffect({
+        effect: e,
+        timelines: d().guestCastTimelinesRef.current,
+        companionCasts: castsRef.current,
+        skipUnitId: myId,
       });
+      d().guestCastTimelinesRef.current = applied.timelines;
+      castsRef.current = applied.companionCasts;
+      d().setCompanionCasts(applied.companionCasts);
+      const boss = d().engineRef.current?.bossUnit;
+      if (boss && e.sourceId === boss.id) {
+        syncBossCastHud({
+          boss,
+          cast: applied.companionCasts[e.sourceId] || null,
+          recentOverheadSkillName: overheadRef.current,
+          setGuestBossCasting: d().setGuestBossCasting,
+        });
+        d().setBossUnit({ ...boss });
+      }
     };
     setHostEffectHudHook(applyCastHud);
 
+    /** Last host/room sim packet — guest leaves after HOST_GONE_TIMEOUT_MS silence. */
+    let lastHostSignalMs = Date.now();
+
+    const leaveActiveRoomAsGuest = (reason: string, forceSummaryHint?: boolean) => {
+      const closedId = d().activeRoomIdRef.current || d().waitingQueueRoomIdRef.current;
+      if (!closedId) return;
+      const rsm = d().rsmRef.current;
+      const wasInRun = !!rsm && rsm.phase !== 'LOBBY' && rsm.phase !== 'SUMMARY';
+      const goSummary =
+        !!(forceSummaryHint || reason === 'host_left' || reason === 'host_timeout') && wasInRun;
+
+      // 超时兜底：房间可能仍在，主动 ROOM_LEAVE；房主广播关闭则服务端已销毁
+      if (reason === 'host_timeout' && d().currentChar?.id) {
+        try {
+          d().roomFacadeRef.current.leaveRoom(closedId, d().currentChar.id);
+        } catch {}
+      }
+      d().roomFacadeRef.current.deleteRoom(closedId);
+
+      d().isNetworkGuestRef.current = false;
+      d().isNetworkHostRef.current = false;
+      d().setActiveRoomId(null);
+      d().setWaitingQueueRoomId(null);
+      d().setWipeNetworkVote(null);
+      d().setMyWipeVote(null);
+      d().setSkipTravelVote(null);
+      d().setMySkipVote(null);
+      d().setPlayerCast(null);
+      d().playerCastRef.current = null;
+      d().setCompanionCasts({});
+
+      if (goSummary) {
+        if (rsm) rsm.phase = 'SUMMARY';
+        d().setRunPhase('SUMMARY');
+        d().setLobbySubView('ROOM_LIST');
+      } else {
+        const engine = d().engineRef.current;
+        if (engine) engine.reset();
+        if (rsm) rsm.phase = 'LOBBY';
+        d().setRunPhase('LOBBY');
+        d().setLobbySubView('ROOM_LIST');
+        d().setFriendlyUnits([]);
+        d().setBossUnit(undefined);
+      }
+      netClient.ensureConnected();
+      if (netClient.connected) d().setNetConnected(true);
+      d().setRoomsTick((t) => t + 1);
+
+      const notice =
+        reason === 'host_timeout'
+          ? '与房主失联超过 10 秒，已退出房间'
+          : '房主已离开，已退出房间';
+      try {
+        window.dispatchEvent(new CustomEvent('cata_ui_error', { detail: { text: notice } }));
+      } catch {}
+    };
+
+    const hostWatchTimer = setInterval(() => {
+      if (
+        shouldGuestLeaveOnHostSilence({
+          isNetworkGuest: d().isNetworkGuestRef.current,
+          activeRoomId: d().activeRoomIdRef.current,
+          runPhase: d().rsmRef.current?.phase,
+          lastHostSignalMs,
+          nowMs: Date.now(),
+          timeoutMs: HOST_GONE_TIMEOUT_MS,
+        })
+      ) {
+        leaveActiveRoomAsGuest('host_timeout', true);
+      }
+    }, 1000);
+
     const unsub = netClient.subscribe((msg) => {
+      if (
+        isHostAliveSignal(msg.type, {
+          roomId: msg.roomId || (msg.payload as { roomId?: string } | undefined)?.roomId,
+          activeRoomId: d().activeRoomIdRef.current,
+        })
+      ) {
+        lastHostSignalMs = Date.now();
+      }
       if (msg.type === 'AUTH_OK' || msg.type === 'CONNECTED') {
         d().setNetConnected(true);
         d().setRoomsTick((t) => t + 1);
+        lastHostSignalMs = Date.now();
       }
       if (msg.type === 'DISCONNECTED' || msg.type === 'AUTH_FAIL') {
         // Only mark offline if the socket is truly gone (ignore stale close races)
@@ -324,6 +454,7 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
                   ? makeHostAuthorityPredicate(eng, meId)
                   : makeGuestAuthorityPredicate(eng, meId),
               });
+              installSummonReporters(eng);
             }
             d().setFriendlyUnits([...d().engineRef.current.friendlyUnits]);
             if (d().rsmRef.current) {
@@ -331,6 +462,34 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
               d().rsmRef.current.phase =
                 room.status === 'OUT_OF_COMBAT' ? 'TRAVEL_RECOVERY' : 'BOSS_COMBAT';
               d().setRunPhase(d().rsmRef.current.phase);
+            }
+          } else if (alreadyInRun && roomInCombat) {
+            // AI kicked mid-run (no REPLACE/HOT_SWAP): drop orphan AI seats + their spawns.
+            // Never touch humans. If a human is already in room.members but not yet in the
+            // engine, MEMBER_HOT_SWAP still needs that vacated AI body — do not prune it.
+            const eng = d().engineRef.current;
+            if (eng) {
+              const memberIds = new Set(room.members.map((m) => m.id));
+              const pendingHotJoin = room.members.some(
+                (m) => !m.isAi && m.isPlayer && !eng.getUnit(m.id)
+              );
+              if (!pendingHotJoin) {
+                const report = d().isNetworkHostRef.current;
+                let pruned = false;
+                for (const u of [...eng.friendlyUnits]) {
+                  if (u.isPet || memberIds.has(u.id)) continue;
+                  if (u.isHumanControlled || u.isPlayer) continue;
+                  if (isTrackedAuthority(u.id)) continue;
+                  clearOwnerCombatSpawns(eng, u.id, { reportDespawn: report });
+                  eng.removeUnit(u.id);
+                  clearAuthorityPresence(u.id);
+                  pruned = true;
+                }
+                if (pruned) {
+                  d().setFriendlyUnits([...eng.friendlyUnits]);
+                  d().setGroundEffects([...(eng.effectsManager?.groundEffects || [])]);
+                }
+              }
             }
           } else if (!alreadyInRun) {
             d().setLobbySubView('ROOM_DETAIL');
@@ -366,48 +525,21 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
         const body = msg.payload as { roomId: string; reason?: string; forceSummary?: boolean };
         const closedId = body.roomId || msg.roomId;
         if (closedId) d().roomFacadeRef.current.deleteRoom(closedId);
-        if (closedId && (d().activeRoomIdRef.current === closedId || d().waitingQueueRoomIdRef.current === closedId)) {
-          const rsm = d().rsmRef.current;
-          const wasInRun =
-            !!rsm && rsm.phase !== 'LOBBY' && rsm.phase !== 'SUMMARY';
-          // Host left / returned to lobby mid-run → remaining players go to settlement
-          const goSummary = !!(body.forceSummary || body.reason === 'host_left') && wasInRun;
-
-          d().isNetworkGuestRef.current = false;
-          d().isNetworkHostRef.current = false;
-          d().setActiveRoomId(null);
-          d().setWaitingQueueRoomId(null);
-          d().setWipeNetworkVote(null);
-          d().setMyWipeVote(null);
-          d().setSkipTravelVote(null);
-          d().setMySkipVote(null);
-          d().setPlayerCast(null);
-          d().playerCastRef.current = null;
-          d().setCompanionCasts({});
-
-          if (goSummary) {
-            if (rsm) rsm.phase = 'SUMMARY';
-            d().setRunPhase('SUMMARY');
-            d().setLobbySubView('ROOM_LIST');
-          } else {
-            const engine = d().engineRef.current;
-            if (engine) engine.reset();
-            if (rsm) rsm.phase = 'LOBBY';
-            d().setRunPhase('LOBBY');
-            d().setLobbySubView('ROOM_LIST');
-            d().setFriendlyUnits([]);
-            d().setBossUnit(undefined);
-          }
-          // Room teardown must not drop the account session
-          netClient.ensureConnected();
-          if (netClient.connected) d().setNetConnected(true);
+        if (
+          closedId &&
+          (d().activeRoomIdRef.current === closedId || d().waitingQueueRoomIdRef.current === closedId)
+        ) {
+          // 房主退出广播：客人立刻离开房间（战斗中可进结算）
+          leaveActiveRoomAsGuest(body.reason || 'host_left', body.forceSummary);
+        } else {
+          d().setRoomsTick((t) => t + 1);
         }
-        d().setRoomsTick((t) => t + 1);
       }
       if (msg.type === 'ROOM_START' && msg.payload) {
         const room = msg.payload as NetLobbyRoom;
         pendingQuickPlayStartRef.current = false;
         lastAppliedCombatSeqRef.current = 0;
+        guestUnitsSeededRef.current = false;
         // New dungeon visit → fresh cast-id epoch (leave/rejoin must not reuse old ids)
         netClient.beginCombatInputEpoch();
         netClient.clearHostInputAckState();
@@ -427,6 +559,12 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
             ? makeHostAuthorityPredicate(engine, meId || '')
             : makeGuestAuthorityPredicate(engine, meId || ''),
         });
+        installSummonReporters(engine);
+        if (d().isNetworkHostRef.current) {
+          beginAuthorityPresenceEpoch(room, meId);
+        } else {
+          endAuthorityPresenceEpoch();
+        }
         const cfg = getDungeonConfig(room.dungeonId, room.difficulty);
         const tier = cfg.tier;
         const effectiveCustom = room.customDifficulty || d().customDifficultyRef.current;
@@ -440,6 +578,16 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
           customDiff: effectiveCustom,
           activeRoom: room,
         });
+        // Guest: report initial authority state ASAP so host can start
+        if (d().isNetworkGuestRef.current && meId) {
+          publishOwnerSnapshot(
+            buildLocalOwnerSnapshot(engine, meId, {
+              groundEffects: (engine.effectsManager?.groundEffects || [])
+                .filter((g) => g.ownerId === meId)
+                .map(serializeGroundEffectWire),
+            })
+          );
+        }
       }
       if (msg.type === 'INPUT_ACK' && msg.payload) {
         const body = msg.payload as {
@@ -465,29 +613,28 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
 
         // 全量状态快照：只接受更新的 seq（乱序旧包丢弃；中间丢包由后续快照补血量/位置）
         const seq = typeof snap.seq === 'number' ? snap.seq : msg.seq ?? 0;
-        if (seq > 0 && seq <= lastAppliedCombatSeqRef.current) return;
+        const prevSeq = lastAppliedCombatSeqRef.current;
+        if (seq > 0 && seq <= prevSeq) return;
+        const seqGap = seq > 0 && prevSeq > 0 && seq > prevSeq + 1;
         if (seq > 0) lastAppliedCombatSeqRef.current = seq;
 
         const engine = d().engineRef.current;
         const rsm = d().rsmRef.current;
-        engine.applyNetworkUnitSnapshots(snap.units);
-        // Host snapshots use each member's real id; keep local controllability on this client
-        const myId = d().currentChar?.id;
+        const myId = d().currentChar?.id || null;
         const myChar = d().currentChar;
+        // 无权威座位（Boss/AI/房主等）从全量持续同步；本人权威座位永不覆盖。
+        // seq-gap 时同样走 preserve 路径补齐丢包。
+        if (snap.units?.length) {
+          applyWorldSnapshotsPreservingAuthority(engine, snap.units);
+          guestUnitsSeededRef.current = true;
+        } else if (seqGap) {
+          // gap without units — nothing to mirror
+        }
+        syncPreservedIdentityFromSnapshot(engine, snap.units || [], myId, myChar);
         if (myId) {
           for (const u of engine.friendlyUnits) {
-            const isMe = u.id === myId;
-            u.isPlayer = isMe;
-            if (isMe) {
-              u.isHumanControlled = true;
-              // Never keep replaced AI name/class on the local seat
-              if (myChar) {
-                u.name = myChar.name || u.name;
-                u.classId = myChar.classId || u.classId;
-                u.spec = myChar.lastSpec || u.spec;
-              }
-              delete (u as { unitKind?: string }).unitKind;
-            } else if ((snap.units || []).find((s) => s.id === u.id)?.isHumanControlled) {
+            if (u.id === myId) continue;
+            if ((snap.units || []).find((s) => s.id === u.id)?.isHumanControlled) {
               u.isHumanControlled = true;
             }
           }
@@ -516,7 +663,7 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
           }
           if (typeof snap.totalDurationSec === 'number') {
             rsm.totalRunDurationSec = snap.totalDurationSec;
-            d().setTotalDurationSec(Math.round(snap.totalDurationSec));
+            d().setTotalDurationSec?.(Math.round(snap.totalDurationSec));
           }
           // Host reports only fill gaps — guests keep local kill deltas for self-register
           if (Array.isArray(snap.encounterReports)) {
@@ -531,26 +678,15 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
           });
         }
 
-        d().guestCastTimelinesRef.current = snap.casts || [];
         d().guestCdTimelinesRef.current = snap.cooldowns || [];
         d().guestGcdTimelinesRef.current = snap.gcds || [];
+        const overheadRef = d().guestBossOverheadSkillRef ?? fallbackBossOverheadSkillRef;
+        overheadRef.current = snap.bossOverheadSkillName ?? null;
 
-        // Ground FX from host (reporter never applies local FX — only this snapshot)
+        // Host-world ground mirror (AI/boss/enemy rings+terrain) — empty array clears despawns
         if (Array.isArray(snap.groundEffects)) {
-          d().setGroundEffects(
-            snap.groundEffects.map((g) => ({
-              id: g.id,
-              kind: g.kind,
-              spellId: g.spellId,
-              ownerId: g.ownerId,
-              x: g.x,
-              y: g.y,
-              radius: g.radius,
-              colorHex: g.colorHex,
-              remainingMs: g.remainingMs,
-              ...(g.facingRad != null ? { facingRad: g.facingRad } : {}),
-              ...(g.coneAngleRad != null ? { coneAngleRad: g.coneAngleRad } : {}),
-            })) as GroundEffect[]
+          mergeGroundEffectsPreservingAuthority(engine, snap.groundEffects, (fx) =>
+            d().setGroundEffects(fx as GroundEffect[])
           );
         }
 
@@ -574,9 +710,12 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
 
         // Host-relayed actor→target actions for cast/ground/summon VFX hooks
         if (Array.isArray(snap.recentActions) && snap.recentActions.length > 0) {
-          window.dispatchEvent(
-            new CustomEvent('cata_combat_actions', { detail: { actions: snap.recentActions, roomId: snap.roomId } })
-          );
+          dispatchCombatFxActions(snap.recentActions, { roomId: snap.roomId });
+        }
+
+        // Host-authoritative DBM tactical alerts
+        if (Array.isArray(snap.dbmAlerts) && snap.dbmAlerts.length > 0) {
+          d().onDbmAlerts?.(snap.dbmAlerts);
         }
 
         // Maze: seed + trash HP/tombstones from host (guest mirrors, does not sim trash DPS)
@@ -598,41 +737,37 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
           });
         }
 
-        // Companion / boss cast bars from host timelines.
-        // Guest's OWN cast bar is owned locally (see runCombatTick) — do not overwrite/clear
-        // from snap.casts or the bar hitch-resets every COMBAT_STATE (~10Hz).
-        const now = Date.now();
-        const companion: Record<string, { spellName: string; progress: number; spellId?: string }> = {};
-        let bossCasting: {
-          spellName: string;
-          spellId?: string;
-          elapsedMs: number;
-          castTimeMs: number;
-          interruptible: boolean;
-        } | null = null;
-        const bossId = engine.bossUnit?.id;
-        for (const c of snap.casts || []) {
-          if (c.interrupted) continue;
-          if (c.unitId === myId) continue;
-          const built = buildCastFromTimeline(c, now);
-          if (!built) continue;
-          companion[c.unitId] = {
-            spellName: built.spellName,
-            progress: built.progress,
-            spellId: built.spellId,
-          };
-          if (bossId && c.unitId === bossId) {
-            bossCasting = {
-              spellName: c.spellName,
-              spellId: c.spellId,
-              elapsedMs: Math.max(0, now - c.startedAtMs),
-              castTimeMs: c.totalMs || 1,
-              interruptible: c.interruptible !== false,
-            };
+        // Companion / boss cast bars: EFFECT timelines are authoritative (CAST_START/LAND).
+        // COMBAT_STATE.casts fills gaps only — never replace EFFECT rows (avoids wiping a
+        // CAST_START that arrived before the next snap). Preserve land/interrupt flashes.
+        {
+          const now = Date.now();
+          const bossId = engine.bossUnit?.id;
+          const tl = d().guestCastTimelinesRef.current;
+          const have = new Set(tl.map((c) => c.unitId));
+          for (const c of snap.casts || []) {
+            if (c.unitId === myId || c.interrupted) continue;
+            if (!have.has(c.unitId)) {
+              tl.push(c);
+              have.add(c.unitId);
+            }
+          }
+          const castsRef = d().companionCastsRef ?? fallbackCompanionCastsRef;
+          const companionSnapshot = companionCastsFromTimelines(tl, myId, now, castsRef.current);
+          castsRef.current = companionSnapshot;
+          d().setCompanionCasts(companionSnapshot);
+          if (bossId && engine.bossUnit) {
+            syncBossCastHud({
+              boss: engine.bossUnit as any,
+              cast: companionSnapshot[bossId],
+              recentOverheadSkillName: overheadRef.current,
+              setGuestBossCasting: d().setGuestBossCasting,
+            });
+            d().setBossUnit({ ...engine.bossUnit });
+          } else {
+            d().setGuestBossCasting(null);
           }
         }
-        d().setCompanionCasts(companion);
-        d().setGuestBossCasting(bossCasting);
         // Own GCD/CD stay local — do not snap from host gcds/cooldowns (latency hitch).
       }
       if (msg.type === 'CAST_INTERRUPT' && msg.payload) {
@@ -645,47 +780,85 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
             d().setPlayerCast(null);
           }
         }
-        d().setCompanionCasts((prev) => {
-          const next = { ...prev };
-          delete next[body.unitId];
-          return next;
-        });
+        const castsRef = d().companionCastsRef ?? fallbackCompanionCastsRef;
+        const nextCasts = { ...castsRef.current };
+        delete nextCasts[body.unitId];
+        castsRef.current = nextCasts;
+        d().setCompanionCasts(nextCasts);
         d().guestCastTimelinesRef.current = d().guestCastTimelinesRef.current.filter((c) => c.unitId !== body.unitId);
       }
       if (msg.type === 'PLAYER_INPUT' && msg.payload && d().isNetworkHostRef.current) {
-        d().pendingGuestInputsRef.current.push(msg.payload as PlayerInputPayload);
+        const input = msg.payload as PlayerInputPayload;
+        if (input.playerId) noteAuthorityPacket(input.playerId, 'PLAYER_INPUT');
+        d().pendingGuestInputsRef.current.push(input);
       }
-      if (msg.type === 'COMBAT_EFFECT' && msg.payload && d().isNetworkHostRef.current) {
-        hostReceiveCombatEffect(d().engineRef.current, msg.payload as CombatEffect);
+      if (msg.type === 'COMBAT_EFFECT' && msg.payload) {
+        const effect = msg.payload as CombatEffect;
+        const engine = d().engineRef.current;
+        if (effect.sourceId) noteAuthorityPacket(effect.sourceId, 'COMBAT_EFFECT');
+        if (d().isNetworkHostRef.current) {
+          // Host gathers + applies host-authority only; batch fan-out relays to peers
+          hostReceiveCombatEffect(engine, effect);
+        } else if (d().isNetworkGuestRef.current) {
+          ingestCombatEffect(engine, effect, { onHudEffect: applyCastHud });
+        }
+        d().setFriendlyUnits([...engine.friendlyUnits]);
+        d().setBossUnit(engine.bossUnit ? { ...engine.bossUnit } : undefined);
       }
-      if (msg.type === 'OWNER_SNAPSHOT' && msg.payload && d().isNetworkHostRef.current) {
+      if (msg.type === 'OWNER_SNAPSHOT' && msg.payload) {
         const snap = msg.payload as OwnerSnapshot;
-        hostReceiveOwnerSnapshot(snap);
-        mergeOwnerSnapshotUnits(d().engineRef.current, snap);
-        d().setFriendlyUnits([...d().engineRef.current.friendlyUnits]);
+        const engine = d().engineRef.current;
+        const room = d().activeRoomIdRef.current
+          ? d().roomFacadeRef.current.getRoom(d().activeRoomIdRef.current)
+          : null;
+        // Stale leaver snap after AI takeover — erase traces, do not merge
+        if (
+          snap.ownerId &&
+          !snap.purge &&
+          room &&
+          purgeStaleOwnerIfNotInRoom(engine, snap.ownerId, room)
+        ) {
+          d().setFriendlyUnits([...engine.friendlyUnits]);
+          d().setGroundEffects([...(engine.effectsManager?.groundEffects || [])]);
+          return;
+        }
+        if (snap.ownerId && !snap.purge) noteAuthorityPacket(snap.ownerId, 'OWNER_SNAPSHOT');
+        if (d().isNetworkHostRef.current) {
+          hostReceiveOwnerSnapshot(snap);
+          mergeOwnerSnapshotUnits(engine, snap);
+          d().setFriendlyUnits([...engine.friendlyUnits]);
+          d().setGroundEffects([...(engine.effectsManager?.groundEffects || [])]);
+        } else if (d().isNetworkGuestRef.current && snap.ownerId !== d().currentChar?.id) {
+          mergeOwnerSnapshotUnits(engine, snap);
+          d().setFriendlyUnits([...engine.friendlyUnits]);
+          d().setBossUnit(engine.bossUnit ? { ...engine.bossUnit } : undefined);
+          d().setGroundEffects([...(engine.effectsManager?.groundEffects || [])]);
+        }
       }
       if (msg.type === 'COMBAT_BATCH' && msg.payload) {
         const batch = msg.payload as CombatBatch;
         const engine = d().engineRef.current;
-        // Host already applied host-authority effects on receive; still merge foreign snapshots / HUD
+        // Effects + owner snaps only (steady state). World unit mirror is recovery-only.
         applyCombatBatch(engine, batch, {
           mergeOwnerSnapshot: (snap) => mergeOwnerSnapshotUnits(engine, snap),
           onHudEffect: applyCastHud,
         });
-        if (batch.world?.units && d().isNetworkGuestRef.current) {
-          // Merge host world units but keep local player / pets from guest authority
-          const me = d().currentChar?.id;
-          const worldUnits = batch.world.units.filter(
-            (u) => u.id !== me && u.ownerId !== me && !(u.isPet && u.ownerId === me)
-          );
-          const mine = engine
-            .buildNetworkUnitSnapshots()
-            .filter((u) => u.id === me || u.ownerId === me || (u.isPet && u.ownerId === me));
-          engine.applyNetworkUnitSnapshots([...worldUnits, ...mine]);
-          if (batch.world.runPhase) {
+        if (d().isNetworkGuestRef.current) {
+          if (batch.world?.runPhase) {
             const rsm = d().rsmRef.current;
             if (rsm) rsm.phase = batch.world.runPhase as RunPhase;
             d().setRunPhase(batch.world.runPhase as RunPhase);
+          }
+          // Non-authority seats + host-world ground from attached full mirror
+          // (COMBAT_STATE 丢包时 batch.world 仍可补 AI/怪物光圈与 buff)
+          if (batch.world?.units?.length) {
+            applyWorldSnapshotsPreservingAuthority(engine, batch.world.units);
+            guestUnitsSeededRef.current = true;
+          }
+          if (Array.isArray(batch.world?.groundEffects)) {
+            mergeGroundEffectsPreservingAuthority(engine, batch.world.groundEffects, (fx) =>
+              d().setGroundEffects(fx as GroundEffect[])
+            );
           }
         }
         d().setFriendlyUnits([...engine.friendlyUnits]);
@@ -703,6 +876,9 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
           unitSnapshot?: NetworkCombatSnapshot['units'][number];
         };
         d().roomFacadeRef.current.upsertRoom(body.room);
+        if (d().isNetworkHostRef.current) {
+          trackAuthoritySeat(body.playerId);
+        }
         const engine = d().engineRef.current;
         const member = body.room.members.find((m) => m.id === body.playerId);
         const joinerIdentity = {
@@ -733,6 +909,12 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
           (d().rsmRef.current?.phase !== 'LOBBY' && d().rsmRef.current?.phase !== 'SUMMARY');
 
         if (inCombatView && engine) {
+          if (body.replacedAiId) {
+            clearOwnerCombatSpawns(engine, body.replacedAiId, {
+              reportDespawn: d().isNetworkHostRef.current,
+            });
+            clearAuthorityPresence(body.replacedAiId);
+          }
           if (body.unitSnapshot) {
             // AI gone + player unit applied — raid frames refresh immediately
             engine.applyNetworkUnitSnapshots([
@@ -752,10 +934,12 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
             ]);
             markLocalPlayerFlags();
             d().setFriendlyUnits([...engine.friendlyUnits]);
+            d().setGroundEffects([...(engine.effectsManager?.groundEffects || [])]);
           } else if (d().isNetworkHostRef.current && body.replacedAiId) {
-            roomManager.inheritCombatUnitFromAi(engine, body.replacedAiId, joinerIdentity);
+            // Always seat the joiner (inherit AI, or spawn if ROOM_UPDATE already deleted it)
+            ensureHotJoinedSeat(engine, body.replacedAiId, joinerIdentity, body.room);
             d().setFriendlyUnits([...engine.friendlyUnits]);
-            // Push unit snapshot so guests/joiner see AI disappear + player appear
+            d().setGroundEffects([...(engine.effectsManager?.groundEffects || [])]);
             const roomId = d().activeRoomIdRef.current || body.room.id;
             if (netClient.connected && roomId) {
               const unitSnap = engine
@@ -774,13 +958,10 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
               });
             }
           } else if (body.replacedAiId) {
-            // Guest/joiner: drop AI unit; temporarily claim seat with joiner identity until host snapshot
-            const aiUnit = engine.getUnit(body.replacedAiId);
-            if (aiUnit) {
-              roomManager.inheritCombatUnitFromAi(engine, body.replacedAiId, joinerIdentity);
-            }
+            ensureHotJoinedSeat(engine, body.replacedAiId, joinerIdentity, body.room);
             markLocalPlayerFlags();
             d().setFriendlyUnits([...engine.friendlyUnits]);
+            d().setGroundEffects([...(engine.effectsManager?.groundEffects || [])]);
           }
         }
 
@@ -798,8 +979,8 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
             d().setDungeonTier(tier);
             d().setSelectedDungeonId(body.room.dungeonId);
             d().setDungeonDifficulty(body.room.difficulty);
-            // Hot-swap into live run: new epoch so CAST ids won't hit host's old ring
             netClient.beginCombatInputEpoch();
+            beginCombatEffectEpoch();
             d().setupRaidUnitsRef.current(
               d().currentChar,
               tier,
@@ -807,7 +988,20 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
               body.room.customDifficulty || d().customDifficultyRef.current,
               body.room
             );
-            // Prefer host-inherited combat snapshot over fresh full-HP roster when available
+            {
+              const meId = d().currentChar.id;
+              const eng = d().engineRef.current;
+              configureCombatAuthority({
+                localPlayerId: meId,
+                isNetworkHost: d().isNetworkHostRef.current,
+                isNetworkGuest: d().isNetworkGuestRef.current,
+                activeRoomId: body.room.id,
+                isUnitLocalAuthority: d().isNetworkHostRef.current
+                  ? makeHostAuthorityPredicate(eng, meId)
+                  : makeGuestAuthorityPredicate(eng, meId),
+              });
+              installSummonReporters(eng);
+            }
             if (body.unitSnapshot && d().engineRef.current) {
               d().engineRef.current.applyNetworkUnitSnapshots([
                 ...d()
@@ -842,26 +1036,19 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
       if (msg.type === 'MEMBER_REPLACE_AI' && msg.payload) {
         const body = msg.payload as { room: NetLobbyRoom; playerId: string; aiMemberId: string };
         d().roomFacadeRef.current.upsertRoom(body.room);
+        clearAuthorityPresence(body.playerId);
         if (d().isNetworkHostRef.current || d().isNetworkGuestRef.current) {
           const engine = d().engineRef.current;
-          const aiMeta = body.room.members.find((m) => m.id === body.aiMemberId);
-          // Align engine unit id with room AI id so later hot-join can inherit the same seat
-          // (keeping playerId caused orphan mis-claim → missing member + wrong class/role).
-          const remapped = engine.remapUnitId(body.playerId, body.aiMemberId, {
-            isPlayer: false,
-            isHumanControlled: false,
-            ...(aiMeta
-              ? {
-                  name: aiMeta.name,
-                  classId: aiMeta.classId as any,
-                  spec: aiMeta.spec,
-                  role: aiMeta.role as any,
-                }
-              : {}),
+          // Host: wipe leaver gather/snaps, remap-or-spawn AI, publish purge + AI mirror.
+          // Guests: same local wipe + remap so map/roster don't keep a ghost human.
+          applyPlayerLeaveAiTakeover(engine, {
+            playerId: body.playerId,
+            aiMemberId: body.aiMemberId,
+            room: body.room,
+            isHost: d().isNetworkHostRef.current,
           });
-          if (remapped) {
-            d().setFriendlyUnits([...engine.friendlyUnits]);
-          }
+          d().setFriendlyUnits([...engine.friendlyUnits]);
+          d().setGroundEffects([...(engine.effectsManager?.groundEffects || [])]);
         }
         if (d().currentChar && body.playerId === d().currentChar.id) {
           d().isNetworkGuestRef.current = false;
@@ -933,6 +1120,7 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
     });
 
     return () => {
+      clearInterval(hostWatchTimer);
       setHostEffectHudHook(null);
       unsub();
     };

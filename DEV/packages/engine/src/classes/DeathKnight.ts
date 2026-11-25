@@ -74,6 +74,8 @@ export interface SpellEffect {
   groundRadius?: number;
   /** 附加说明（给AI决策与UI tooltip用） */
   description?: string;
+  /** 可驱散类型（针对DISPEL技能：MAGIC, CURSE, POISON, DISEASE） */
+  dispelTypes?: string[];
 }
 
 export interface Spell {
@@ -145,17 +147,15 @@ export const DEATH_KNIGHT: ClassSpec = {
         },
         {
           type: 'HEAL',
-          // 自疗量 = max_hp × 7%（由Calculator根据施法者max_hp计算）
-          baseValue: 0.07,
-          description: '自疗 max_hp×7%',
+          baseValue: 4550,
+          description: '自疗约4550点生命值（约最大生命值7%）',
         },
         {
           type: 'SHIELD',
-          // 鲜血护盾吸收量 = max_hp × 8%
-          baseValue: 0.08,
+          baseValue: 5200,
           durationMs: 10_000,
           auraId: 'blood_shield',
-          description: '生成鲜血护盾（吸收=max_hp×8%，持续10s）',
+          description: '生成鲜血护盾（吸收约5200点伤害，持续10s）',
         },
       ],
     },
@@ -194,7 +194,6 @@ export const DEATH_KNIGHT: ClassSpec = {
       runesRequired: ['UNHOLY'],
       targetType: 'GROUND',
       school: 'SHADOW',
-      spec: 'BLOOD_TANK',
       effects: [
         {
           type: 'GROUND_EFFECT',
@@ -241,7 +240,6 @@ export const DEATH_KNIGHT: ClassSpec = {
       resourceCostAmount: 0,
       targetType: 'SINGLE_ENEMY',
       school: 'SHADOW',
-      spec: 'BLOOD_TANK',
       effects: [
         {
           type: 'DOT',
@@ -285,7 +283,8 @@ export const DEATH_KNIGHT: ClassSpec = {
           type: 'BUFF',
           auraId: 'bone_shield',
           maxStacks: 6,
-          description: '6层减伤20% buff（每层被击消耗一层）',
+          durationMs: 300_000,
+          description: '6层减伤20% buff（每次被击消耗一层，内置2秒CD）',
         },
       ],
     },
@@ -323,7 +322,6 @@ export const DEATH_KNIGHT: ClassSpec = {
       resourceCostAmount: 0,
       targetType: 'SELF',
       school: 'FROST',
-      spec: 'BLOOD_TANK',
       effects: [
         {
           type: 'BUFF',
@@ -345,13 +343,13 @@ export const DEATH_KNIGHT: ClassSpec = {
       resourceCostAmount: 0,
       targetType: 'SELF',
       school: 'SHADOW',
-      spec: 'BLOOD_TANK',
       effects: [
         {
           type: 'SHIELD',
+          baseValue: 32500,
           auraId: 'anti_magic_shell',
           durationMs: 5_000,
-          description: '吸收75%魔法伤害持续5s并转化为符文能量，CD 45s（不进GCD）',
+          description: '吸收最多32,500点魔法伤害（约最大生命值50%），持续5s，CD 45s（不进GCD）',
         },
       ],
     },
@@ -683,7 +681,6 @@ export const DEATH_KNIGHT: ClassSpec = {
       runesRequired: ['BLOOD', 'FROST', 'UNHOLY'],
       targetType: 'AOE_ENEMY',
       school: 'SHADOW',
-      spec: 'UNHOLY_DPS',
       effects: [
         {
           type: 'BUFF',

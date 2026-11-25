@@ -449,19 +449,19 @@ export async function runTier1FeatureTests(): Promise<{ passed: number; total: n
     const keyCount = Object.keys(defaultKeys).length;
     assert.strictEqual(keyCount, 36, '动作条必须支持三栏共 36 个独立槽位');
 
-    // Row 1: 0..11 -> 1..=
+    // Row 1: 0..11 -> 12345QERTFCX
     assert.strictEqual(defaultKeys[0], '1', '第一栏起始键为 1');
-    assert.strictEqual(defaultKeys[11], '=', '第一栏终止键为 =');
+    assert.strictEqual(defaultKeys[11], 'X', '第一栏终止键为 X');
 
-    // Row 2: 12..23 -> SHIFT+1..SHIFT+=
+    // Row 2: 12..23 -> SHIFT+1..SHIFT+X
     assert.strictEqual(defaultKeys[12], 'SHIFT+1', '第二栏起始键为 SHIFT+1');
-    assert.strictEqual(defaultKeys[23], 'SHIFT+=', '第二栏终止键为 SHIFT+=');
+    assert.strictEqual(defaultKeys[23], 'SHIFT+X', '第二栏终止键为 SHIFT+X');
 
-    // Row 3: 24..35 -> F1..F12
-    assert.strictEqual(defaultKeys[24], 'F1', '第三栏起始键为 F1');
+    // Row 3: 24..35 -> `..F12
+    assert.strictEqual(defaultKeys[24], '`', '第三栏起始键为 `');
     assert.strictEqual(defaultKeys[35], 'F12', '第三栏终止键为 F12');
 
-    console.log('✓ T1.11: 三栏36槽位 (1~=, Shift+1~=, F1~F12) 完整性验证通过');
+    console.log('✓ T1.11: 三栏36槽位 (1~X, Shift+1~X, `~F12) 完整性验证通过');
     passed++;
   } catch (err) {
     console.error('❌ T1.11 失败:', err);

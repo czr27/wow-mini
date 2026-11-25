@@ -101,6 +101,12 @@ export const AshburyEncounter: BossEncounterModule = {
         range: 600,
         targetKind: 'AOE',
         description: '6秒引导：全员空中昏迷；每秒扣除 (最大生命-1)/6，满血无治疗则恰好剩 1 点',
+        dbm: {
+          advice: '全团窒息压血至 1 点，结束后 1s 安全治疗再抬血',
+          severity: 'CRITICAL',
+          roleHint: 'HEALER',
+          preWarnMs: 3000,
+        },
         execute: (boss, engine) => {
           // 六跳已按 (maxHp-1)/6 结算完；此处不再「末跳拍成 1」，只解除昏迷并进入后摇
           clearAsphyxiateStun(engine);
@@ -110,6 +116,15 @@ export const AshburyEncounter: BossEncounterModule = {
           bossAi.asphyxiatePostDelay = 6000;
           if (engine) {
             engine.bossHealingGraceRemainingMs = 1000;
+            engine.emitDbmAlert?.({
+              title: '窒息结束：安全治疗窗口',
+              advice: '全团残血，治疗立刻群刷抬血！',
+              severity: 'CRITICAL',
+              roleHint: 'HEALER',
+              spellId: 'asphyxiate_grace',
+              bossId: 'ashbury',
+              source: 'ENCOUNTER',
+            });
           }
 
           const calamity = bossAi.skills.find((s: BossSkill) => s.id === 'calamity');

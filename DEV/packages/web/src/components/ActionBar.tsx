@@ -146,13 +146,13 @@ export function resolveSlotHotkey(
 }
 
 export const DEFAULT_KEYBINDINGS: Record<number, string> = {
-  // Row 1 (Bar 1: 0..11)
-  0: '1', 1: '2', 2: '3', 3: '4', 4: '5', 5: '6', 6: '7', 7: '8', 8: '9', 9: '0', 10: '-', 11: '=',
-  // Row 2 (Bar 2: 12..23)
-  12: 'SHIFT+1', 13: 'SHIFT+2', 14: 'SHIFT+3', 15: 'SHIFT+4', 16: 'SHIFT+5', 17: 'SHIFT+6',
-  18: 'SHIFT+7', 19: 'SHIFT+8', 20: 'SHIFT+9', 21: 'SHIFT+0', 22: 'SHIFT+-', 23: 'SHIFT+=',
-  // Row 3 (Bar 3: 24..35)
-  24: 'F1', 25: 'F2', 26: 'F3', 27: 'F4', 28: 'F5', 29: 'F6',
+  // Row 1 (Bar 1: 0..11) -> 12345QERTFCX
+  0: '1', 1: '2', 2: '3', 3: '4', 4: '5', 5: 'Q', 6: 'E', 7: 'R', 8: 'T', 9: 'F', 10: 'C', 11: 'X',
+  // Row 2 (Bar 2: 12..23) -> SHIFT + Row 1
+  12: 'SHIFT+1', 13: 'SHIFT+2', 14: 'SHIFT+3', 15: 'SHIFT+4', 16: 'SHIFT+5', 17: 'SHIFT+Q',
+  18: 'SHIFT+E', 19: 'SHIFT+R', 20: 'SHIFT+T', 21: 'SHIFT+F', 22: 'SHIFT+C', 23: 'SHIFT+X',
+  // Row 3 (Bar 3: 24..35) -> ` + F2..F12 (F1 triggers browser Help in some browsers, replaced with `)
+  24: '`', 25: 'F2', 26: 'F3', 27: 'F4', 28: 'F5', 29: 'F6',
   30: 'F7', 31: 'F8', 32: 'F9', 33: 'F10', 34: 'F11', 35: 'F12',
 };
 
@@ -379,19 +379,29 @@ export const ActionBar: React.FC<Props> = ({
       }
 
       // 计算标准快捷键签名
-      let keySig = '';
-      if (e.key >= 'F1' && e.key <= 'F12') {
-        keySig = e.key.toUpperCase();
+      let baseKey = '';
+      if (/^F([1-9]|1[0-2])$/i.test(e.key)) {
+        baseKey = e.key.toUpperCase();
       } else if (e.code.startsWith('Digit')) {
-        const num = e.code.replace('Digit', '');
-        keySig = e.shiftKey ? `SHIFT+${num}` : num;
+        baseKey = e.code.replace('Digit', '');
+      } else if (e.code.startsWith('Key')) {
+        baseKey = e.code.replace('Key', '').toUpperCase();
+      } else if (e.code === 'Backquote') {
+        baseKey = '`';
       } else if (e.code === 'Minus') {
-        keySig = e.shiftKey ? 'SHIFT+-' : '-';
+        baseKey = '-';
       } else if (e.code === 'Equal') {
-        keySig = e.shiftKey ? 'SHIFT+=' : '=';
+        baseKey = '=';
       } else {
-        keySig = (e.shiftKey ? 'SHIFT+' : '') + e.key.toUpperCase();
+        baseKey = e.key.toUpperCase();
       }
+
+      const modParts: string[] = [];
+      if (e.ctrlKey) modParts.push('CTRL');
+      if (e.altKey) modParts.push('ALT');
+      if (e.shiftKey) modParts.push('SHIFT');
+      modParts.push(baseKey);
+      const keySig = modParts.join('+');
 
       // 匹配当前专精配置或默认的 36 槽位（空串 = 冲突清除后的 N/A，不响应）
       for (let idx = 0; idx < 36; idx++) {
@@ -508,13 +518,13 @@ export const ActionBar: React.FC<Props> = ({
       });
     };
 
-    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keydown', handleKeyDown, { capture: true });
     window.addEventListener('keyup', handleKeyUp);
     window.addEventListener('blur', handleBlur);
     window.addEventListener('mouseup', handleGlobalMouseUp);
 
     return () => {
-      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keydown', handleKeyDown, { capture: true });
       window.removeEventListener('keyup', handleKeyUp);
       window.removeEventListener('blur', handleBlur);
       window.removeEventListener('mouseup', handleGlobalMouseUp);
@@ -646,9 +656,9 @@ export const ActionBar: React.FC<Props> = ({
 
         {/* Helper to render a 12-slot row - all 3 rows identically sized (w-11 h-11) and aligned */}
         {([
-          { rowName: '动作条 3 (F1~F12)', startIdx: 24, sizeCls: 'w-11 h-11', textCls: 'text-[10px]' },
-          { rowName: '动作条 2 (Shift+1~=)', startIdx: 12, sizeCls: 'w-11 h-11', textCls: 'text-[10px]' },
-          { rowName: '动作条 1 (主动作栏 1~=)', startIdx: 0, sizeCls: 'w-11 h-11', textCls: 'text-[10px]' },
+          { rowName: '动作条 3 (`~F12)', startIdx: 24, sizeCls: 'w-11 h-11', textCls: 'text-[10px]' },
+          { rowName: '动作条 2 (Shift+1~X)', startIdx: 12, sizeCls: 'w-11 h-11', textCls: 'text-[10px]' },
+          { rowName: '动作条 1 (主动作栏 1~X)', startIdx: 0, sizeCls: 'w-11 h-11', textCls: 'text-[10px]' },
         ] as const).map(({ rowName, startIdx, sizeCls, textCls }) => (
           <div key={startIdx} className="flex items-center space-x-0 border border-[#2f2f4c] rounded-lg overflow-hidden shadow-md bg-[#0a0a14]">
             {Array.from({ length: 12 }).map((_, col) => {

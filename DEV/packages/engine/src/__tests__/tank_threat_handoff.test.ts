@@ -6,7 +6,11 @@ import { describe, it } from 'node:test';
 import {
   evaluateTankThreatDecision,
   orderTanksByThreatPriority,
+  pickPreferredTankTaunt,
+  shouldCastTankTaunt,
   TANK_HEALTHY_THRESHOLD,
+  TANK_LOW_CD_TAUNT_MS,
+  TANK_PULL_TAUNT_WINDOW_MS,
 } from '../ai/TankAI.js';
 import { CombatEngine } from '../engine/CombatEngine.js';
 import type { Unit } from '../types.js';
@@ -96,6 +100,80 @@ describe('主副坦仇恨交接', () => {
     assert.equal(mtDec.pauseThreat, false);
     assert.equal(mtDec.shouldTaunt, true);
     assert.equal(mtDec.reason, 'PRIMARY_TANK_HEALTHY_ACTIVE');
+  });
+
+  it('嘲讽施放门闩：开战窗 / 失仇 / 多嘲讽含低CD；优先低CD', () => {
+    assert.equal(
+      shouldCastTankTaunt({
+        shouldTaunt: true,
+        elapsedMs: 500,
+        threatTargetId: 'mt',
+        selfId: 'mt',
+      }),
+      true,
+      '开战窗口内即使自己握仇也可嘲讽'
+    );
+    assert.equal(
+      shouldCastTankTaunt({
+        shouldTaunt: true,
+        elapsedMs: TANK_PULL_TAUNT_WINDOW_MS + 100,
+        threatTargetId: 'ot',
+        selfId: 'mt',
+      }),
+      true,
+      '仇恨不在自己身上必须嘲讽'
+    );
+    assert.equal(
+      shouldCastTankTaunt({
+        shouldTaunt: true,
+        elapsedMs: TANK_PULL_TAUNT_WINDOW_MS + 100,
+        threatTargetId: 'mt',
+        selfId: 'mt',
+        availableTauntCooldownMs: [8_000],
+      }),
+      false,
+      '已握仇且过开战窗、仅单一嘲讽 → 不用'
+    );
+    assert.equal(
+      shouldCastTankTaunt({
+        shouldTaunt: true,
+        elapsedMs: TANK_PULL_TAUNT_WINDOW_MS + 100,
+        threatTargetId: 'mt',
+        selfId: 'mt',
+        availableTauntCooldownMs: [8_000, 60_000],
+      }),
+      true,
+      '多嘲讽且含低CD → 可用低CD嘲讽'
+    );
+    assert.equal(
+      shouldCastTankTaunt({
+        shouldTaunt: true,
+        elapsedMs: TANK_PULL_TAUNT_WINDOW_MS + 100,
+        threatTargetId: 'mt',
+        selfId: 'mt',
+        availableTauntCooldownMs: [45_000, 60_000],
+      }),
+      false,
+      '多嘲讽但全是高CD → 不用'
+    );
+    assert.equal(
+      shouldCastTankTaunt({
+        shouldTaunt: false,
+        elapsedMs: 0,
+        threatTargetId: 'ot',
+        selfId: 'mt',
+        availableTauntCooldownMs: [8_000, 60_000],
+      }),
+      false,
+      '接仇未满足绝不嘲讽'
+    );
+
+    const picked = pickPreferredTankTaunt([
+      { id: 'long', cooldownMs: TANK_LOW_CD_TAUNT_MS + 5_000 },
+      { id: 'short', cooldownMs: 8_000 },
+      { id: 'mid', cooldownMs: 20_000 },
+    ]);
+    assert.equal(picked?.id, 'short');
   });
 
   it('ThreatManager：副坦嘲讽后主坦恢复嘲讽可拉回目标', () => {

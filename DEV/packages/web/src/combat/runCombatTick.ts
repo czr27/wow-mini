@@ -13,14 +13,15 @@ import type {
   NetworkVoteState,
   PlayerInputPayload,
   AIPersonality,
+  DbmAlert,
 } from '@cata-raid-sim/engine';
 import {
   BossAI,
   roomManager,
   LEVEL_80_MAX_HASTE,
-  RANGE_40YD_PX,
-  AUTO_ATTACK_RANGE_PX,
   getUnitHaste,
+  TRAVEL_MANA_REGEN_MULTIPLIER,
+  tickEnemyAdds,
 } from '@cata-raid-sim/engine';
 import { advanceLocalPlayerCast, type PlayerCastState } from '../components/ActionBar.js';
 import type { IncomingHealCast } from '../components/RaidFrames.js';
@@ -35,22 +36,54 @@ import {
 import { syncUnitResources } from './unitResources.js';
 import { runFriendlyAiCombatTick, type AiActiveCast } from './aiCombatExecutor.js';
 import { clearGuestNetworkCast } from './applyGuestNetworkCast.js';
+import { tickPlayerAndPetAutoAttacks } from './playerAutoAttack.js';
 import { takeHostMazeSyncForBroadcast } from './mazeSyncBridge.js';
 import { withNetworkVitals } from './withNetworkVitals.js';
 import {
   buildLocalOwnerSnapshot,
+  getCombatAuthorityContext,
   hostFlushCombatBatch,
   publishOwnerSnapshot,
 } from './networkCombatAuthority.js';
 import {
   companionCastsFromTimelines,
+  pruneCompanionCastFlashes,
   publishCastInterrupt,
   publishCastLand,
   publishCastStart,
+  syncBossCastHud,
+  type CompanionCastHud,
 } from './castLifecycleNet.js';
+import { serializeGroundEffectWire } from './summonReport.js';
+import { clearOwnerCombatSpawns } from './clearOwnerCombatSpawns.js';
+import { dispatchCombatFxActions } from './dispatchCombatFx.js';
+import {
+  filterHostAuthorityActions,
+  filterHostAuthorityCasts,
+  filterHostAuthorityCooldowns,
+  filterHostAuthorityFloatingTexts,
+  filterHostAuthorityGcds,
+  filterHostAuthorityGround,
+  filterHostAuthorityUnits,
+} from './hostWorldSnapFilter.js';
+import { withHostAuthorityOnlySim } from './hostAuthorityTickGuard.js';
+import {
+  allAuthoritiesInitialReady,
+  clearAuthorityPresence,
+  takeAuthoritySilenceKicks,
+} from './authorityPresence.js';
 
-/** Host: last published boss cast key `bossId:spellId` for CAST_START/LAND/INTERRUPT */
-let lastPublishedBossCastKey = '';
+/** Host: last published boss cast info for CAST_START/LAND/INTERRUPT */
+let lastPublishedBossCast: {
+  key: string;
+  unitId: string;
+  spellId: string;
+  spellName: string;
+} | null = null;
+/** Host: per-add last melee attack timestamp (engine.nowMs) */
+const addLastAttackMs = new Map<string, number>();
+/** Host: pending DBM alerts buffered between 20Hz sim ticks and 10Hz COMBAT_STATE broadcasts */
+const pendingHostDbmAlerts: DbmAlert[] = [];
 
 export type CombatTickMutableState = {
   tickCount: number;
@@ -66,13 +99,22 @@ export type CombatTickCtx = {
   guestCastTimelinesRef: MutableRefObject<NetworkCastTimeline[]>;
   guestGcdTimelinesRef: MutableRefObject<NetworkGcdTimeline[]>;
   guestCdTimelinesRef: MutableRefObject<NetworkCooldownTimeline[]>;
+  companionCastsRef?: MutableRefObject<Record<string, CompanionCastHud>>;
+  guestBossOverheadSkillRef?: MutableRefObject<string | null>;
   playerCastRef: MutableRefObject<PlayerCastState | null>;
   setPlayerCast: Dispatch<SetStateAction<PlayerCastState | null>>;
   setPlayerGcdRemainingMs: Dispatch<SetStateAction<number>>;
   setPlayerGcdTotalMs: Dispatch<SetStateAction<number>>;
   setPlayerCooldowns: Dispatch<SetStateAction<Record<string, { cdRemainingMs: number; totalCdMs: number }>>>;
-  setCompanionCasts: Dispatch<
-    SetStateAction<Record<string, { spellName: string; progress: number; spellId?: string }>>
+  setCompanionCasts: Dispatch<SetStateAction<Record<string, CompanionCastHud>>>;
+  setGuestBossCasting?: Dispatch<
+    SetStateAction<{
+      spellName: string;
+      spellId?: string;
+      elapsedMs: number;
+      castTimeMs: number;
+      interruptible: boolean;
+    } | null>
   >;
   wipeNetworkVote: NetworkVoteState | null;
   setWipeVoteTimerMs: Dispatch<SetStateAction<number>>;
@@ -87,6 +129,7 @@ export type CombatTickCtx = {
   setIsApproaching: Dispatch<SetStateAction<boolean>>;
   setGroundEffects: Dispatch<SetStateAction<GroundEffect[]>>;
   setFloatingTexts: Dispatch<SetStateAction<FloatingCombatText[]>>;
+  onDbmAlerts?: (alerts: DbmAlert[]) => void;
   setBossUnit: Dispatch<SetStateAction<Unit | undefined>>;
   setFriendlyUnits: Dispatch<SetStateAction<Unit[]>>;
   setBossTargetId: Dispatch<SetStateAction<string | null>>;
@@ -133,13 +176,15 @@ export type CombatTickCtx = {
  * One 20Hz combat frame (host sim + guest HUD timelines + sync).
  * tickCount / reviveTimerMs live in mutable state so the owning interval can reset them.
  */
-/** Host-tracked boss cast key for CAST_START / LAND / INTERRUPT publish */
-let lastPublishedBossCastKey = '';
-
 export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableState): void {
   const rsm = ctx.rsmRef.current;
   const engine = ctx.engineRef.current;
   if (!rsm || ctx.runPhase === 'LOBBY' || ctx.runPhase === 'SUMMARY') return;
+
+  // Maze: 20× passive mana regen on each authority's local seats (OWNER_SNAPSHOT syncs mp).
+  // Guest early-path also hits engine.tick → must set before that branch.
+  engine.resourceManager.manaRegenMultiplier =
+    rsm.phase === 'TRAVEL_RECOVERY' ? TRAVEL_MANA_REGEN_MULTIPLIER : 1;
 
   // Network guests: own skills/pets authority — resolve local cast; world from host batch/state
   if (ctx.isNetworkGuestRef.current) {
@@ -201,9 +246,30 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
         }
         return nextCd;
       });
-      // Tick own auras / pets / ground (HoTs, LB bloom, totem ticks) under effect bus
+      // Tick own auras / pets / ground only — foreign seats frozen (recipient owns countdown)
       withNetworkVitals(engine, () => {
-        engine.tick(50);
+        withHostAuthorityOnlySim(engine, () => {
+          engine.tick(50);
+        });
+        if (rsm.phase === 'BOSS_COMBAT' && !ctx.isApproaching) {
+          const guestPlayer = engine.friendlyUnits.find(
+            (u) => (u.isPlayer || u.id === myId) && (u.isAlive ?? u.alive)
+          );
+          const bossUnit = engine.bossUnit;
+          const isAsphyxiate = Boolean(
+            guestPlayer?.buffs?.some((b) => b.spellId === 'asphyxiate')
+          );
+          tickPlayerAndPetAutoAttacks({
+            engine,
+            playerUnit: guestPlayer,
+            boss: bossUnit,
+            tickCount: state.tickCount,
+            isAsphyxiateChannel: isAsphyxiate,
+            isPlayerCasting: Boolean(ctx.playerCastRef.current),
+            lastPlayerAttackTickRef: ctx.lastPlayerAttackTickRef,
+            lastPetAttackTickRef: ctx.lastPetAttackTickRef,
+          });
+        }
       });
       // Owner snapshot ~200ms (pets/totems/self)
       if (ctx.activeRoomIdRef.current && state.tickCount % 4 === 0) {
@@ -225,39 +291,45 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
               : [],
             groundEffects: (engine.effectsManager?.groundEffects || [])
               .filter((g) => g.ownerId === myId)
-              .map((g) => ({
-                id: g.id,
-                kind: g.kind,
-                spellId: g.spellId,
-                ownerId: g.ownerId,
-                x: g.x,
-                y: g.y,
-                radius: g.radius,
-                colorHex: g.colorHex,
-                remainingMs: g.remainingMs,
-              })),
+              .map(serializeGroundEffectWire),
           })
         );
       }
       state.tickCount++;
     }
-    const companion: Record<string, { spellName: string; progress: number; spellId?: string }> = {};
-    for (const c of ctx.guestCastTimelinesRef.current) {
-      if (c.interrupted || c.unitId === myId) continue;
-      const built = buildCastFromTimeline(c, now);
-      if (built) {
-        companion[c.unitId] = {
-          spellName: built.spellName,
-          progress: built.progress,
-          spellId: built.spellId,
-        };
-      }
+    // Drop finished cast rows (bar HUD uses progress; leftover rows block snap merge)
+    ctx.guestCastTimelinesRef.current = ctx.guestCastTimelinesRef.current.filter((c) => {
+      if (c.interrupted) return false;
+      return now - c.startedAtMs < c.totalMs + 800;
+    });
+    // Smooth cast bars from EFFECT timelines + keep land/interrupt flashes (sync so bossUnit gets stamped before setBossUnit)
+    const nextCompanionCasts = companionCastsFromTimelines(
+      ctx.guestCastTimelinesRef.current,
+      myId,
+      now,
+      pruneCompanionCastFlashes(ctx.companionCastsRef?.current ?? {}, now)
+    );
+    if (ctx.companionCastsRef) {
+      ctx.companionCastsRef.current = nextCompanionCasts;
     }
-    ctx.setCompanionCasts(companion);
+    ctx.setCompanionCasts(nextCompanionCasts);
+    const boss = engine.bossUnit;
+    if (boss) {
+      syncBossCastHud({
+        boss: boss as any,
+        cast: nextCompanionCasts[boss.id],
+        recentOverheadSkillName: ctx.guestBossOverheadSkillRef?.current ?? null,
+        setGuestBossCasting: ctx.setGuestBossCasting,
+      });
+    }
     if (ctx.wipeNetworkVote && !ctx.wipeNetworkVote.resolved) {
       ctx.setWipeVoteTimerMs(Math.max(0, ctx.wipeNetworkVote.timeoutMs - (now - ctx.wipeNetworkVote.startedAtMs)));
     }
     ctx.setFriendlyUnits([...engine.friendlyUnits]);
+    // Re-copy boss so canvas sees isCasting / castProgress nameplate fields
+    ctx.setBossUnit(engine.bossUnit ? { ...engine.bossUnit } : undefined);
+    // Local ground rings (own totems + remote GROUND_PLACE apply) must reach React/canvas
+    ctx.setGroundEffects([...(engine.effectsManager?.groundEffects || [])]);
     ctx.setFloatingTexts([...(engine.effectsManager?.floatingTexts || [])]);
     return;
   }
@@ -282,14 +354,9 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
       if (input.kind === 'TARGET' && input.targetId) {
         continue;
       }
-      if (input.kind === 'MOVE' && input.playerId && typeof input.x === 'number' && typeof input.y === 'number') {
-        const mover = engine.getUnit(input.playerId);
-        if (mover && mover.isAlive) {
-          mover.position = { x: input.x, y: input.y };
-          // Guest already cleared their own bar on move. Host only drops sim cast —
-          // do NOT echo CAST_INTERRUPT (late echo can wipe their next cast).
-          clearGuestNetworkCast(ctx.aiHealerCastsRef.current, engine, input.playerId);
-        }
+      if (input.kind === 'MOVE' && input.playerId) {
+        // Position is guest authority — only arrives via OWNER_SNAPSHOT. Host does not write it.
+        clearGuestNetworkCast(ctx.aiHealerCastsRef.current, engine, input.playerId);
         continue;
       }
       if (input.kind === 'INTERRUPT' && input.playerId) {
@@ -298,35 +365,7 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
         continue;
       }
       if (input.kind === 'DISPEL' && input.playerId) {
-        const caster = engine.getUnit(input.playerId);
-        if (caster && caster.isAlive) {
-          const prevFlags = engine.friendlyUnits.map((u) => ({ id: u.id, isPlayer: u.isPlayer }));
-          for (const u of engine.friendlyUnits) u.isPlayer = u.id === input.playerId;
-          try {
-            // Prefer engine dispel if available; otherwise strip one matching debuff
-            const target =
-              (input.targetId ? engine.getUnit(input.targetId) : null) ||
-              caster;
-            if (target) {
-              const debuffIdx = target.buffs.findIndex((b) => b.kind === 'DEBUFF');
-              if (debuffIdx >= 0) {
-                const removed = target.buffs[debuffIdx];
-                target.buffs.splice(debuffIdx, 1);
-                engine.effectsManager?.addFloatingText({
-                  targetId: target.id,
-                  text: `✨ 驱散成功: ${removed.name}`,
-                  category: 'HEAL',
-                  isCrit: true,
-                });
-              }
-            }
-          } finally {
-            for (const f of prevFlags) {
-              const u = engine.getUnit(f.id);
-              if (u) u.isPlayer = f.isPlayer;
-            }
-          }
-        }
+        // Dispel is target-authority / guest-local + EFFECT — host only acks presence
         continue;
       }
       if (input.kind === 'GROUND_CAST') {
@@ -347,8 +386,56 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
     }
   }
 
-  rsm.tick(deltaMs);
-  engine.tick(deltaMs);
+  // Networked wipe: server VOTE_RESULT owns settle. Hold local RSM timer so a
+  // 1同意+1结束 tie cannot fall through to local auto-RETRY after 15s.
+  if (
+    netClient.connected &&
+    ctx.activeRoomIdRef.current &&
+    rsm.phase === 'WIPE_VOTE'
+  ) {
+    if (ctx.wipeNetworkVote && !ctx.wipeNetworkVote.resolved) {
+      rsm.wipeVoteTimerMs = Math.max(
+        50,
+        ctx.wipeNetworkVote.timeoutMs - (Date.now() - ctx.wipeNetworkVote.startedAtMs)
+      );
+    } else {
+      rsm.wipeVoteTimerMs = Math.max(rsm.wipeVoteTimerMs, 1000);
+    }
+  }
+
+  // 联机房主：跑尸 massResurrect → resurrectUnit 须走 withNetworkVitals，
+  // 对客人座位发 RESURRECT（不乐观改血），客人权威满血后 OWNER_SNAPSHOT 回传。
+  const networkedHost =
+    ctx.isNetworkHostRef.current && !!ctx.activeRoomIdRef.current && netClient.connected;
+  if (networkedHost) {
+    withNetworkVitals(engine, () => {
+      rsm.tick(deltaMs);
+    });
+  } else {
+    rsm.tick(deltaMs);
+  }
+  // Host: do not let engine.tick rewrite guest seats or evaluate their ground FX
+  if (ctx.isNetworkHostRef.current && ctx.activeRoomIdRef.current) {
+    withHostAuthorityOnlySim(engine, () => {
+      engine.tick(deltaMs);
+    });
+  } else {
+    engine.tick(deltaMs);
+  }
+
+  // Authority silence → kick (any packet from seat resets timer)
+  if (ctx.isNetworkHostRef.current && ctx.activeRoomIdRef.current && netClient.connected) {
+    const kicks = takeAuthoritySilenceKicks(Date.now());
+    for (const playerId of kicks) {
+      ctx.roomFacadeRef.current.kickMember(ctx.activeRoomIdRef.current, playerId);
+      clearAuthorityPresence(playerId);
+      window.dispatchEvent(
+        new CustomEvent('cata_ui_error', {
+          detail: { text: `玩家超时无响应，已踢出: ${playerId.slice(0, 8)}` },
+        })
+      );
+    }
+  }
 
   // Host: start wipe vote once when entering WIPE_VOTE
   if (
@@ -363,6 +450,18 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
   }
   if (rsm.phase !== 'WIPE_VOTE') {
     ctx.lastWipePhaseBroadcastRef.current = rsm.phase;
+  }
+
+  // Drain DBM alerts produced this tick (notify host/solo HUD immediately; buffer for 10Hz guest broadcast)
+  const freshDbmAlerts = engine.drainDbmAlerts();
+  if (freshDbmAlerts.length > 0) {
+    ctx.onDbmAlerts?.(freshDbmAlerts);
+    if (ctx.isNetworkHostRef.current && ctx.activeRoomIdRef.current && netClient.connected) {
+      pendingHostDbmAlerts.push(...freshDbmAlerts);
+    }
+  }
+  if (!ctx.isNetworkHostRef.current || !ctx.activeRoomIdRef.current || !netClient.connected) {
+    if (pendingHostDbmAlerts.length > 0) pendingHostDbmAlerts.length = 0;
   }
 
   // Host broadcasts compact combat state + cast/CD timelines (~10Hz)
@@ -442,19 +541,7 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
           });
         }
       }
-      const groundEffects = (engine.effectsManager?.groundEffects || []).map((g) => ({
-        id: g.id,
-        kind: g.kind,
-        spellId: g.spellId,
-        ownerId: g.ownerId,
-        x: g.x,
-        y: g.y,
-        radius: g.radius,
-        colorHex: g.colorHex,
-        remainingMs: g.remainingMs,
-        facingRad: (g as any).facingRad,
-        coneAngleRad: (g as any).coneAngleRad,
-      }));
+      const groundEffects = (engine.effectsManager?.groundEffects || []).map(serializeGroundEffectWire);
       const floatingTexts = (engine.effectsManager?.floatingTexts || []).map((f) => ({
         id: f.id,
         targetId: f.targetId,
@@ -470,13 +557,10 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
       const recentActions = engine.drainRecentActions();
       // Host canvas also draws FX from actions (guests get the same via COMBAT_STATE)
       if (recentActions.length > 0) {
-        window.dispatchEvent(
-          new CustomEvent('cata_combat_actions', {
-            detail: { actions: recentActions, roomId: ctx.activeRoomIdRef.current },
-          })
-        );
+        dispatchCombatFxActions(recentActions, { roomId: ctx.activeRoomIdRef.current });
       }
       const maze = rsm.phase === 'TRAVEL_RECOVERY' ? takeHostMazeSyncForBroadcast() : null;
+      // Full snap = host-authority only; guest seats via OWNER_SNAPSHOT splice
       const worldSnap = {
         roomId: ctx.activeRoomIdRef.current,
         timeMs: now,
@@ -486,7 +570,6 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
         currentBossIndex: rsm.currentBossIndex,
         isCleared: rsm.isCleared,
         totalDurationSec: rsm.totalRunDurationSec,
-        // Optional for guest UI gap-fill; guests self-register from local records
         encounterReports:
           rsm.encounterReports.length > 0 || rsm.phase === 'SUMMARY'
             ? rsm.encounterReports
@@ -494,13 +577,20 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
         bossTargetId: engine.bossUnit
           ? engine.threatManager.getCurrentTarget?.(engine.bossUnit.id) ?? null
           : null,
-        units: engine.buildNetworkUnitSnapshots(),
-        casts,
-        cooldowns,
-        gcds,
-        groundEffects,
-        floatingTexts,
-        recentActions: recentActions.length ? recentActions : undefined,
+        bossOverheadSkillName: engine.bossUnit
+          ? ((engine.bossUnit as any).overheadSkillName ?? null)
+          : null,
+        units: filterHostAuthorityUnits(engine.buildNetworkUnitSnapshots(), engine),
+        casts: filterHostAuthorityCasts(casts, engine),
+        cooldowns: filterHostAuthorityCooldowns(cooldowns, engine),
+        gcds: filterHostAuthorityGcds(gcds, engine),
+        groundEffects: filterHostAuthorityGround(groundEffects, engine),
+        floatingTexts: filterHostAuthorityFloatingTexts(floatingTexts as any, engine),
+        recentActions: (() => {
+          const acts = filterHostAuthorityActions(recentActions, engine);
+          return acts.length ? acts : undefined;
+        })(),
+        dbmAlerts: pendingHostDbmAlerts.length > 0 ? pendingHostDbmAlerts.splice(0) : undefined,
         ...(maze
           ? {
               mazeSeed: maze.mazeSeed,
@@ -513,11 +603,18 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
           : {}),
       };
       netClient.sendCombatState(worldSnap);
-      // Sharded-authority batch (~200ms gather): effects + owner snapshots
+      // Sharded-authority batch (~200ms gather): effects + owner snapshots (worldSnap already sent above via COMBAT_STATE)
       if (ctx.currentChar?.id) {
-        publishOwnerSnapshot(buildLocalOwnerSnapshot(engine, ctx.currentChar.id));
+        const hostId = ctx.currentChar.id;
+        publishOwnerSnapshot(
+          buildLocalOwnerSnapshot(engine, hostId, {
+            groundEffects: (engine.effectsManager?.groundEffects || [])
+              .filter((g) => g.ownerId === hostId)
+              .map(serializeGroundEffectWire),
+          })
+        );
       }
-      hostFlushCombatBatch(ctx.activeRoomIdRef.current, worldSnap);
+      hostFlushCombatBatch(ctx.activeRoomIdRef.current);
     }
   }
 
@@ -573,41 +670,28 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
     );
   }
 
-  // Hot-swap waiting players onto AI slots (inherit HP/Buff); also mid-combat
-  {
-    const targetRoomId = ctx.activeRoomId || ctx.waitingQueueRoomId;
-    if (targetRoomId && (!ctx.isNetworkHostRef.current || ctx.isNetworkHostRef.current)) {
-      const shouldTrySwap =
-        !netClient.connected ||
-        ctx.isNetworkHostRef.current ||
-        (!netClient.connected && (rsm.phase === 'TRAVEL_RECOVERY' || rsm.phase === 'BOSS_COMBAT'));
-      if (shouldTrySwap && (rsm.phase === 'TRAVEL_RECOVERY' || rsm.phase === 'BOSS_COMBAT')) {
-        // Only host (or offline) mutates engine; networked guests receive MEMBER_HOT_SWAP
-        if (!netClient.connected || ctx.isNetworkHostRef.current) {
-          const subResult = roomManager.substituteOutOfCombat(targetRoomId, engine, rsm);
-          if (subResult.substituted.length > 0) {
-            ctx.setFriendlyUnits([...engine.friendlyUnits]);
-            ctx.roomFacadeRef.current.upsertRoom(roomManager.getRoom(targetRoomId)!);
-            if (netClient.connected && ctx.isNetworkHostRef.current && ctx.activeRoomIdRef.current) {
-              for (const s of subResult.substituted) {
-                const unitSnap = s.unit
-                  ? engine.buildNetworkUnitSnapshots().find((u) => u.id === s.player.id)
-                  : undefined;
-                netClient.sendHotSwap(ctx.activeRoomIdRef.current, {
-                  roomId: ctx.activeRoomIdRef.current,
-                  room: roomManager.getRoom(targetRoomId),
-                  playerId: s.player.id,
-                  replacedAiId: s.replacedAi.id,
-                  unitSnapshot: unitSnap,
-                });
-              }
-            }
-            if (ctx.waitingQueueRoomId && ctx.currentChar && subResult.substituted.some(s => s.player.id === ctx.currentChar.id)) {
-              ctx.setWaitingQueueRoomId(null);
-              ctx.setActiveRoomId(targetRoomId);
-            }
-          }
-        }
+  // Offline waiting-queue → AI seat. Networked hot-join is server MEMBER_HOT_SWAP only.
+  if (
+    !netClient.connected &&
+    (ctx.activeRoomId || ctx.waitingQueueRoomId) &&
+    (rsm.phase === 'TRAVEL_RECOVERY' || rsm.phase === 'BOSS_COMBAT')
+  ) {
+    const targetRoomId = ctx.activeRoomId || ctx.waitingQueueRoomId!;
+    const subResult = roomManager.substituteOutOfCombat(targetRoomId, engine, rsm);
+    if (subResult.substituted.length > 0) {
+      for (const s of subResult.substituted) {
+        clearOwnerCombatSpawns(engine, s.replacedAi.id, { reportDespawn: false });
+      }
+      ctx.setFriendlyUnits([...engine.friendlyUnits]);
+      ctx.setGroundEffects([...(engine.effectsManager?.groundEffects || [])]);
+      ctx.roomFacadeRef.current.upsertRoom(roomManager.getRoom(targetRoomId)!);
+      if (
+        ctx.waitingQueueRoomId &&
+        ctx.currentChar &&
+        subResult.substituted.some((s) => s.player.id === ctx.currentChar.id)
+      ) {
+        ctx.setWaitingQueueRoomId(null);
+        ctx.setActiveRoomId(targetRoomId);
       }
     }
   }
@@ -853,18 +937,35 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
   }
 
   // 2. Combat phase logic: Threat Table, BossAI, Mana Regen & AI Rotations
-  if (rsm.phase === 'BOSS_COMBAT' && !ctx.isApproaching) {
-    // ── Lv.80 Max-Haste In-Combat Resource Regen (All 10 Classes) ──
+  // Host waits for each human authority's first OWNER_SNAPSHOT before fighting
+  const hostAwaitingAuthorities =
+    ctx.isNetworkHostRef.current &&
+    !!ctx.activeRoomIdRef.current &&
+    !allAuthoritiesInitialReady(
+      ctx.roomFacadeRef.current.getRoom(ctx.activeRoomIdRef.current || ''),
+      ctx.currentChar?.id || null
+    );
+  if (rsm.phase === 'BOSS_COMBAT' && !ctx.isApproaching && !hostAwaitingAuthorities) {
+    // ── Lv.80 Max-Haste In-Combat Resource Regen (host-authority seats only) ──
+    const { isUnitLocalAuthority } = getCombatAuthorityContext();
     const is20ManRaid = engine.friendlyUnits.length > 5;
     for (const u of engine.friendlyUnits) {
+      if (
+        ctx.isNetworkHostRef.current &&
+        ctx.activeRoomIdRef.current &&
+        !isUnitLocalAuthority(u.id)
+      ) {
+        continue;
+      }
       if (u.alive || u.isAlive) {
         const haste = getUnitHaste(u, LEVEL_80_MAX_HASTE);
         if (u.maxMp && u.maxMp > 0) {
           const hasInnervate = u.buffs?.some(b => b.spellId === 'innervate');
           const hasManaTide = u.buffs?.some(b => b.spellId === 'mana_tide' || b.spellId === 'mana_tide_totem');
           const hasDivinePlea = u.buffs?.some(b => b.spellId === 'divine_plea' || b.spellId === 'shadowfiend');
-          const baseRegenRate = is20ManRaid ? 0.0085 : 0.0095;
+          const baseRegenRate = is20ManRaid ? 0.0115 : 0.0085;
           let regenPctPerSec = baseRegenRate;
+          if (u.role === 'DPS') regenPctPerSec += 0.0025;
           if (hasInnervate) regenPctPerSec += 0.05;
           if (hasManaTide) regenPctPerSec += 0.035;
           if (hasDivinePlea) regenPctPerSec += 0.035;
@@ -890,8 +991,24 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
 
     const boss = engine.bossUnit;
     const livingEnemies = engine.enemyUnits.filter(e => (e.isAlive ?? e.alive) && e.hp > 0);
+    if ((!boss || !(boss.isAlive || boss.alive) || boss.hp <= 0) && lastPublishedBossCast) {
+      const prevCast = lastPublishedBossCast;
+      lastPublishedBossCast = null;
+      publishCastInterrupt({
+        unitId: prevCast.unitId,
+        spellId: prevCast.spellId || 'boss_cast',
+        spellName: prevCast.spellName,
+        targetId: boss?.id || prevCast.unitId,
+      });
+    }
     if (boss && (boss.isAlive || boss.alive) && boss.hp > 0) {
-      // Sync stationary-casting info to boss unit so CombatCanvas can freeze movement during casts
+      // Tick authentic Boss AI abilities (vitals bus: foreign seats → EFFECT only)
+      if (ctx.bossAiRef.current) {
+        withNetworkVitals(engine, () => {
+          ctx.bossAiRef.current!.tick(deltaMs, boss, engine);
+        });
+      }
+      // Sync stationary-casting info & overhead skill nameplate after tick so host has zero 1-tick lag
       const bossAi = ctx.bossAiRef.current;
       const casting = bossAi?.currentCasting;
       const isBossCasting = Boolean(casting && casting.skill.castTimeMs > 0);
@@ -911,10 +1028,6 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
         ? casting?.skill.name
         : recentSkill;
 
-      // Tick authentic Boss AI abilities
-      if (ctx.bossAiRef.current) {
-        ctx.bossAiRef.current.tick(deltaMs, boss, engine);
-      }
       // Publish boss cast lifecycle for remote action bars
       {
         const after = ctx.bossAiRef.current?.currentCasting;
@@ -922,43 +1035,54 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
           after && after.skill.castTimeMs > 0
             ? `${boss.id}:${after.skill.id || after.skill.name}`
             : '';
-        if (afterKey && afterKey !== lastPublishedBossCastKey && after) {
+        if (afterKey && afterKey !== lastPublishedBossCast?.key && after) {
+          const spellId = after.skill.id || after.skill.name;
+          const spellName = after.skill.name;
+          lastPublishedBossCast = {
+            key: afterKey,
+            unitId: boss.id,
+            spellId,
+            spellName,
+          };
           publishCastStart({
             unitId: boss.id,
-            spellId: after.skill.id || after.skill.name,
-            spellName: after.skill.name,
+            spellId,
+            spellName,
             targetId: engine.getBossTargetId() || boss.id,
             totalMs: after.skill.castTimeMs,
             isChannel: false,
             interruptible: !!after.skill.interruptible,
             isHarmful: true,
           });
-        } else if (!afterKey && lastPublishedBossCastKey) {
-          const [uid, sid] = lastPublishedBossCastKey.split(':');
+        } else if (!afterKey && lastPublishedBossCast) {
+          const prevCast = lastPublishedBossCast;
+          lastPublishedBossCast = null;
           const alive = (boss.isAlive ?? boss.alive) && boss.hp > 0;
           if (alive) {
             publishCastLand({
-              unitId: uid || boss.id,
-              spellId: sid || 'boss_cast',
-              spellName: sid,
+              unitId: prevCast.unitId || boss.id,
+              spellId: prevCast.spellId || 'boss_cast',
+              spellName: prevCast.spellName,
               targetId: engine.getBossTargetId() || boss.id,
               isHarmful: true,
             });
           } else {
             publishCastInterrupt({
-              unitId: uid || boss.id,
-              spellId: sid || 'boss_cast',
+              unitId: prevCast.unitId || boss.id,
+              spellId: prevCast.spellId || 'boss_cast',
+              spellName: prevCast.spellName,
               targetId: boss.id,
             });
           }
         }
-        lastPublishedBossCastKey = afterKey;
       }
 
       // Resolve authentic boss target (OT detection)
       const targetId = engine.getBossTargetId();
       ctx.setBossTargetId(targetId || null);
 
+      // P7: AI + boss AA + ambient rez under effect bus (target authority / RESURRECT deltas)
+      withNetworkVitals(engine, () => {
       // P7: AI spell execute + decision loop → combat/aiCombatExecutor
       runFriendlyAiCombatTick({
         engine,
@@ -1012,76 +1136,35 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
               bossHitDmg = targetUnit.role === 'TANK' ? 18000 : 32000;
             }
             const isBossCrit = Math.random() < 0.1;
-            engine.resolveAttackHit(boss, targetUnit, bossHitDmg, 'PHYSICAL', isBossCrit, '首领普通攻击');
-            engine.logCombatAction({
-              actorId: boss.id,
-              spellId: 'auto_attack',
-              spellName: '首领普通攻击',
-              kind: 'INSTANT',
-              targetId: targetUnit.id,
-            });
-          }
-        }
-      }
-
-      // ── Player & Pet Auto-Attacks (白字普攻：近战/远程一律 ≤5 码) ──
-      const playerUnit = engine.friendlyUnits.find(u => u.isPlayer && (u.isAlive ?? u.alive));
-      if (playerUnit && boss && (boss.isAlive || boss.alive) && boss.hp > 0 && !isAsphyxiateChannel) {
-        // Player auto attacks every 2.0s (40 ticks)
-        if (state.tickCount - ctx.lastPlayerAttackTickRef.current >= 40) {
-          ctx.lastPlayerAttackTickRef.current = state.tickCount;
-          const pX = playerUnit.position?.x ?? 180;
-          const pY = playerUnit.position?.y ?? 190;
-          const bX = boss.position?.x ?? 540;
-          const bY = boss.position?.y ?? 190;
-          const distToBoss = Math.hypot(bX - pX, bY - pY);
-
-          // 普攻不分近战/远程：超出 5 码直接打不出
-          if (distToBoss <= AUTO_ATTACK_RANGE_PX) {
-            const isMeleeClass = ['DK', 'ROGUE', 'WARRIOR', 'PALADIN'].includes(playerUnit.classId);
-            const isCrit = Math.random() < (playerUnit.stats?.critChance || 0.2);
-            const baseAuto = isMeleeClass ? (isCrit ? 9000 : 4500) : (isCrit ? 4000 : 2000);
-            engine.resolveAttackHit(playerUnit, boss, baseAuto, 'PHYSICAL', isCrit, '普通攻击');
-            engine.logCombatAction({
-              actorId: playerUnit.id,
-              spellId: 'auto_attack',
-              spellName: '普通攻击',
-              kind: 'INSTANT',
-              targetId: boss.id,
-            });
-          }
-        }
-
-        // Player Pet (e.g. Frost Mage Water Elemental or DK Ghoul)
-        const playerPet = engine.friendlyUnits.find(u => u.isPet && u.ownerId === playerUnit.id && (u.isAlive ?? u.alive));
-        if (playerPet) {
-          if (state.tickCount - ctx.lastPetAttackTickRef.current >= 48) {
-            ctx.lastPetAttackTickRef.current = state.tickCount;
-            const petX = playerPet.position?.x ?? playerUnit.position?.x ?? 180;
-            const petY = playerPet.position?.y ?? playerUnit.position?.y ?? 190;
-            const bX = boss.position?.x ?? 540;
-            const bY = boss.position?.y ?? 190;
-            const petDist = Math.hypot(bX - petX, bY - petY);
-            const petCrit = Math.random() < 0.25;
-            const isPetSkill = (state.tickCount % 96 === 0);
-            const petSpell = isPetSkill ? (playerUnit.classId === 'MAGE' ? '水箭' : '爪击') : '普通攻击';
-            // 宠物普攻同样 ≤5 码；水箭等宠物技能仍可用稍远距离（40 码）
-            const petMaxRange = petSpell === '普通攻击' ? AUTO_ATTACK_RANGE_PX : RANGE_40YD_PX;
-            if (petDist <= petMaxRange) {
-              const petDmg = isPetSkill ? (petCrit ? 6000 : 3000) : (petCrit ? 3600 : 1800);
-              const school = playerUnit.classId === 'MAGE' && isPetSkill ? 'FROST' : 'PHYSICAL';
-              engine.resolveAttackHit(playerPet, boss, petDmg, school as any, petCrit, petSpell);
+            const bossHitRes = engine.resolveAttackHit(boss, targetUnit, bossHitDmg, 'PHYSICAL', isBossCrit, '首领普通攻击');
+            if (bossHitRes.damage > 0) {
               engine.logCombatAction({
-                actorId: playerPet.id,
-                spellId: isPetSkill ? (playerUnit.classId === 'MAGE' ? 'water_bolt' : 'claw') : 'auto_attack',
-                spellName: petSpell,
+                actorId: boss.id,
+                spellId: 'auto_attack',
+                spellName: '首领普通攻击',
                 kind: 'INSTANT',
-                targetId: boss.id,
+                targetId: targetUnit.id,
               });
             }
           }
         }
       }
+
+      // Host-authoritative add movement & melee auto-attack
+      tickEnemyAdds(engine, boss, deltaMs, addLastAttackMs);
+
+      // ── Player & Pet Auto-Attacks (白字普攻：近战/远程一律 ≤5 码；读条/引导技能打断普攻计时) ──
+      const playerUnit = engine.friendlyUnits.find(u => u.isPlayer && (u.isAlive ?? u.alive));
+      tickPlayerAndPetAutoAttacks({
+        engine,
+        playerUnit,
+        boss,
+        tickCount: state.tickCount,
+        isAsphyxiateChannel,
+        isPlayerCasting: Boolean(ctx.playerCastRef.current),
+        lastPlayerAttackTickRef: ctx.lastPlayerAttackTickRef,
+        lastPetAttackTickRef: ctx.lastPetAttackTickRef,
+      });
 
       // Continuous ambient dungeon combat pressure (every 3.0s = 60 ticks)
       // 窒息引导 / 1s 安全窗 / 5s 仅普攻阶段：禁止环境暗影瘴气（只允许对仇恨目标普攻）
@@ -1096,6 +1179,7 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
           engine.dealDamage(boss, randomVictim, ambientDmg, 'SHADOW', false, '地牢暗影瘴气');
         }
       }
+      }); // withNetworkVitals — AI / boss AA / ambient
     } else {
       // Boss is dead! Stop all casting immediately
       ctx.setBossTargetId(null);
@@ -1117,9 +1201,10 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
       ctx.setReviveProgress(progress);
 
       if (progress >= 1) {
-        // Revive completed!
-        engine.resurrectUnit(deadAlly.id, 0.5, 0.5);
-        engine.healUnit(healer, deadAlly, Math.round(deadAlly.maxHp * 0.5), false);
+        withNetworkVitals(engine, () => {
+          engine.resurrectUnit(deadAlly.id, 0.5, 0.5);
+          engine.healUnit(healer, deadAlly, Math.round(deadAlly.maxHp * 0.5), false);
+        });
         engine.effectsManager?.addFloatingText({
           targetId: deadAlly.id,
           text: '起死回生！',
@@ -1139,11 +1224,17 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
 
   // Sync active casts: AI currentCasts + remote human timelines from EFFECTS
   const myId = ctx.currentChar?.id;
-  const fromTimelines = companionCastsFromTimelines(
+  const hostFromTimelines = companionCastsFromTimelines(
     ctx.guestCastTimelinesRef.current,
-    myId
+    myId,
+    Date.now(),
+    pruneCompanionCastFlashes(ctx.companionCastsRef?.current ?? {})
   );
-  ctx.setCompanionCasts({ ...fromTimelines, ...currentCasts });
+  const nextHostCasts = { ...hostFromTimelines, ...currentCasts };
+  if (ctx.companionCastsRef) {
+    ctx.companionCastsRef.current = nextHostCasts;
+  }
+  ctx.setCompanionCasts(nextHostCasts);
   ctx.setIncomingHeals(currentHeals);
   ctx.setIncomingCasts(currentIncomingCasts);
 

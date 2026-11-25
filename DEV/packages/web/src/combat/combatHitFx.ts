@@ -36,6 +36,7 @@ const FLAKES_PER_BURST = 5;
 
 const PROJ_MS = 280;
 const SLASH_MS = 200;
+const SWEEP_MS = 260;
 const SNOW_FLAKE_MS = 420;
 const SNOW_STAGGER_MS = 70;
 
@@ -117,6 +118,16 @@ export function sampleProjectileFlight(
   };
 }
 
+export type HitSlashStyle =
+  | 'blade'
+  | 'claw_rend'
+  | 'cross_twin'
+  | 'heavy_cleave'
+  | 'frost_jagged'
+  | 'holy_arc';
+
+export type HitSlashMode = 'thrust' | 'sweep';
+
 export interface HitSlash {
   id: string;
   x: number;
@@ -125,6 +136,11 @@ export interface HitSlash {
   color: string;
   scale: number;
   side: HitFxSide;
+  style?: HitSlashStyle;
+  /** 'thrust' = single-target piercing lunge; 'sweep' = AoE wide sweeping cleave */
+  mode?: HitSlashMode;
+  /** Total angular span (radians) for sweep mode */
+  sweepArcRad?: number;
   bornAt: number;
   durationMs: number;
 }
@@ -233,12 +249,289 @@ function bossRangedShape(bossName: string): HitProjShape {
   return BOSS_SHAPES[hashStr(bossName || 'boss') % BOSS_SHAPES.length];
 }
 
+/**
+ * Deterministic spell + class visual resolver for projectiles and melee slashes.
+ * Ensures host & all guests render identical FX for the same NetworkCombatAction.
+ */
+export function resolveHitFxVisual(opts: {
+  spellId?: string | null;
+  spellName?: string | null;
+  classId?: string | null;
+  spec?: string | null;
+  isEnemy?: boolean;
+  bossName?: string | null;
+}): {
+  shape: HitProjShape;
+  projColor: string;
+  slashColor: string;
+  slashStyle: HitSlashStyle;
+} {
+  const sid = `${opts.spellId || ''} ${opts.spellName || ''}`.toLowerCase();
+  const cid = (opts.classId || '').toUpperCase();
+
+  if (opts.isEnemy) {
+    const slashStyle: HitSlashStyle =
+      sid.includes('rend') || sid.includes('bleed') || sid.includes('claw') || sid.includes('撕裂') || sid.includes('流血')
+        ? 'claw_rend'
+        : sid.includes('cleave') || sid.includes('trample') || sid.includes('swipe') || sid.includes('践踏') || sid.includes('顺劈')
+          ? 'heavy_cleave'
+          : 'blade';
+    return {
+      shape: bossRangedShape(opts.bossName || 'boss'),
+      projColor: BOSS_COLOR,
+      slashColor: BOSS_COLOR,
+      slashStyle,
+    };
+  }
+
+  const base = rangedShapeForClass(cid || 'MAGE');
+  let shape: HitProjShape = base.shape;
+  let projColor = base.color;
+  let slashColor = CLASS_COLORS[cid as keyof typeof CLASS_COLORS] || '#FFF569';
+  let slashStyle: HitSlashStyle = 'blade';
+
+  // Spell-school projectile differentiation (preserves Mage frostbolt -> 'droplet')
+  if (cid === 'MAGE') {
+    if (sid.includes('fire') || sid.includes('pyroblast') || sid.includes('scorch') || sid.includes('living_bomb') || sid.includes('火')) {
+      shape = 'orb';
+      projColor = '#FB923C';
+    } else if (sid.includes('arcane') || sid.includes('奥术')) {
+      shape = 'star';
+      projColor = '#C084FC';
+    } else if (sid.includes('frost') || sid.includes('ice') || sid.includes('寒冰') || sid.includes('冰枪')) {
+      shape = 'droplet';
+      projColor = '#38BDF8';
+    }
+  } else if (cid === 'WARLOCK') {
+    if (sid.includes('chaos') || sid.includes('混乱')) {
+      shape = 'bolt';
+      projColor = '#4ADE80';
+    } else if (sid.includes('incinerate') || sid.includes('immolate') || sid.includes('conflagrate') || sid.includes('burn') || sid.includes('献祭') || sid.includes('烧尽')) {
+      shape = 'orb';
+      projColor = '#F97316';
+    } else {
+      shape = 'orb';
+      projColor = '#A855F7';
+    }
+  } else if (cid === 'SHAMAN') {
+    if (sid.includes('lava') || sid.includes('flame') || sid.includes('熔岩') || sid.includes('烈焰')) {
+      shape = 'orb';
+      projColor = '#F97316';
+    } else {
+      shape = 'bolt';
+      projColor = '#38BDF8';
+    }
+  } else if (cid === 'DRUID') {
+    if (sid.includes('star') || sid.includes('moon') || sid.includes('sun') || sid.includes('星') || sid.includes('月') || sid.includes('日')) {
+      shape = 'star';
+      projColor = sid.includes('moon') || sid.includes('月') ? '#818CF8' : '#FACC15';
+    } else if (sid.includes('wrath') || sid.includes('愤怒')) {
+      shape = 'orb';
+      projColor = '#4ADE80';
+    }
+  } else if (cid === 'PRIEST') {
+    if (sid.includes('shadow') || sid.includes('mind') || sid.includes('暗言') || sid.includes('心灵')) {
+      shape = 'shard';
+      projColor = '#A855F7';
+    } else if (sid.includes('smite') || sid.includes('penance') || sid.includes('holy') || sid.includes('惩击') || sid.includes('苦修')) {
+      shape = 'star';
+      projColor = '#FDE047';
+    }
+  } else if (cid === 'HUNTER') {
+    shape = 'arrow';
+    if (sid.includes('arcane') || sid.includes('奥术')) projColor = '#C084FC';
+    else if (sid.includes('explosive') || sid.includes('fire') || sid.includes('爆炸')) projColor = '#FB923C';
+    else projColor = '#A3E635';
+  }
+
+  // Melee slash / rend differentiation
+  if (
+    sid.includes('rend') ||
+    sid.includes('rake') ||
+    sid.includes('rip') ||
+    sid.includes('rupture') ||
+    sid.includes('garrote') ||
+    sid.includes('hemorrhage') ||
+    sid.includes('mangle') ||
+    sid.includes('bleed') ||
+    sid.includes('lacerate') ||
+    sid.includes('割裂') ||
+    sid.includes('斜掠') ||
+    sid.includes('撕扯') ||
+    sid.includes('出血') ||
+    sid.includes('割伤')
+  ) {
+    slashStyle = 'claw_rend';
+    slashColor = '#EF4444';
+  } else if (
+    sid.includes('backstab') ||
+    sid.includes('ambush') ||
+    sid.includes('eviscerate') ||
+    sid.includes('stormstrike') ||
+    sid.includes('lava_lash') ||
+    sid.includes('mutilate') ||
+    sid.includes('背刺') ||
+    sid.includes('伏击') ||
+    sid.includes('刺骨') ||
+    sid.includes('风暴打击') ||
+    sid.includes('熔岩猛击')
+  ) {
+    slashStyle = 'cross_twin';
+    if (sid.includes('lava')) slashColor = '#F97316';
+    else if (sid.includes('storm')) slashColor = '#38BDF8';
+  } else if (
+    sid.includes('obliterate') ||
+    sid.includes('frost_strike') ||
+    sid.includes('scourge_strike') ||
+    sid.includes('death_strike') ||
+    sid.includes('heart_strike') ||
+    sid.includes('湮没') ||
+    sid.includes('冰霜打击') ||
+    sid.includes('天灾打击') ||
+    sid.includes('灵界打击')
+  ) {
+    slashStyle = 'frost_jagged';
+    if (sid.includes('frost') || sid.includes('obliterate')) slashColor = '#38BDF8';
+    else if (sid.includes('death') || sid.includes('blood') || sid.includes('heart')) slashColor = '#C41E3A';
+  } else if (
+    sid.includes('crusader') ||
+    sid.includes('templar') ||
+    sid.includes('shield_of_the_righteous') ||
+    sid.includes('十字军') ||
+    sid.includes('圣殿') ||
+    sid.includes('正义盾击')
+  ) {
+    slashStyle = 'holy_arc';
+    slashColor = '#FDE047';
+  } else if (
+    sid.includes('mortal') ||
+    sid.includes('cleave') ||
+    sid.includes('execute') ||
+    sid.includes('slam') ||
+    sid.includes('ferocious_bite') ||
+    sid.includes('致死') ||
+    sid.includes('顺劈') ||
+    sid.includes('斩杀') ||
+    sid.includes('猛击') ||
+    sid.includes('凶猛撕咬')
+  ) {
+    slashStyle = 'heavy_cleave';
+  } else if (cid === 'ROGUE') {
+    slashStyle = 'cross_twin';
+  } else if (cid === 'WARRIOR') {
+    slashStyle = 'heavy_cleave';
+  } else if (cid === 'PALADIN') {
+    slashStyle = 'holy_arc';
+  } else if (cid === 'DK') {
+    slashStyle = 'frost_jagged';
+  } else if (cid === 'DRUID') {
+    slashStyle = 'claw_rend';
+  }
+
+  return { shape, projColor, slashColor, slashStyle };
+}
+
 function isSingleTargetAction(a: NetworkCombatAction): boolean {
   if (!a.targetId) return false;
   if (a.kind === 'GROUND_PLACE' || a.kind === 'SUMMON') return false;
   if (a.radius && a.radius > 0) return false;
   if (a.aoePulse) return false;
   return a.kind === 'CAST_START' || a.kind === 'CAST_LAND' || a.kind === 'INSTANT' || a.kind === 'INTERRUPT';
+}
+
+function isAoePulseAction(a: NetworkCombatAction): boolean {
+  if (a.kind !== 'INSTANT' && a.kind !== 'CAST_LAND') return false;
+  return Boolean(a.aoePulse || (a.radius && a.radius > 0));
+}
+
+function isMeleeAoeSpell(spellId?: string | null, spellName?: string | null): boolean {
+  const s = `${spellId || ''} ${spellName || ''}`.toLowerCase();
+  return (
+    s.includes('cleave') ||
+    s.includes('whirlwind') ||
+    s.includes('swipe') ||
+    s.includes('trample') ||
+    s.includes('thrash') ||
+    s.includes('shockwave') ||
+    s.includes('thunder') ||
+    s.includes('stomp') ||
+    s.includes('sweep') ||
+    s.includes('bladestorm') ||
+    s.includes('fan_of_knives') ||
+    s.includes('divine_storm') ||
+    s.includes('blood_boil') ||
+    s.includes('howling_blast') ||
+    s.includes('heart_strike') ||
+    s.includes('hammer_of_the_righteous') ||
+    s.includes('顺劈') ||
+    s.includes('旋风斩') ||
+    s.includes('横扫') ||
+    s.includes('践踏') ||
+    s.includes('痛击') ||
+    s.includes('震荡波') ||
+    s.includes('雷霆') ||
+    s.includes('重踏') ||
+    s.includes('剑刃风暴') ||
+    s.includes('刀扇') ||
+    s.includes('神圣风暴') ||
+    s.includes('血液沸腾') ||
+    s.includes('凛风冲击') ||
+    s.includes('正义之锤')
+  );
+}
+
+function isMagicAoeSpell(spellId?: string | null, spellName?: string | null): boolean {
+  const s = `${spellId || ''} ${spellName || ''}`.toLowerCase();
+  return (
+    s.includes('nova') ||
+    s.includes('bolt') ||
+    s.includes('fire') ||
+    s.includes('flame') ||
+    s.includes('frost') ||
+    s.includes('ice') ||
+    s.includes('shadow') ||
+    s.includes('void') ||
+    s.includes('arcane') ||
+    s.includes('poison') ||
+    s.includes('venom') ||
+    s.includes('meteor') ||
+    s.includes('rain') ||
+    s.includes('blizzard') ||
+    s.includes('barrage') ||
+    s.includes('roar') ||
+    s.includes('scream') ||
+    s.includes('全场') ||
+    s.includes('弹幕') ||
+    s.includes('灾厄') ||
+    s.includes('新星') ||
+    s.includes('烈焰') ||
+    s.includes('寒冰') ||
+    s.includes('暗影') ||
+    s.includes('奥术') ||
+    s.includes('剧毒') ||
+    s.includes('流星') ||
+    s.includes('咆哮')
+  );
+}
+
+function isSpinAoeSpell(spellId?: string | null, spellName?: string | null): boolean {
+  const s = `${spellId || ''} ${spellName || ''}`.toLowerCase();
+  return (
+    s.includes('whirlwind') ||
+    s.includes('bladestorm') ||
+    s.includes('divine_storm') ||
+    s.includes('fan_of_knives') ||
+    s.includes('blood_boil') ||
+    s.includes('thunder_clap') ||
+    s.includes('consecration') ||
+    s.includes('旋风斩') ||
+    s.includes('剑刃风暴') ||
+    s.includes('神圣风暴') ||
+    s.includes('刀扇') ||
+    s.includes('血液沸腾') ||
+    s.includes('雷霆一击') ||
+    s.includes('奉献')
+  );
 }
 
 function lookHealSpell(spellId: string, spellName?: string): boolean {
@@ -349,7 +642,9 @@ export function ingestCombatActionsAsHitFx(state: HitFxState, opts: IngestHitFxO
   let changed = false;
   for (const a of opts.actions) {
     if (!a?.id || opts.seenIds.has(a.id)) continue;
-    if (!isSingleTargetAction(a)) continue;
+    const isSingle = isSingleTargetAction(a);
+    const isAoe = !isSingle && isAoePulseAction(a);
+    if (!isSingle && !isAoe) continue;
     if (opts.skipActorIds?.has(a.actorId)) continue;
 
     opts.seenIds.add(a.id);
@@ -375,6 +670,59 @@ export function ingestCombatActionsAsHitFx(state: HitFxState, opts: IngestHitFxO
       lookHealSpell(a.spellId, a.spellName) ||
       a.visualTone === 'HEAL';
     const isEnemy = isEnemyActorUnit(actor) || actor?.role === 'ENEMY' || actor?.classId === 'BOSS';
+
+    if (isAoe) {
+      if (isHeal || !aPos) continue;
+      const meleeAoe = isEnemy
+        ? isMeleeAoeSpell(a.spellId, a.spellName) ||
+          (!isMagicAoeSpell(a.spellId, a.spellName) &&
+            !!tPos &&
+            Math.hypot(aPos.x - tPos.x, aPos.y - tPos.y) <= 95)
+        : isMeleeClassSpec((actor?.classId as any) || 'MAGE', (actor as any)?.spec) ||
+          isMeleeAoeSpell(a.spellId, a.spellName);
+      if (!meleeAoe) continue;
+
+      const hitScale = isEnemy ? HIT_FX_BOSS_SIZE_MULT : actorScale;
+      const visual = resolveHitFxVisual({
+        spellId: a.spellId,
+        spellName: a.spellName,
+        classId: actor?.classId,
+        spec: (actor as any)?.spec,
+        isEnemy,
+        bossName: opts.bossName || actor?.name,
+      });
+      const side: HitFxSide = isEnemy ? 'ENEMY' : 'FRIENDLY';
+      const spin = isSpinAoeSpell(a.spellId, a.spellName);
+      const ang =
+        tPos && (tPos.x !== aPos.x || tPos.y !== aPos.y)
+          ? Math.atan2(tPos.y - aPos.y, tPos.x - aPos.x)
+          : 0;
+      const pivotX = spin ? aPos.x : aPos.x + Math.cos(ang) * 4 * hitScale;
+      const pivotY = spin ? aPos.y : aPos.y + Math.sin(ang) * 4 * hitScale;
+      const sweepArcRad = spin ? Math.PI * 1.55 : Math.PI * 1.1;
+      for (let i = 0; i < 2; i++) {
+        pushCap(
+          state.slashes,
+          {
+            id: `${a.id}_sw${i}`,
+            x: pivotX,
+            y: pivotY,
+            angle: ang + (i === 1 ? 0.35 : 0),
+            color: visual.slashColor,
+            scale: hitScale,
+            side,
+            style: visual.slashStyle,
+            mode: 'sweep',
+            sweepArcRad,
+            bornAt: now + i * 45,
+            durationMs: SWEEP_MS,
+          },
+          MAX_SLASHES
+        );
+      }
+      changed = true;
+      continue;
+    }
 
     if (isHeal && !isEnemy) {
       if (!aPos) continue;
@@ -444,22 +792,30 @@ export function ingestCombatActionsAsHitFx(state: HitFxState, opts: IngestHitFxO
     // Boss FX size = bossHeight/charHeight (HIT_FX_BOSS_SIZE_MULT)
     const hitScale = isEnemy ? HIT_FX_BOSS_SIZE_MULT : actorScale;
 
+    const visual = resolveHitFxVisual({
+      spellId: a.spellId,
+      spellName: a.spellName,
+      classId: actor?.classId,
+      spec: (actor as any)?.spec,
+      isEnemy,
+      bossName: opts.bossName || actor?.name,
+    });
+
     if (melee) {
-      const color = isEnemy
-        ? BOSS_COLOR
-        : CLASS_COLORS[(actor?.classId || '') as keyof typeof CLASS_COLORS] || '#FFF569';
       const hand = meleeHandPose(aPos, tPos, hitScale);
       const side: HitFxSide = isEnemy ? 'ENEMY' : 'FRIENDLY';
-      pushImpactCopies(
+      pushImpactCopies<HitSlash>(
         state.slashes,
         (i, bornAt) => ({
           id: `${a.id}_s${i}`,
           x: hand.x,
           y: hand.y,
-          angle: hand.angle,
-          color,
+          angle: hand.angle + (i - 1) * 0.06,
+          color: visual.slashColor,
           scale: hitScale,
           side,
+          style: visual.slashStyle,
+          mode: 'thrust',
           bornAt,
           durationMs: SLASH_MS,
         }),
@@ -468,16 +824,6 @@ export function ingestCombatActionsAsHitFx(state: HitFxState, opts: IngestHitFxO
       );
       changed = true;
     } else {
-      let shape: HitProjShape;
-      let color: string;
-      if (isEnemy) {
-        shape = bossRangedShape(opts.bossName || actor?.name || 'boss');
-        color = BOSS_COLOR;
-      } else {
-        const r = rangedShapeForClass(actor?.classId || 'MAGE');
-        shape = r.shape;
-        color = r.color;
-      }
       const side: HitFxSide = isEnemy ? 'ENEMY' : 'FRIENDLY';
       const flight = isEnemy
         ? resolveProjectileFlightStyle('BOSS')
@@ -490,8 +836,8 @@ export function ingestCombatActionsAsHitFx(state: HitFxState, opts: IngestHitFxO
           fromY: aPos.y,
           toX: tPos.x,
           toY: tPos.y,
-          color,
-          shape,
+          color: visual.projColor,
+          shape: visual.shape,
           scale: hitScale,
           side,
           flight,
@@ -568,6 +914,11 @@ export function spawnHitSlash(
     color: string;
     scale?: number;
     side?: HitFxSide;
+    style?: HitSlashStyle;
+    mode?: HitSlashMode;
+    sweepArcRad?: number;
+    spellId?: string;
+    classId?: string;
     now?: number;
   }
 ): void {
@@ -575,17 +926,52 @@ export function spawnHitSlash(
   const side: HitFxSide =
     opts.side ||
     (opts.color === BOSS_HIT_FX_COLOR || opts.color === BOSS_COLOR ? 'ENEMY' : 'FRIENDLY');
+  const style =
+    opts.style ||
+    (opts.spellId || opts.classId
+      ? resolveHitFxVisual({
+          spellId: opts.spellId,
+          classId: opts.classId,
+          isEnemy: side === 'ENEMY',
+        }).slashStyle
+      : 'blade');
+  const mode: HitSlashMode = opts.mode || 'thrust';
   const baseId = opts.id || `slash_${now}_${Math.random().toString(36).slice(2, 6)}`;
-  pushImpactCopies(
+  if (mode === 'sweep') {
+    for (let i = 0; i < 2; i++) {
+      pushCap(
+        state.slashes,
+        {
+          id: `${baseId}_${i}`,
+          x: opts.x,
+          y: opts.y,
+          angle: opts.angle + (i === 1 ? 0.35 : 0),
+          color: opts.color,
+          scale: opts.scale ?? HIT_FX_DEFAULT_UNIT_SCALE,
+          side,
+          style,
+          mode: 'sweep',
+          sweepArcRad: opts.sweepArcRad ?? Math.PI * 1.1,
+          bornAt: now + i * 45,
+          durationMs: SWEEP_MS,
+        },
+        MAX_SLASHES
+      );
+    }
+    return;
+  }
+  pushImpactCopies<HitSlash>(
     state.slashes,
     (i, bornAt) => ({
       id: `${baseId}_${i}`,
       x: opts.x,
       y: opts.y,
-      angle: opts.angle,
+      angle: opts.angle + (i - 1) * 0.06,
       color: opts.color,
       scale: opts.scale ?? HIT_FX_DEFAULT_UNIT_SCALE,
       side,
+      style,
+      mode: 'thrust',
       bornAt,
       durationMs: SLASH_MS,
     }),
@@ -806,6 +1192,14 @@ export function drawHitFx(
     const t = Math.min(1, (now - p.bornAt) / Math.max(1, p.durationMs));
     const flight = p.flight || 'straight';
     const pose = sampleProjectileFlight(p.fromX, p.fromY, p.toX, p.toY, t, flight);
+    const prevPose = sampleProjectileFlight(
+      p.fromX,
+      p.fromY,
+      p.toX,
+      p.toY,
+      Math.max(0, t - 0.14),
+      flight
+    );
     const baseA = side === 'ENEMY' ? HIT_FX_BOSS_ALPHA : HIT_FX_ALPHA;
     const alpha = baseA * (1 - t * 0.35);
     const size = HIT_FX_MAX_SIZE_PX * Math.max(0.55, p.scale);
@@ -817,6 +1211,16 @@ export function drawHitFx(
       ctx.beginPath();
       ctx.ellipse(gx, gy, Math.max(4, size * 0.45), Math.max(2, size * 0.18), 0, 0, Math.PI * 2);
       ctx.fill();
+    }
+    // Motion trail behind projectile
+    if (t > 0.04) {
+      ctx.strokeStyle = rgbaFromHex(p.color, alpha * 0.42);
+      ctx.lineWidth = Math.max(1.2, size * 0.28);
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(prevPose.x, prevPose.y);
+      ctx.lineTo(pose.x, pose.y);
+      ctx.stroke();
     }
     ctx.save();
     ctx.translate(pose.x, pose.y);
@@ -835,39 +1239,208 @@ export function drawHitFx(
     const sc = Math.max(0.55, s.scale);
     const w = HIT_FX_SLASH_W * sc;
     const h = HIT_FX_SLASH_H * sc;
-    // Swing opens from near hand outward along facing
-    const open = 0.15 + t * 0.85;
+    const style = s.style || 'blade';
+    const mode: HitSlashMode = s.mode || 'thrust';
+
     ctx.save();
     ctx.translate(s.x, s.y);
     ctx.rotate(s.angle);
-    ctx.lineCap = 'butt';
+    ctx.lineCap = 'round';
     ctx.lineJoin = 'miter';
-    // Sharp tapered blade: thin spine + hard tip (fits 6×24)
-    ctx.strokeStyle = rgbaFromHex(s.color, alpha);
-    ctx.lineWidth = Math.max(0.85, w * 0.22);
-    ctx.beginPath();
-    ctx.moveTo(h * 0.05, -w * 0.15);
-    ctx.quadraticCurveTo(h * 0.35 * open, -w * 0.95, h * 0.92 * open, -w * 0.08);
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(h * 0.05, w * 0.15);
-    ctx.quadraticCurveTo(h * 0.35 * open, w * 0.95, h * 0.92 * open, w * 0.08);
-    ctx.stroke();
-    // Center cutting edge (brighter/thinner)
-    ctx.strokeStyle = rgbaFromHex(s.color, Math.min(0.85, alpha + 0.25));
-    ctx.lineWidth = Math.max(0.7, w * 0.12);
-    ctx.beginPath();
-    ctx.moveTo(h * 0.02, 0);
-    ctx.lineTo(h * open, 0);
-    ctx.stroke();
-    // Tip point
-    ctx.fillStyle = rgbaFromHex(s.color, Math.min(0.9, alpha + 0.2));
-    ctx.beginPath();
-    ctx.moveTo(h * open, 0);
-    ctx.lineTo(h * open - 3.2 * sc, -1.4 * sc);
-    ctx.lineTo(h * open - 3.2 * sc, 1.4 * sc);
-    ctx.closePath();
-    ctx.fill();
+
+    if (mode === 'sweep') {
+      // AoE melee: wide horizontal sweeping crescent / arc
+      const arcSpan = s.sweepArcRad ?? Math.PI * 1.1;
+      const ease = 1 - Math.pow(1 - t, 2.4);
+      const leadAng = -arcSpan / 2 + arcSpan * ease;
+      const trailSpan = arcSpan * (0.58 - t * 0.22);
+      const tailAng = Math.max(-arcSpan / 2, leadAng - trailSpan);
+      const sweepR = Math.max(20 * sc, h * 1.12);
+      const innerR = sweepR * 0.72;
+
+      if (leadAng > tailAng + 0.04) {
+        // Tapered crescent ribbon body
+        ctx.fillStyle = rgbaFromHex(s.color, alpha * 0.42);
+        ctx.beginPath();
+        ctx.arc(0, 0, sweepR, tailAng, leadAng, false);
+        ctx.arc(0, 0, innerR, leadAng, tailAng, true);
+        ctx.closePath();
+        ctx.fill();
+
+        // Crisp outer sweeping blade edge
+        ctx.strokeStyle = rgbaFromHex(s.color, Math.min(0.96, alpha + 0.2));
+        ctx.lineWidth = Math.max(1.4, w * 0.36);
+        ctx.beginPath();
+        ctx.arc(0, 0, sweepR, tailAng, leadAng, false);
+        ctx.stroke();
+
+        // White-hot leading highlight on front 45% of the sweep
+        const hiTail = Math.max(tailAng, leadAng - (leadAng - tailAng) * 0.45);
+        ctx.strokeStyle = rgbaFromHex('#FFFFFF', Math.min(0.85, alpha * 0.78));
+        ctx.lineWidth = Math.max(0.85, w * 0.16);
+        ctx.beginPath();
+        ctx.arc(0, 0, sweepR * 0.96, hiTail, leadAng, false);
+        ctx.stroke();
+
+        if (style === 'claw_rend') {
+          for (const mult of [0.84, 1.12]) {
+            ctx.strokeStyle = rgbaFromHex(s.color, alpha * 0.78);
+            ctx.lineWidth = Math.max(0.9, w * 0.2);
+            ctx.beginPath();
+            ctx.arc(0, 0, sweepR * mult, tailAng, leadAng, false);
+            ctx.stroke();
+          }
+        } else if (style === 'cross_twin') {
+          ctx.strokeStyle = rgbaFromHex(s.color, alpha * 0.75);
+          ctx.lineWidth = Math.max(1.0, w * 0.22);
+          ctx.beginPath();
+          ctx.arc(0, 0, sweepR * 0.82, -leadAng, -tailAng, false);
+          ctx.stroke();
+        } else if (style === 'frost_jagged') {
+          const teeth = 5;
+          ctx.strokeStyle = rgbaFromHex('#E0F2FE', Math.min(0.9, alpha * 0.82));
+          ctx.lineWidth = Math.max(0.9, w * 0.18);
+          ctx.beginPath();
+          for (let k = 0; k <= teeth; k++) {
+            const u = k / teeth;
+            const a = tailAng + (leadAng - tailAng) * u;
+            const r = sweepR * (k % 2 === 0 ? 1.08 : 0.92);
+            const px = Math.cos(a) * r;
+            const py = Math.sin(a) * r;
+            if (k === 0) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
+          }
+          ctx.stroke();
+        } else if (style === 'holy_arc') {
+          ctx.strokeStyle = rgbaFromHex('#FEF08A', Math.min(0.92, alpha * 0.85));
+          ctx.lineWidth = Math.max(1.1, w * 0.24);
+          ctx.beginPath();
+          ctx.arc(0, 0, sweepR * 1.08, hiTail, leadAng, false);
+          ctx.stroke();
+        }
+      }
+      ctx.restore();
+      continue;
+    }
+
+    // Single-target melee: forward-lunging thrust / pierce
+    const ease = 1 - Math.pow(1 - t, 3);
+    const lunge = -3 * sc + h * 0.42 * ease;
+    const len = h * (0.45 + 0.68 * ease);
+    ctx.translate(lunge, 0);
+    ctx.lineCap = 'butt';
+
+    if (style === 'claw_rend') {
+      // 3 tight forward-raking piercing claw streaks
+      const offsets = [-w * 0.52, 0, w * 0.52];
+      for (let idx = 0; idx < offsets.length; idx++) {
+        const oy = offsets[idx];
+        const cLen = len * (idx === 1 ? 1.05 : 0.88);
+        ctx.strokeStyle = rgbaFromHex(s.color, idx === 1 ? Math.min(0.95, alpha + 0.2) : alpha * 0.85);
+        ctx.lineWidth = Math.max(0.85, w * (idx === 1 ? 0.24 : 0.16));
+        ctx.beginPath();
+        ctx.moveTo(-h * 0.08, oy);
+        ctx.lineTo(cLen, oy * 0.22);
+        ctx.stroke();
+      }
+    } else if (style === 'cross_twin') {
+      // Twin forward-converging dagger stabs
+      ctx.strokeStyle = rgbaFromHex(s.color, Math.min(0.94, alpha + 0.18));
+      ctx.lineWidth = Math.max(0.9, w * 0.22);
+      ctx.beginPath();
+      ctx.moveTo(-h * 0.06, -w * 0.58);
+      ctx.lineTo(len * 0.98, -w * 0.06);
+      ctx.moveTo(-h * 0.06, w * 0.58);
+      ctx.lineTo(len * 0.98, w * 0.06);
+      ctx.stroke();
+      // Bright pierce tips
+      ctx.strokeStyle = rgbaFromHex('#FFFFFF', Math.min(0.88, alpha * 0.8));
+      ctx.lineWidth = Math.max(0.7, w * 0.12);
+      ctx.beginPath();
+      ctx.moveTo(len * 0.45, 0);
+      ctx.lineTo(len * 1.04, 0);
+      ctx.stroke();
+    } else if (style === 'heavy_cleave') {
+      // Heavy forward-driving greatsword thrust + V-shockwave wake
+      ctx.strokeStyle = rgbaFromHex(s.color, Math.min(0.95, alpha + 0.15));
+      ctx.lineWidth = Math.max(1.2, w * 0.34);
+      ctx.beginPath();
+      ctx.moveTo(-h * 0.1, 0);
+      ctx.lineTo(len, 0);
+      ctx.stroke();
+      // Shockwave wake behind piercing tip
+      ctx.lineWidth = Math.max(0.9, w * 0.22);
+      ctx.beginPath();
+      ctx.moveTo(len * 0.48, -w * 0.82);
+      ctx.lineTo(len, 0);
+      ctx.lineTo(len * 0.48, w * 0.82);
+      ctx.stroke();
+      // White-hot lance core
+      ctx.strokeStyle = rgbaFromHex('#FFFFFF', Math.min(0.85, alpha * 0.78));
+      ctx.lineWidth = Math.max(0.75, w * 0.14);
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(len * 1.04, 0);
+      ctx.stroke();
+    } else if (style === 'frost_jagged') {
+      // Forward-shooting jagged icicle spear
+      ctx.strokeStyle = rgbaFromHex(s.color, Math.min(0.92, alpha + 0.16));
+      ctx.lineWidth = Math.max(0.95, w * 0.24);
+      ctx.beginPath();
+      ctx.moveTo(-h * 0.08, 0);
+      ctx.lineTo(len * 0.3, -w * 0.38);
+      ctx.lineTo(len * 0.56, w * 0.32);
+      ctx.lineTo(len * 0.8, -w * 0.24);
+      ctx.lineTo(len * 1.04, 0);
+      ctx.stroke();
+      ctx.fillStyle = rgbaFromHex('#E0F2FE', Math.min(0.92, alpha + 0.2));
+      ctx.beginPath();
+      ctx.moveTo(len * 1.06, 0);
+      ctx.lineTo(len * 0.84, -1.6 * sc);
+      ctx.lineTo(len * 0.84, 1.6 * sc);
+      ctx.closePath();
+      ctx.fill();
+    } else if (style === 'holy_arc') {
+      // Radiant golden-white piercing lance
+      ctx.strokeStyle = rgbaFromHex(s.color, alpha);
+      ctx.lineWidth = Math.max(1.0, w * 0.26);
+      ctx.beginPath();
+      ctx.moveTo(len * 0.38, -w * 0.65);
+      ctx.lineTo(len * 0.96, 0);
+      ctx.lineTo(len * 0.38, w * 0.65);
+      ctx.stroke();
+      ctx.strokeStyle = rgbaFromHex('#FFFFFF', Math.min(0.9, alpha + 0.22));
+      ctx.lineWidth = Math.max(0.8, w * 0.16);
+      ctx.beginPath();
+      ctx.moveTo(-h * 0.1, 0);
+      ctx.lineTo(len * 1.04, 0);
+      ctx.stroke();
+    } else {
+      // Sharp tapered lance thrust
+      ctx.strokeStyle = rgbaFromHex(s.color, alpha);
+      ctx.lineWidth = Math.max(0.85, w * 0.2);
+      ctx.beginPath();
+      ctx.moveTo(-h * 0.08, -w * 0.35);
+      ctx.lineTo(len * 0.96, -w * 0.05);
+      ctx.moveTo(-h * 0.08, w * 0.35);
+      ctx.lineTo(len * 0.96, w * 0.05);
+      ctx.stroke();
+      // Bright central piercing edge
+      ctx.strokeStyle = rgbaFromHex('#FFFFFF', Math.min(0.85, alpha * 0.72));
+      ctx.lineWidth = Math.max(0.75, w * 0.14);
+      ctx.beginPath();
+      ctx.moveTo(-h * 0.1, 0);
+      ctx.lineTo(len * 1.02, 0);
+      ctx.stroke();
+      // Sharp spearhead tip
+      ctx.fillStyle = rgbaFromHex(s.color, Math.min(0.95, alpha + 0.22));
+      ctx.beginPath();
+      ctx.moveTo(len * 1.06, 0);
+      ctx.lineTo(len * 1.06 - 4.2 * sc, -1.7 * sc);
+      ctx.lineTo(len * 1.06 - 4.2 * sc, 1.7 * sc);
+      ctx.closePath();
+      ctx.fill();
+    }
     ctx.restore();
   }
 

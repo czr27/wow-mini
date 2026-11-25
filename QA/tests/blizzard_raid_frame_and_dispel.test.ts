@@ -1,4 +1,5 @@
 import assert from 'node:assert';
+import { CombatEngine } from '../../DEV/packages/engine/src/engine/CombatEngine.js';
 import {
   getPlayerDispelCapabilities,
   DEBUFF_REGISTRY,
@@ -238,4 +239,87 @@ const mageSpells = CLASS_ALL_SPELLS['MAGE'].map(s => s.spellId);
 assert(mageSpells.includes('remove_curse'), '法师法术书必须包含解除诅咒');
 
 console.log('✓ 大灾变 4.3 技能完整复刻与数值说明全部验证通过！');
+
+// ============================================================
+// 7. 验证 dispelUnit 驱散执行逻辑、CD同步与资源消耗
+// ============================================================
+console.log('7. 验证 dispelUnit 自然之愈执行逻辑、CD同步与蓝耗');
+const { dispelUnit } = await import('../../DEV/packages/web/src/combat/dispelUnit.js');
+
+const testEngine = new CombatEngine({ dungeonTier: '5man' });
+const mockPlayer = {
+  id: 'p1_druid',
+  name: '大宗师德鲁伊',
+  classId: 'DRUID',
+  spec: 'RESTORATION',
+  isPlayer: true,
+  isAlive: true,
+  hp: 85000,
+  maxHp: 85000,
+  mp: 50000,
+  maxMp: 50000,
+  position: { x: 100, y: 100 },
+  buffs: [],
+  resources: [{ kind: 'MANA', current: 50000, max: 50000 }],
+};
+const mockAlly = {
+  id: 'ally_tank',
+  name: '防战',
+  classId: 'WARRIOR',
+  role: 'TANK',
+  isAlive: true,
+  hp: 120000,
+  maxHp: 120000,
+  position: { x: 120, y: 120 },
+  buffs: [],
+  resources: [{ kind: 'RAGE', current: 0, max: 100 }],
+};
+testEngine.addUnit(mockPlayer as any);
+testEngine.addUnit(mockAlly as any);
+
+const cds: Record<string, { cdRemainingMs: number; totalCdMs: number }> = {};
+let gcdRemainingMs = 0;
+const triggerCd = (spellId: string, cdMs: number) => {
+  cds[spellId] = { cdRemainingMs: cdMs, totalCdMs: cdMs };
+};
+const triggerGcd = () => {
+  gcdRemainingMs = 1500;
+};
+
+// 7.1 测试自然之愈驱散魔法并扣除法力值
+mockAlly.buffs = [
+  {
+    id: 'deb_m_1',
+    spellId: 'asphyxiate',
+    name: '窒息',
+    kind: 'DEBUFF',
+    tags: ['STAT'],
+    sourceUnitId: 'boss',
+    targetUnitId: mockAlly.id,
+    durationMs: 10000,
+    remainingMs: 10000,
+    stacks: 1,
+    maxStacks: 1,
+  },
+];
+
+dispelUnit({
+  engine: testEngine,
+  player: mockPlayer as any,
+  classId: 'DRUID',
+  lastSpec: 'RESTORATION',
+  playerGcdRemainingMs: 0,
+  playerCooldowns: cds,
+  selectedTargetId: mockAlly.id,
+  triggerCooldown: triggerCd,
+  triggerGcd,
+});
+
+assert.strictEqual(mockAlly.buffs.length, 0, '自然之愈应成功驱散队友身上的魔法减益');
+assert.strictEqual(cds['natures_cure']?.cdRemainingMs, 8000, '自然之愈应进入 8 秒冷却');
+assert.strictEqual(cds['remove_corruption']?.cdRemainingMs, 8000, '清除腐蚀应同步进入 8 秒冷却');
+assert.strictEqual(mockPlayer.mp, 50000 - 2200, '自然之愈应正确扣除 2200 基础法力值');
+assert.strictEqual(gcdRemainingMs, 1500, '自然之愈成功驱散应触发 GCD');
+
+console.log('✓ 自然之愈驱散成功、CD同步与蓝耗全部验证通过！');
 console.log('✅ [T-12] 原生团队框架渲染层级、可驱散队列、距离衰减与大灾变技能测试全部通过！\n');

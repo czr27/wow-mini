@@ -26,7 +26,7 @@
    - `DEV/packages/engine/src/room/RoomManager.ts`：在 `CLASS_LORE_NAMES` 补充该职业专属魔兽风 NPC 名字池，保证换职同步改名。
 5. **前端图标、默认动作栏与角色创建入口**
    - `DEV/packages/web/src/assets/pixelIcons.ts`：补齐职业像素头像 `CLASS_PIXEL_AVATARS`、技能 SVG 图标 `SPELL_ICONS` 与 4.3 Tooltip。
-   - `DEV/packages/web/src/utils/defaultActionSlots.ts`：为每个专精配置默认 1~36 槽位布局。
+   - `DEV/packages/web/src/assets/defaultActionSlots.ts`：为每个专精配置默认 1~36 槽位布局。
    - `DEV/packages/web/src/components/AuthAndCharacterModal.tsx`：确认新职业出现在创建角色列表中。
 
 ---

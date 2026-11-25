@@ -18,6 +18,7 @@ import {
   isFriendlyBuffGroundEffect,
   isSeekableHealGroundEffect,
 } from '../engine/AoeRingVisual.js';
+import { isStationaryConstructAdd } from './AddAI.js';
 
 // Spell IDs must match those registered in DeathKnight.ts (class-dev)
 const SPELLS = {
@@ -41,6 +42,42 @@ const SPELLS = {
 export const TANK_HEALTHY_THRESHOLD = 0.60; // 60% HP 健康线
 const DEFENSIVE_HP_THRESHOLD  = 0.60; // < 60% → use minor CDs
 const EMERGENCY_HP_THRESHOLD  = 0.35; // < 35% → use major CDs
+/** 开战窗口：接仇满足时前 3 秒可用嘲讽稳仇 */
+export const TANK_PULL_TAUNT_WINDOW_MS = 3000;
+/** 低 CD 嘲讽：技能表 CD < 30s */
+export const TANK_LOW_CD_TAUNT_MS = 30_000;
+
+/**
+ * 接仇已满足时，是否实际施放嘲讽：
+ * 开战前 3 秒，或仇恨目标不是自己，或（可用嘲讽 > 1 且有 CD<30s 的嘲讽）→ 嘲讽；否则不用。
+ */
+export function shouldCastTankTaunt(opts: {
+  shouldTaunt: boolean;
+  elapsedMs: number;
+  threatTargetId: string | null | undefined;
+  selfId: string;
+  /** 当前可用嘲讽的 cooldownMs 列表 */
+  availableTauntCooldownMs?: number[];
+}): boolean {
+  if (!opts.shouldTaunt) return false;
+  const inPullWindow = (opts.elapsedMs || 0) < TANK_PULL_TAUNT_WINDOW_MS;
+  const notHoldingThreat = opts.threatTargetId !== opts.selfId;
+  const cds = opts.availableTauntCooldownMs ?? [];
+  const multiWithLowCd =
+    cds.length > 1 && cds.some((cd) => cd < TANK_LOW_CD_TAUNT_MS);
+  return inPullWindow || notHoldingThreat || multiWithLowCd;
+}
+
+/** 优先选 CD<30s 的嘲讽（最短优先）；否则取列表首项。 */
+export function pickPreferredTankTaunt<T extends { cooldownMs: number }>(
+  taunts: T[]
+): T | undefined {
+  if (taunts.length === 0) return undefined;
+  const low = taunts
+    .filter((t) => t.cooldownMs < TANK_LOW_CD_TAUNT_MS)
+    .sort((a, b) => a.cooldownMs - b.cooldownMs);
+  return low[0] ?? taunts[0];
+}
 
 /**
  * 判断指定坦克是否处于健康血线 (>= 60% 且存活)
@@ -62,6 +99,47 @@ export function orderTanksByThreatPriority(tanks: Unit[]): Unit[] {
       if (!!a.isPlayer !== !!b.isPlayer) return a.isPlayer ? -1 : 1;
       return a.id.localeCompare(b.id);
     });
+}
+
+/**
+ * Find the nearest living non-boss combat add whose top threat is missing or held by a non-tank.
+ */
+export function findLooseAddForTank(
+  tank: Unit,
+  enemies: Unit[],
+  boss: Unit | undefined,
+  allTanks: Unit[]
+): Unit | null {
+  const tankIds = new Set(
+    allTanks
+      .filter((t) => t.role === 'TANK' && ((t.isAlive ?? t.alive ?? true) && t.hp > 0))
+      .map((t) => t.id)
+  );
+  const looseAdds = enemies.filter((e) => {
+    if (boss && e.id === boss.id) return false;
+    if (!(e.isAlive ?? e.alive ?? true) || e.hp <= 0) return false;
+    if (isStationaryConstructAdd(e)) return false;
+    const table = e.threatTable || [];
+    if (table.length === 0) return true;
+    let top = table[0];
+    for (let i = 1; i < table.length; i++) {
+      if (table[i].amount > top.amount) top = table[i];
+    }
+    return !top || !tankIds.has(top.sourceUnitId);
+  });
+  if (looseAdds.length === 0) return null;
+  const tPos = tank.position || { x: 0, y: 0 };
+  let best = looseAdds[0];
+  let bestDist = Infinity;
+  for (const add of looseAdds) {
+    const aPos = add.position || { x: 0, y: 0 };
+    const d = Math.hypot(aPos.x - tPos.x, aPos.y - tPos.y);
+    if (d < bestDist) {
+      bestDist = d;
+      best = add;
+    }
+  }
+  return best;
 }
 
 export interface TankThreatDecision {
@@ -1120,25 +1198,19 @@ export class TankAI implements RoleAI {
     const isTauntTop = this.isTopThreat(unit, boss);
 
     const allTanks = orderTanksByThreatPriority(gs.units.filter(u => u.role === 'TANK'));
+    const looseAdd = findLooseAddForTank(unit, livingEnemies, boss, allTanks);
+    const threatTargetId = boss.threatTable?.[0]?.sourceUnitId ?? null;
     const threatDecision = evaluateTankThreatDecision(
       unit,
       allTanks,
-      boss.threatTable?.[0]?.sourceUnitId,
+      threatTargetId,
       isTauntTop
     );
 
     const specId = (unit as any).spec as string | undefined;
     const ownedSpells = getSpellsForClassSpec(unit.classId as ClassId, specId);
 
-    // 1. 通用嘲讽：拥有任意嘲讽技能且需要接怪
-    if (unit.role === 'TANK' && threatDecision.shouldTaunt) {
-      const tauntSpell = ownedSpells.find(s => s.isTaunt);
-      if (tauntSpell) {
-        actions.push(act(tauntSpell.id, boss.id, Priority.DEFENSIVE, true));
-      }
-    }
-
-    // 2. 通用减伤大招：血线低于60%开启小减伤，低于35%开启大减伤
+    // 1. 自身减伤（最高）：<35% 大减伤，<60% 小减伤；已有对应 aura 不再开
     if (myHp < DEFENSIVE_HP_THRESHOLD) {
       const defensiveSpells = ownedSpells.filter(s => s.isDefensive && (!s.auraId || !hasAura(unit, s.auraId)));
       const minorDef = defensiveSpells.find(s => !s.isMajorCd);
@@ -1150,7 +1222,29 @@ export class TankAI implements RoleAI {
       }
     }
 
-    // 3. 通用规则输出/群拉循环（目标 >= 3 自动优先 AOE 群拉技能，否则按仇恨/性价比/输出选优）
+    // 2. 嘲讽：优先嘲讽未接仇的小怪；其次按接仇决策嘲讽首领
+    if (unit.role === 'TANK') {
+      const tauntSpells = ownedSpells.filter((s) => s.isTaunt);
+      const tauntCds = tauntSpells.map((s) => s.cooldownMs);
+      const tauntSpell = pickPreferredTankTaunt(tauntSpells);
+      if (looseAdd && tauntSpell && isTankHealthy(unit)) {
+        actions.push(act(tauntSpell.id, looseAdd.id, Priority.DEFENSIVE, true));
+      } else if (
+        shouldCastTankTaunt({
+          shouldTaunt: threatDecision.shouldTaunt,
+          elapsedMs: gs.elapsedMs || 0,
+          threatTargetId,
+          selfId: unit.id,
+          availableTauntCooldownMs: tauntCds,
+        })
+      ) {
+        if (tauntSpell) {
+          actions.push(act(tauntSpell.id, boss.id, Priority.DEFENSIVE, true));
+        }
+      }
+    }
+
+    // 3. 通用规则输出/群拉循环（坦克 >= 2 目标自动优先 AOE 群拉技能；有散落小怪时优先打小怪建仇）
     // pauseThreat 只表示「不抢嘲讽/压仇恨」，副坦仍须持续输出；威胁倍率由执行层下调。
     {
       const personality = createAIPersonality(unit.name, unit.id);
@@ -1159,11 +1253,15 @@ export class TankAI implements RoleAI {
         useShortId: false,
       });
 
+      const orderedEnemies = looseAdd
+        ? [looseAdd, ...livingEnemies.filter((e) => e.id !== looseAdd.id)]
+        : livingEnemies;
+
       const decision = evaluateUniversalAIDecision({
         caster: unit,
         personality,
         allies: livingAllies,
-        enemies: livingEnemies,
+        enemies: orderedEnemies,
         usableSkills: candidates,
         tickCount: Math.floor((gs.elapsedMs || 0) / 100),
       });
@@ -1172,7 +1270,7 @@ export class TankAI implements RoleAI {
         actions.push(
           act(
             decision.chosenCandidate.spellId,
-            (decision.targetUnit ?? boss).id,
+            (decision.targetUnit ?? looseAdd ?? boss).id,
             Priority.DPS,
             decision.chosenCandidate.castMs === 0
           )

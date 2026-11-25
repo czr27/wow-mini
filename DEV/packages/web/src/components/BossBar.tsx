@@ -1,4 +1,5 @@
-import React from 'react';
+import React, { useRef } from 'react';
+import { useSmoothCastProgress } from '../hooks/useSmoothCastProgress.js';
 
 interface Props {
   bossName: string;
@@ -28,8 +29,16 @@ export const BossBar: React.FC<Props> = ({
 }) => {
   const isDead = hp <= 0;
   const hpPct = isDead ? 0 : Math.max(0, Math.min(100, (hp / maxHp) * 100));
-  const isCasting = !isDead && castBar && castBar.progressMs < castBar.totalMs;
-  const castPct = isCasting ? Math.min(100, (castBar.progressMs / castBar.totalMs) * 100) : 0;
+  const isCasting = !isDead && Boolean(castBar && castBar.progressMs < castBar.totalMs);
+  const castFillRef = useRef<HTMLDivElement | null>(null);
+
+  useSmoothCastProgress({
+    active: isCasting,
+    castKey: isCasting && castBar ? `${castBar.spellName}:${castBar.totalMs}` : '',
+    elapsedMs: castBar?.progressMs ?? 0,
+    totalMs: castBar?.totalMs ?? 1,
+    fillRef: castFillRef,
+  });
 
   return (
     <div className="w-full max-w-3xl mx-auto flex flex-col items-center select-none">
@@ -101,8 +110,9 @@ export const BossBar: React.FC<Props> = ({
             </div>
             <div className="w-full bg-[#06060e] h-2 rounded overflow-hidden">
               <div
-                className="h-full bg-blue-500 transition-all duration-75"
-                style={{ width: `${castPct}%` }}
+                ref={castFillRef}
+                className="h-full w-full bg-blue-500 origin-left"
+                style={{ willChange: 'transform' }}
               />
             </div>
           </div>

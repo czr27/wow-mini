@@ -21,7 +21,162 @@ export type EightDirVolumeOpts = {
   sideLightStrength?: number;
   /** Screen-space light X sign (−1 left / +1 right). */
   sideLightX?: number;
+  /** Ambient neon FX intensity 0..1 (1 = local player/focus, 0.25 = unrelated teammates). */
+  fxIntensity?: number;
+  /** Animation tick for subtle neon pulse/orbiters. */
+  tickCount?: number;
 };
+
+/** 赛博/霓虹深渊统一深墨轮廓色 */
+export const NEON_INK = '#090B14';
+
+/** 零 shadowBlur 高性能霓虹矩形（外晕 + 高饱和本体 + 可选白炽核心） */
+export function drawNeonGlowRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  neonColor: string,
+  intensity = 1,
+  coreColor: string | null = '#ffffff'
+): void {
+  const k = Math.max(0, Math.min(1.2, intensity));
+  const a0 = ctx.globalAlpha;
+  if (k > 0.15) {
+    ctx.globalAlpha = a0 * 0.3 * Math.min(1, k);
+    ctx.fillStyle = neonColor;
+    ctx.fillRect(x - 1.5, y - 1.5, w + 3, h + 3);
+  }
+  ctx.globalAlpha = a0;
+  ctx.fillStyle = neonColor;
+  ctx.fillRect(x, y, w, h);
+  if (coreColor && Math.abs(w) >= 2 && Math.abs(h) >= 2) {
+    ctx.globalAlpha = a0 * (0.55 + 0.45 * Math.min(1, k));
+    ctx.fillStyle = coreColor;
+    ctx.fillRect(x + w * 0.25, y + h * 0.25, w * 0.5, h * 0.5);
+  }
+  ctx.globalAlpha = a0;
+}
+
+/** 零 shadowBlur 高性能霓虹圆点/法球 */
+export function drawNeonGlowCircle(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  r: number,
+  neonColor: string,
+  intensity = 1,
+  coreColor: string | null = '#ffffff'
+): void {
+  const k = Math.max(0, Math.min(1.2, intensity));
+  const a0 = ctx.globalAlpha;
+  if (k > 0.15) {
+    ctx.globalAlpha = a0 * 0.28 * Math.min(1, k);
+    ctx.fillStyle = neonColor;
+    ctx.beginPath();
+    ctx.arc(x, y, r * 1.6, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = a0;
+  ctx.fillStyle = neonColor;
+  ctx.beginPath();
+  ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fill();
+  if (coreColor && r >= 1.4) {
+    ctx.globalAlpha = a0 * (0.6 + 0.4 * Math.min(1, k));
+    ctx.fillStyle = coreColor;
+    ctx.beginPath();
+    ctx.arc(x, y, r * 0.42, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = a0;
+}
+
+/** 零 shadowBlur 霓虹能量线 */
+export function drawNeonGlowLine(
+  ctx: CanvasRenderingContext2D,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  width: number,
+  neonColor: string,
+  intensity = 1,
+  coreColor: string | null = '#ffffff'
+): void {
+  const k = Math.max(0, Math.min(1.2, intensity));
+  const a0 = ctx.globalAlpha;
+  ctx.lineCap = 'round';
+  if (k > 0.15) {
+    ctx.globalAlpha = a0 * 0.3 * Math.min(1, k);
+    ctx.strokeStyle = neonColor;
+    ctx.lineWidth = width + 2.6;
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = a0;
+  ctx.strokeStyle = neonColor;
+  ctx.lineWidth = width;
+  ctx.beginPath();
+  ctx.moveTo(x1, y1);
+  ctx.lineTo(x2, y2);
+  ctx.stroke();
+  if (coreColor && width >= 1.5) {
+    ctx.globalAlpha = a0 * (0.55 + 0.45 * Math.min(1, k));
+    ctx.strokeStyle = coreColor;
+    ctx.lineWidth = Math.max(0.8, width * 0.38);
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = a0;
+}
+
+/** 带深墨轮廓与可选霓虹边缘光的赛博矩形 */
+export function drawCyberBox(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  fill: string,
+  outline = NEON_INK,
+  rimColor?: string,
+  rimWidth = 1.4
+): void {
+  ctx.fillStyle = outline;
+  ctx.fillRect(x - 1.2, y - 1.2, w + 2.4, h + 2.4);
+  ctx.fillStyle = fill;
+  ctx.fillRect(x, y, w, h);
+  if (rimColor) {
+    ctx.fillStyle = rimColor;
+    ctx.fillRect(x, y, w, rimWidth);
+  }
+}
+
+/** 八向三层动态遮挡：正面 back→core→front；背面 front→core→back */
+export function isFacingBack(pose: FacingPose): boolean {
+  return !pose.showFace || pose.faceAlpha < 0.35;
+}
+
+export function drawEightDirLayers(
+  pose: FacingPose,
+  layers: { back?: () => void; core: () => void; front?: () => void }
+): void {
+  if (isFacingBack(pose)) {
+    layers.front?.();
+    layers.core();
+    layers.back?.();
+  } else {
+    layers.back?.();
+    layers.core();
+    layers.front?.();
+  }
+}
 
 /** 眼睛造型（像素块，按职业/Boss 个性） */
 export type EyeLook =
@@ -403,6 +558,243 @@ export function drawFacingShoes(
   }
 }
 
+type DruidSpecKey = 'RESTORATION' | 'BALANCE' | 'FERAL';
+
+function resolveDruidSpec(u: Unit): DruidSpecKey {
+  const s = (u.spec || '').toUpperCase();
+  if (s === 'RESTORATION' || s === 'BALANCE' || s === 'FERAL') return s;
+  if (u.role === 'HEALER') return 'RESTORATION';
+  if (u.role === 'TANK') return 'FERAL';
+  return 'BALANCE';
+}
+
+/** 德鲁伊三专精：高饱和赛博/霓虹 × 魔兽原味八向模型 */
+function drawCyberDruidEightDir(
+  ctx: CanvasRenderingContext2D,
+  u: Unit,
+  sway: number,
+  pose: FacingPose,
+  fxIntensity: number,
+  tickCount: number
+): void {
+  const spec = resolveDruidSpec(u);
+  const wSide = pose.weaponSide;
+  const hBias = facingHandBiasX(pose);
+  const sf = clamp01(pose.sideFactor);
+  const e = pose.eyeBiasX;
+
+  const palette =
+    spec === 'RESTORATION'
+      ? {
+          chassis: '#0f1f18',
+          armor: '#163828',
+          neon: '#00FF87',
+          neonAlt: '#38BDF8',
+          cloak: '#064e3b',
+          eye: '#00FF87',
+          eyeLook: 'glow' as EyeLook,
+        }
+      : spec === 'BALANCE'
+        ? {
+            chassis: '#130e26',
+            armor: '#251749',
+            neon: '#C026D3',
+            neonAlt: '#00F0FF',
+            cloak: '#1e1b4b',
+            eye: '#00F0FF',
+            eyeLook: 'ring' as EyeLook,
+          }
+        : {
+            chassis: '#1a110d',
+            armor: '#3b1e0e',
+            neon: '#FF7D0A',
+            neonAlt: '#FFE600',
+            cloak: '#451a03',
+            eye: '#FFB800',
+            eyeLook: 'beast' as EyeLook,
+          };
+
+  const drawBack = () => {
+    const cloakW = isFacingBack(pose) ? 18 : 14;
+    drawCyberBox(
+      ctx,
+      -cloakW / 2 + sway - e * 0.2,
+      -12,
+      cloakW,
+      23,
+      palette.cloak,
+      NEON_INK,
+      palette.neon,
+      1.6
+    );
+    if (isFacingBack(pose)) {
+      if (spec === 'RESTORATION') {
+        drawNeonGlowLine(ctx, sway, -9, sway, 8, 1.5, palette.neon, fxIntensity);
+        drawNeonGlowLine(ctx, sway, -3, sway - 5, -7, 1.2, palette.neon, fxIntensity);
+        drawNeonGlowLine(ctx, sway, -1, sway + 5, -5, 1.2, palette.neon, fxIntensity);
+      } else if (spec === 'BALANCE') {
+        drawNeonGlowCircle(ctx, sway, -2, 3.6, palette.neonAlt, fxIntensity, '#ffffff');
+        ctx.fillStyle = palette.cloak;
+        ctx.beginPath();
+        ctx.arc(sway + 1.6, -2.6, 2.8, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        for (let i = -1; i <= 1; i++) {
+          drawNeonGlowLine(
+            ctx,
+            sway + i * 3.2,
+            -8,
+            sway + i * 3.2,
+            4,
+            1.4,
+            palette.neon,
+            fxIntensity
+          );
+        }
+      }
+    }
+  };
+
+  const drawCore = () => {
+    drawCyberBox(ctx, -8.5 + sway, -12, 17, 22, palette.chassis, NEON_INK);
+    drawCyberBox(
+      ctx,
+      -7 + sway,
+      -10.5,
+      14,
+      7.5,
+      palette.armor,
+      NEON_INK,
+      palette.neon,
+      1.5
+    );
+    drawNeonGlowRect(ctx, -2 + sway + e * 0.2, -8, 4, 3, palette.neon, fxIntensity);
+
+    const pW = lerp(6.5, 8.2, sf);
+    const pH = 7.2;
+    const leftPX = -12.5 + sway + e * 0.2;
+    const rightPX = 12.5 - pW + sway + e * 0.2;
+    drawCyberBox(ctx, leftPX, -13.5, pW, pH, palette.armor, NEON_INK, palette.neon, 1.5);
+    drawCyberBox(ctx, rightPX, -13.5, pW, pH, palette.armor, NEON_INK, palette.neonAlt, 1.5);
+
+    ctx.fillStyle = NEON_INK;
+    ctx.beginPath();
+    ctx.arc(sway, -17.5, 8.4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = spec === 'FERAL' ? '#9a3412' : spec === 'BALANCE' ? '#3b0764' : '#065f46';
+    ctx.beginPath();
+    ctx.arc(sway, -17.5, 7.2, 0, Math.PI * 2);
+    ctx.fill();
+
+    if (spec === 'RESTORATION') {
+      drawNeonGlowLine(ctx, -4 + sway, -23, -10 + sway, -30, 2, '#92400e', 0.4, null);
+      drawNeonGlowLine(ctx, 4 + sway, -23, 10 + sway, -30, 2, '#92400e', 0.4, null);
+      drawNeonGlowCircle(ctx, -10.5 + sway, -30.5, 2.2, palette.neon, fxIntensity);
+      drawNeonGlowCircle(ctx, 10.5 + sway, -30.5, 2.2, palette.neon, fxIntensity);
+    } else if (spec === 'BALANCE') {
+      ctx.fillStyle = palette.neon;
+      ctx.beginPath();
+      ctx.moveTo(-7 + sway, -22);
+      ctx.lineTo(-11 + sway, -27);
+      ctx.lineTo(-4 + sway, -24);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(7 + sway, -22);
+      ctx.lineTo(11 + sway, -27);
+      ctx.lineTo(4 + sway, -24);
+      ctx.fill();
+      if (fxIntensity > 0.4) {
+        drawNeonGlowCircle(ctx, sway, -28.5, 2.3, palette.neonAlt, fxIntensity);
+      }
+    } else {
+      ctx.fillStyle = NEON_INK;
+      ctx.beginPath();
+      ctx.moveTo(-7 + sway, -22);
+      ctx.lineTo(-9 + sway, -29);
+      ctx.lineTo(-2 + sway, -24);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(7 + sway, -22);
+      ctx.lineTo(9 + sway, -29);
+      ctx.lineTo(2 + sway, -24);
+      ctx.fill();
+      drawNeonGlowRect(ctx, -1.5 + sway + e * 0.35, -22, 3, 2.5, palette.neonAlt, fxIntensity, null);
+    }
+
+    drawFacingEyePair(ctx, palette.eye, {
+      y: -18.5,
+      size: 2.5,
+      sway,
+      pose,
+      look: palette.eyeLook,
+    });
+  };
+
+  const drawFront = () => {
+    const wx = 10 * wSide + sway + hBias;
+    if (spec === 'RESTORATION') {
+      drawCyberBox(ctx, wx - 1.5, -22, 3, 30, '#451a03', NEON_INK);
+      drawNeonGlowCircle(ctx, wx, -24.5, 4.4, palette.neon, fxIntensity);
+      if (fxIntensity >= 0.75) {
+        const ang = tickCount * 0.1;
+        drawNeonGlowCircle(
+          ctx,
+          sway + Math.cos(ang) * 14,
+          -10 + Math.sin(ang) * 5,
+          1.8,
+          palette.neon,
+          fxIntensity
+        );
+      }
+    } else if (spec === 'BALANCE') {
+      drawCyberBox(ctx, wx - 1.5, -22, 3, 30, '#312e81', NEON_INK);
+      drawNeonGlowCircle(ctx, wx, -24.5, 4.5, palette.neonAlt, fxIntensity);
+      ctx.fillStyle = NEON_INK;
+      ctx.beginPath();
+      ctx.arc(wx + 1.8 * wSide, -25, 3.2, 0, Math.PI * 2);
+      ctx.fill();
+      if (fxIntensity >= 0.75) {
+        const ang = tickCount * 0.12;
+        drawNeonGlowCircle(
+          ctx,
+          sway + Math.cos(ang) * 15,
+          -14 + Math.sin(ang) * 6,
+          1.9,
+          palette.neon,
+          fxIntensity
+        );
+      }
+    } else {
+      const clawX1 = 10 * wSide + sway + hBias;
+      const clawX2 = -9 * wSide + sway + hBias * 0.6;
+      for (let i = -1; i <= 1; i++) {
+        drawNeonGlowLine(
+          ctx,
+          clawX1,
+          -2 + i * 2.2,
+          clawX1 + 6 * wSide,
+          1 + i * 2.5,
+          1.6,
+          palette.neon,
+          fxIntensity
+        );
+        drawNeonGlowLine(
+          ctx,
+          clawX2,
+          -1 + i * 2.2,
+          clawX2 - 4.5 * wSide,
+          2 + i * 2.2,
+          1.3,
+          palette.neonAlt,
+          fxIntensity * 0.85
+        );
+      }
+    }
+  };
+
+  drawEightDirLayers(pose, { back: drawBack, core: drawCore, front: drawFront });
+}
+
 /** 职业身体（脚下原点，已 translate）；facingRad 连续弧度 */
 export function drawClassEightDirBody(
   ctx: CanvasRenderingContext2D,
@@ -443,31 +835,14 @@ export function drawClassEightDirBody(
       break;
     }
     case 'DRUID': {
-      ctx.fillStyle = '#272018';
-      ctx.fillRect(-8 + sway, -12, 16, 22);
-      ctx.fillStyle = '#15803D';
-      ctx.fillRect(-9 + sway, -10, 18, 6);
-      ctx.fillStyle = '#FF7D0A';
-      ctx.beginPath();
-      ctx.arc(0 + sway, -17, 7, 0, Math.PI * 2);
-      ctx.fill();
-      drawFacingEyePair(ctx, '#fef3c7', { y: -18.5, size: 2.2, sway, pose, look: 'beast' });
-      ctx.strokeStyle = '#B45309';
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.moveTo(-4 + sway, -23);
-      ctx.lineTo(-8 + sway, -28);
-      ctx.lineTo(-12 + sway, -31);
-      ctx.moveTo(4 + sway, -23);
-      ctx.lineTo(8 + sway, -28);
-      ctx.lineTo(12 + sway, -31);
-      ctx.stroke();
-      ctx.fillStyle = '#78350F';
-      ctx.fillRect(9 * wSide + sway + hBias, -22, 3 * wSide, 30);
-      ctx.fillStyle = '#22C55E';
-      ctx.beginPath();
-      ctx.arc(10.5 * wSide + sway + hBias, -24, 4.5, 0, Math.PI * 2);
-      ctx.fill();
+      drawCyberDruidEightDir(
+        ctx,
+        u,
+        sway,
+        pose,
+        volumeOpts?.fxIntensity ?? 1,
+        volumeOpts?.tickCount ?? 0
+      );
       break;
     }
     case 'SHAMAN': {
@@ -690,35 +1065,53 @@ export function drawClassEightDirBody(
   ctx.restore();
 }
 
+export type BossEightDirOpts = {
+  hideHands?: boolean;
+  hideShoes?: boolean;
+  hideMouth?: boolean;
+  handColor?: string;
+  shoeColor?: string;
+  mouthColor?: string;
+  backShadeAlpha?: number;
+};
+
 /** Boss：连续朝向姿态变换（肩宽/深度，无硬镜像） */
 export function withBossEightDirFacing(
   ctx: CanvasRenderingContext2D,
   facingRad: number,
-  drawBody: () => void
+  drawBody: () => void,
+  bossOpts?: BossEightDirOpts
 ): void {
   const pose = facingPoseFromRad(Number.isFinite(facingRad) ? facingRad : Math.PI / 2);
   activeFacingPose = pose;
   ctx.save();
   applyFacingPoseTransform(ctx, pose);
   drawBody();
-  drawFacingMouth(ctx, '#7f1d1d', { y: -33, pose });
-  drawFacingHands(ctx, '#44403c', {
-    y: -6,
-    pose,
-    armW: 7,
-    armH: 16,
-    spread: 22,
-  });
-  drawFacingShoes(ctx, '#0c0a09', {
-    y: 30,
-    pose,
-    bootW: 14,
-    bootH: 7.5,
-    spread: 13,
-  });
+  if (!bossOpts?.hideMouth) {
+    drawFacingMouth(ctx, bossOpts?.mouthColor ?? '#7f1d1d', { y: -33, pose });
+  }
+  if (!bossOpts?.hideHands) {
+    drawFacingHands(ctx, bossOpts?.handColor ?? '#44403c', {
+      y: -6,
+      pose,
+      armW: 7,
+      armH: 16,
+      spread: 22,
+    });
+  }
+  if (!bossOpts?.hideShoes) {
+    drawFacingShoes(ctx, bossOpts?.shoeColor ?? '#0c0a09', {
+      y: 30,
+      pose,
+      bootW: 14,
+      bootH: 7.5,
+      spread: 13,
+    });
+  }
   const backShade = 1 - pose.faceAlpha;
-  if (backShade > 0.05) {
-    ctx.fillStyle = `rgba(0,0,0,${0.18 * backShade})`;
+  const shadeMax = bossOpts?.backShadeAlpha ?? 0.18;
+  if (backShade > 0.05 && shadeMax > 0.005) {
+    ctx.fillStyle = `rgba(0,0,0,${shadeMax * backShade})`;
     ctx.fillRect(-36, -70, 72, 100);
   }
   ctx.restore();

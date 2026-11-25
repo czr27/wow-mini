@@ -8,6 +8,8 @@ import type {
 import {
   findOptimalGroundAuraCentroid,
   evaluateTankThreatDecision,
+  findLooseAddForTank,
+  isTankHealthy,
   orderTanksByThreatPriority,
   getUnitPersonality,
   evaluateUniversalAIDecision,
@@ -41,7 +43,6 @@ import { syncUnitResources, deductAiResource } from './unitResources.js';
 import { deductDkSpellResources, hasReadyDkRunes } from './dkResources.js';
 import { emitLocalAoePulse } from './emitLocalAoePulse.js';
 import { applyRaidLustBuff } from './raidLustBuff.js';
-import { publishCastInterrupt, publishCastLand, publishCastStart } from './castLifecycleNet.js';
 import { publishCastInterrupt, publishCastLand, publishCastStart } from './castLifecycleNet.js';
 
 function deductCasterSpellResources(
@@ -303,8 +304,10 @@ export function executeAiNormalizedSpell(
         x: centroid.x,
         y: centroid.y,
         groundEffectId: groundId,
+        radius: auraRadius,
         targetId: primaryTarget?.id ?? null,
       });
+      // Network: addGroundEffect → summon reporter (GROUND_PLACE); remotes draw receipt
       return;
     }
 
@@ -751,10 +754,12 @@ export function runFriendlyAiCombatTick(ctx: FriendlyAiCombatTickCtx): void {
 
     // 5. Tank Threat, Taunt & Defensive Cooldown Checks (Universal across Warrior/Paladin/DK/Druid Tanks)
     let tankPauseThreat = false;
+    let tankLooseAdd: Unit | null = null;
     if (u.role === 'TANK') {
       const allTanks = orderTanksByThreatPriority(
         engine.friendlyUnits.filter((t) => t.role === 'TANK' && (t.isAlive ?? t.alive))
       );
+      tankLooseAdd = findLooseAddForTank(u, ctx.livingEnemies, boss, allTanks);
       const threatDecision = evaluateTankThreatDecision(
         u,
         allTanks,
@@ -763,7 +768,19 @@ export function runFriendlyAiCombatTick(ctx: FriendlyAiCombatTickCtx): void {
       );
       tankPauseThreat = threatDecision.pauseThreat;
 
-      if (threatDecision.shouldTaunt && (ctx.tickCount + tickOffset) % 12 === 0) {
+      if (tankLooseAdd && isTankHealthy(u) && (ctx.tickCount + tickOffset) % 8 === 0) {
+        const tauntSp = ownedSpells.find(sp => sp.isTaunt && ctx.isAiCdReady(u.id, sp.shortId, sp.cooldownMs || 8000));
+        if (tauntSp) {
+          ctx.markAiCdUsed(u.id, tauntSp.shortId);
+          engine.threatManager.applyTaunt(tankLooseAdd.id, u.id);
+          engine.effectsManager?.addFloatingText({
+            targetId: tankLooseAdd.id,
+            text: `${u.name} ${tauntSp.name}拉住小怪！`,
+            category: 'CRIT',
+            isCrit: true,
+          });
+        }
+      } else if (threatDecision.shouldTaunt && (ctx.tickCount + tickOffset) % 12 === 0) {
         const tauntSp = ownedSpells.find(sp => sp.isTaunt && ctx.isAiCdReady(u.id, sp.shortId, sp.cooldownMs || 8000));
         if (tauntSp) {
           ctx.markAiCdUsed(u.id, tauntSp.shortId);
@@ -905,11 +922,17 @@ export function runFriendlyAiCombatTick(ctx: FriendlyAiCombatTickCtx): void {
       if (usableCandidates.length === 0) continue;
     }
 
+    const aiEnemies = tankLooseAdd
+      ? [tankLooseAdd, ...ctx.livingEnemies.filter((e) => e.id !== tankLooseAdd!.id)]
+      : ctx.livingEnemies.length > 0
+        ? ctx.livingEnemies
+        : [boss];
+
     const decision = evaluateUniversalAIDecision({
       caster: u,
       personality: aiPersonality,
       allies: engine.friendlyUnits,
-      enemies: ctx.livingEnemies.length > 0 ? ctx.livingEnemies : [boss],
+      enemies: aiEnemies,
       usableSkills: usableCandidates,
       tickCount: ctx.tickCount,
     });

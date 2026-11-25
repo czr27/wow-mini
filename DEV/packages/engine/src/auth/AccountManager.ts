@@ -17,45 +17,19 @@ import {
 } from './accountMerge.js';
 import { isReservedAiName } from '../room/RoomManager.js';
 
-// Default default keybinding habits for each class and spec
-export function getDefaultSpecKeybindings(classId: ClassId, spec: string): KeybindingMap {
+// Default keybinding habits for new characters/specs (36 slots across 3 bars)
+export function getDefaultSpecKeybindings(_classId: ClassId, _spec: string): KeybindingMap {
   const map: KeybindingMap = {};
-  // Universal basic 1~6, Q, E, R, F, Z, X
-  const defaultKeys = ['1', '2', '3', '4', '5', '6', 'Q', 'E', 'R', 'F', 'Z', 'X'];
-  
-  if (classId === 'DK') {
-    if (spec === 'BLOOD') {
-      // Tank setup: 1=Death Strike, 2=Heart Strike, 3=Death and Decay, 4=Rune Strike, 5=Outbreak, Q=Bone Shield, E=Vamp Blood, R=Icebound, F=Mind Freeze, Z=Dark Command
-      defaultKeys.forEach((k, idx) => { map[idx] = k; });
-    } else {
-      // Frost DPS setup: 1=Obliterate, 2=Frost Strike, 3=Howling Blast, 4=Pillar of Frost, 5=Outbreak, F=Mind Freeze
-      defaultKeys.forEach((k, idx) => { map[idx] = k; });
-    }
-  } else if (classId === 'DRUID') {
-    if (spec === 'RESTORATION') {
-      // Healer setup: 1=Lifebloom, 2=Rejuvenation, 3=Regrowth, 4=Nourish, 5=Swiftmend, 6=Wild Growth, Q=Tranquility, E=Barkskin, R=Innervate
-      defaultKeys.forEach((k, idx) => { map[idx] = k; });
-    } else {
-      // Balance DPS setup: 1=Wrath, 2=Starfire, 3=Starsurge, 4=Moonfire, Q=Barkskin
-      defaultKeys.forEach((k, idx) => { map[idx] = k; });
-    }
-  } else if (classId === 'SHAMAN') {
-    if (spec === 'RESTORATION') {
-      // Healer setup: 1=Riptide, 2=Healing Wave, 3=Greater Healing Wave, 4=Healing Surge, 5=Chain Heal, 6=Healing Rain, Q=Spirit Link Totem, E=Mana Tide, R=Bloodlust, F=Wind Shear
-      defaultKeys.forEach((k, idx) => { map[idx] = k; });
-    } else {
-      // Elemental DPS: 1=Lightning Bolt, 2=Flame Shock, 3=Lava Burst, 4=Chain Lightning, R=Bloodlust, F=Wind Shear
-      defaultKeys.forEach((k, idx) => { map[idx] = k; });
-    }
-  } else if (classId === 'MAGE') {
-    // 1=Fireball, 2=Living Bomb, 3=Pyroblast, 4=Combustion, Q=Ice Block, E=Evocation, R=Time Warp, F=Counterspell
-    defaultKeys.forEach((k, idx) => { map[idx] = k; });
-  } else if (classId === 'ROGUE') {
-    // 1=Sinister Strike, 2=Slice and Dice, 3=Eviscerate, 4=Adrenaline Rush, 5=Blade Flurry, Q=Feint, E=Cloak of Shadows, F=Kick
-    defaultKeys.forEach((k, idx) => { map[idx] = k; });
-  } else {
-    defaultKeys.forEach((k, idx) => { map[idx] = k; });
-  }
+  // Row 1 (0..11): 12345QERTFCX
+  const row1Keys = ['1', '2', '3', '4', '5', 'Q', 'E', 'R', 'T', 'F', 'C', 'X'];
+  // Row 2 (12..23): SHIFT + Row 1
+  const row2Keys = row1Keys.map((k) => `SHIFT+${k}`);
+  // Row 3 (24..35): ` + F2..F12 (F1 conflicts with browser Help, replaced with `)
+  const row3Keys = ['`', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11', 'F12'];
+
+  row1Keys.forEach((k, idx) => { map[idx] = k; });
+  row2Keys.forEach((k, idx) => { map[12 + idx] = k; });
+  row3Keys.forEach((k, idx) => { map[24 + idx] = k; });
   return map;
 }
 

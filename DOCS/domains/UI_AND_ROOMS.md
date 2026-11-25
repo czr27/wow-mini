@@ -52,9 +52,16 @@
 | **施法动作组合入口** | `hooks/usePlayerCastActions.ts` | 再导出施法管线模块（含 P6e `handlePlayerCastSlot`） |
 | **友方 AI 战斗执行** | `combat/aiCombatExecutor.ts` | `executeAiNormalizedSpell` + `runFriendlyAiCombatTick`；tick 内仅调用 |
 | **20Hz 战斗帧** | `combat/runCombatTick.ts`<br>`hooks/useCombatTick.ts` | guest HUD / host 广播 / 读条推进 / AI / 普攻；App 装配 deps |
+| **网络战斗权威** | `combat/networkCombatAuthority.ts`<br>`combat/hostAuthorityTickGuard.ts` | Host/Guest 战斗权威判定、世界快照过滤、防止未授权状态覆盖 |
+| **网络客机施法同步** | `combat/castLifecycleNet.ts`<br>`combat/withNetworkVitals.ts` | 客机网络施法生命周期、带网络生命体征的单位镜像 |
+| **战斗效果总线** | `combat/combatEffectBus.ts`<br>`combat/applyCombatEffect.ts` | 统一事件通道（伤害/治疗/护盾/驱散/击杀），解耦 UI 渲染与引擎状态 |
+| **DK 独立符文系统** | `combat/dkResources.ts` | 死亡骑士 6 符文（血/霜/邪/死）与符能刷新/消耗状态机 |
+| **全团嗜血与衰竭** | `combat/raidLustBuff.ts` | 嗜血/英勇/时间扭曲 40s 急速加成与 10min 衰竭/心满意足互斥 Debuff |
+| **本地战斗录像器** | `combat/localEncounterRecorder.ts` | 客户端首领战事件流捕获、阶段统计与战报本地持久化 |
 | **地面目标确认** | `combat/confirmGroundTarget.ts` | DnD / 治疗之雨 / 图腾落点与 CD |
 | **驱散** | `combat/dispelUnit.ts` | Cata 驱散矩阵 + 距离/CD/GCD |
 | **AI 单位辅助** | `combat/aiUnitHelpers.ts` | 预测治疗量、AI CD、专精推断、OOM 提示 |
+| **迷宫拓扑与联机桥接** | `combat/mazeRuntime.ts`<br>`combat/mazeSyncBridge.ts` | 迷宫连通分支、动态怪物组与房主-客机同步 |
 | **账号与 UI 持久化** | `DEV/packages/engine/src/auth/AccountManager.ts` | 角色列表、按专精独立快捷键、`saveCharacterUiLayout`（支持 `null` 清除已保存坐标） |
 | **房间生命周期管理** | `DEV/packages/engine/src/room/RoomManager.ts` | 建房、入房、退房清理、纯 AI 房间自动回收、AI 换职业自动同步 Lore 名称、自定义难度系数持久化 |
 | **动作条与读条条** | `DEV/packages/web/src/components/ActionBar.tsx`<br>`DEV/packages/web/src/components/PlayerCastBar.tsx` | 三栏 36 格快捷键、扇形 CD、资源不足/超距提示、解锁拖拽与底部居中重置 |
@@ -73,7 +80,7 @@
 
 ## 4. App.tsx 瘦身现状与拆分顺序（低风险 → 高风险）
 
-> **现状**：`App.tsx` 装配壳约 1.9k 行（P1–P8 + WS + 地面确认/驱散/AI 辅助已抽出）。目标保持装配壳；新增逻辑优先进 `combat/` / `hooks/` / `screens/`。
+> **现状**：`App.tsx` 装配壳约 2.2k 行（P1–P8 + WS + 战斗事件总线/网络权威/DK符文/战斗录制/地面确认/驱散/AI 辅助已抽出）。目标保持装配壳；新增逻辑优先进 `combat/` / `hooks/` / `screens/`。
 
 | 阶段 | 目标落点 | 内容 | 状态 |
 |---|---|---|---|

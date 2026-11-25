@@ -182,8 +182,8 @@ export const MAGE: ClassSpec = {
       id: 'mage_time_warp',
       name: '时间扭曲',
       castTimeMs: 0,
-      gcdType: 'off',
-      gcdCategory: 'OFF_GCD',
+      gcdType: 'normal',
+      gcdCategory: 'NORMAL',
       cooldownMs: 300_000, // 5分钟
       resourceCost: 'MANA',
       resourceCostAmount: 1000,
@@ -501,6 +501,47 @@ export const MAGE: ClassSpec = {
           type: 'SPELL_DAMAGE',
           baseValue: 16000,
           description: '对免疫昏迷的首领直接造成16000点冰霜直伤',
+        },
+      ],
+    },
+
+    {
+      id: 'mage_frozen_orb',
+      name: '寒冰宝珠',
+      castTimeMs: 0,
+      gcdType: 'normal',
+      gcdCategory: 'NORMAL',
+      cooldownMs: 60_000,
+      resourceCost: 'MANA',
+      resourceCostAmount: 2600,
+      targetType: 'AOE_ENEMY',
+      school: 'FROST',
+      spec: 'ICE_DPS',
+      effects: [
+        {
+          type: 'SPELL_DAMAGE',
+          baseValue: 12500,
+          description: '发射旋转的冰霜宝珠，减缓敌人速度并在经过路径上持续造成范围冰霜伤害，CD 60s',
+        },
+      ],
+    },
+
+    {
+      id: 'mage_remove_curse',
+      name: '解除诅咒',
+      castTimeMs: 0,
+      gcdType: 'normal',
+      gcdCategory: 'NORMAL',
+      cooldownMs: 8_000,
+      resourceCost: 'MANA',
+      resourceCostAmount: 1500,
+      targetType: 'SINGLE_ALLY',
+      school: 'ARCANE',
+      effects: [
+        {
+          type: 'DISPEL',
+          dispelTypes: ['CURSE'],
+          description: '解除一名友方目标身上的 1 个诅咒效果，CD 8s',
         },
       ],
     },

@@ -39,6 +39,9 @@
 | **10 职业定义与总注册表** | `DEV/packages/engine/src/classes/*.ts`<br>`DEV/packages/engine/src/classes/ClassRegistry.ts` | 10 职业 30 专精技能表、`LEVEL_80_MAX_HASTE = 0.50`、`getEffectiveGcdMs`、`getHastedCastTimeMs`、`getSpellByAnyId`、标准化 `NormalizedSpell` |
 | **通用规则 AI** | `DEV/packages/engine/src/ai/SkillMetricEvaluator.ts`<br>`DEV/packages/engine/src/ai/{Tank,Healer,Dps}AI.ts` | 依据单位可用技能动态评分：治疗（危机保坦 → 多人低于健康线优先 AoE → 性价比单抬）、DPS（≥3 目标优先 AoE → 性价比循环）、坦克（嘲讽/仇恨/减伤） |
 | **前端玩家施法控制器** | `DEV/packages/web/src/hooks/usePlayerCastController.ts` | 封装玩家侧读条与引导推进、周期跳数、移动/ESC/超距打断，直接调用 `CastLifecycle` 纯规则 |
+| **战斗效果总线与落地** | `DEV/packages/web/src/combat/combatEffectBus.ts`<br>`DEV/packages/web/src/combat/applyCombatEffect.ts` | 统一分发伤害/治疗/护盾/驱散/击杀事件，解耦引擎计算与表现层消费 |
+| **网络战斗权威与客机施法** | `DEV/packages/web/src/combat/networkCombatAuthority.ts`<br>`DEV/packages/web/src/combat/castLifecycleNet.ts` | Host 权威校验与 Tick 守卫，Guest 客户端网络施法生命周期与本地乐观回显 |
+| **DK 独立符文状态机** | `DEV/packages/web/src/combat/dkResources.ts` | 死亡骑士 6 符文（血/霜/邪/死）与符文能量单独建模管理 |
 
 ---
 

@@ -241,6 +241,7 @@ export interface NormalizedSpell {
    */
   aoeCenterMode: 'TARGET' | 'CASTER' | 'RAID' | 'NONE';
   dispelTypes?: string[];
+  effects?: any[];
   description: string;
 }
 
@@ -304,6 +305,8 @@ const SHORT_ID_ALIASES: Record<string, string> = {
   sw_pain: 'priest_shadow_word_pain',
   sw_death: 'priest_shadow_word_death',
   spell_lock: 'warlock_fel_hunter_spell_lock',
+  natures_cure: 'druid_natures_cure',
+  remove_corruption: 'druid_remove_corruption',
 };
 
 export function toShortSpellId(spellId: string, classId?: ClassId): string {
@@ -678,6 +681,8 @@ function normalizeLegacySpell(classId: ClassId, sp: LegacySpell): NormalizedSpel
       isRaidBuff: Boolean(sp.isRaidBuff),
     }),
     description: descParts.join('；') || sp.name,
+    effects: sp.effects,
+    dispelTypes: sp.effects?.find(e => (e as any).type === 'DISPEL')?.dispelTypes || (sp as any).dispelTypes,
   };
 }
 
@@ -912,6 +917,7 @@ function normalizeModernSpell(classId: ClassId, specId: string, sp: ModernSpell)
     }),
     dispelTypes,
     description: sp.description || sp.name,
+    effects: (sp as any).effects,
   };
 }
 

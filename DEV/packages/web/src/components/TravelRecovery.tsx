@@ -106,9 +106,6 @@ export const TravelRecovery: React.FC<Props> = ({
                 复活队友
               </button>
             ) : null}
-            <span className="px-2.5 py-1 rounded-lg text-[10px] font-semibold text-amber-200/50 bg-black/30 border border-amber-900/50">
-              不可跳过
-            </span>
           </div>
         </div>
       </div>

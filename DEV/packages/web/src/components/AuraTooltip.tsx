@@ -299,6 +299,8 @@ export type UnitFrameCastState = {
   isChannel?: boolean;
   description?: string;
   school?: string;
+  /** Observer flash: cast completed (green full) or interrupted (red). */
+  endFlash?: 'success' | 'interrupt';
 };
 
 /** Hover panel for target / focus cast bars. */

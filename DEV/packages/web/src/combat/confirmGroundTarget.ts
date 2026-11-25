@@ -6,7 +6,6 @@ import { SPELL_MANA_COSTS } from './spellCosts.js';
 import { getEffectivePlayerCooldownMs } from './handlePlayerCastSlot.js';
 import { spendDkResourcesForSpell } from './dkResources.js';
 import { getSpellByAnyId } from '@cata-raid-sim/engine';
-import { publishCombatEffectAlreadyApplied } from './networkCombatAuthority.js';
 
 export type ConfirmGroundTargetCtx = {
   engine: CombatEngine;
@@ -117,6 +116,8 @@ export function confirmGroundTarget(ctx: ConfirmGroundTargetCtx): void {
       tickElapsedMs: 0,
       tickValue: opts.tickValue,
     });
+    // Network: installSummonReporters hooks addGroundEffect → GROUND_PLACE summon report.
+    // Remotes draw the received summon; do not re-publish from skill settle here.
     engine.logCombatAction({
       actorId: player.id,
       spellId: opts.spellId,
@@ -125,17 +126,8 @@ export function confirmGroundTarget(ctx: ConfirmGroundTargetCtx): void {
       x,
       y,
       groundEffectId: id,
-      targetId: boss?.id ?? null,
-    });
-    publishCombatEffectAlreadyApplied({
-      sourceId: player.id,
-      targetId: player.id,
-      spellId: opts.spellId,
-      spellName: slot?.name,
-      kind: 'GROUND_PLACE',
-      x,
-      y,
       radius: opts.radius,
+      targetId: boss?.id ?? null,
     });
   };
 

@@ -27,16 +27,20 @@ describe('Prim 迷宫生成器', () => {
     assert.notEqual(hashSeed('shadowfang_keep', 0), hashSeed('dragon_soul', 0));
   });
 
-  it('5人约7s / 20人约14s 规模与堆数合理，宽度×1.6 且过关时长不变', () => {
+  it('5人约7s / 20人约14s 规模与堆数合理，宽度+30%且比例不变', () => {
     const s5 = scaleMazeParams(7000, '5man');
     const s20 = scaleMazeParams(14000, '20man');
     assert.ok(s5.packCount >= 2 && s5.packCount <= 3);
     assert.ok(s20.packCount >= 2 && s20.packCount <= 3);
-    assert.ok(s5.spawnPackCount >= 6);
-    assert.ok(s20.spawnPackCount >= 6);
+    assert.ok(s5.spawnPackCount >= 8, '5人总堆数应 ≥ 8');
+    assert.ok(s20.spawnPackCount >= 11, '20人总堆数应 ≥ 11');
     assert.ok(s20.cols >= s5.cols);
-    // rev6 5人 base≈21 → ×1.6 ≈ 33
-    assert.ok(s5.cols >= 31, '5 人列数应约 ×1.6 更宽');
+    // rev10 宽度再增 30%: 5人 cols: 31 -> 41 (≥39)
+    assert.ok(s5.cols >= 39, '5 人列数应约增加 30% 到 41 列');
+    assert.ok(s20.cols >= 65, '20 人列数应约增加 30% 到 67 列');
+    // 比例严格保持不变 (ratio 差异 < 0.05)
+    assert.ok(Math.abs(s5.cols / s5.rows - 31 / 21) < 0.05, '5人长宽比必须保持不变');
+    assert.ok(Math.abs(s20.cols / s20.rows - 51 / 33) < 0.05, '20人长宽比必须保持不变');
     assert.ok(SHADOWFANG_MAZE_PROFILE.targetTravelMs === 7000);
     assert.ok(DRAGON_SOUL_MAZE_PROFILE.targetTravelMs === 14000);
   });
@@ -95,6 +99,25 @@ describe('Prim 迷宫生成器', () => {
       const row = Math.floor((s.worldY! - layout.originY) / layout.cellSize);
       const onMain = main.some((p) => p.c === col && p.r === row);
       assert.equal(onMain, false, `氛围堆落在主路格 (${col},${row})`);
+    }
+
+    // 验证场景怪各堆之间有良好空间间隔，不扎堆
+    const ambientPackCenters: Array<{ x: number; y: number }> = [];
+    const packMap = new Map<number, Array<{ x: number; y: number }>>();
+    for (const s of ambient) {
+      if (!packMap.has(s.packIndex)) packMap.set(s.packIndex, []);
+      packMap.get(s.packIndex)!.push({ x: s.worldX!, y: s.worldY! });
+    }
+    for (const [, mobs] of packMap) {
+      const avgX = mobs.reduce((acc, m) => acc + m.x, 0) / mobs.length;
+      const avgY = mobs.reduce((acc, m) => acc + m.y, 0) / mobs.length;
+      ambientPackCenters.push({ x: avgX, y: avgY });
+    }
+    for (let i = 0; i < ambientPackCenters.length; i++) {
+      for (let j = i + 1; j < ambientPackCenters.length; j++) {
+        const d = Math.hypot(ambientPackCenters[i].x - ambientPackCenters[j].x, ambientPackCenters[i].y - ambientPackCenters[j].y);
+        assert.ok(d >= layout.cellSize * 2.5, `氛围堆间距过近: ${d}`);
+      }
     }
   });
 

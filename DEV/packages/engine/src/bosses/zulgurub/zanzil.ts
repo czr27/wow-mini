@@ -1,8 +1,11 @@
 import type { BossEncounterModule, BossSkill } from '../core/BossTypes.js';
 import type { CombatEngine } from '../../engine/CombatEngine.js';
 import type { Unit } from '../../types.js';
+import { spawnCombatUnit } from '../../engine/UnitSpawn.js';
 
 export type ZanzilElixir = 'frost' | 'fire' | 'toxic';
+export const ZANZILI_ZOMBIE_SUMMON = 'zanzil_zanzili_zombie';
+export const GURUBASHI_BERSERKER_SUMMON = 'zanzil_gurubashi_berserker';
 
 export const CAULDRON_BUFF: Record<ZanzilElixir, string> = {
   frost: 'zanzil_cauldron_frost',
@@ -108,6 +111,39 @@ export const ZanzilEncounter: BossEncounterModule = {
           for (const u of living(engine)) {
             if (!u.isPlayer) drinkZanzilCauldron(engine, u, kind);
           }
+
+          // 原版复活药剂：冰霜召唤赞吉利僵尸群，火焰召唤古拉巴什狂战士
+          const bPos = boss.position || { x: 500, y: 200 };
+          if (kind === 'frost') {
+            for (let i = 0; i < 3; i++) {
+              spawnCombatUnit(engine, {
+                id: `zanzil_zombie_${Date.now()}_${i}`,
+                name: `赞吉利僵尸 ${i + 1}`,
+                unitKind: 'ADD',
+                role: 'ENEMY',
+                classId: 'NPC',
+                hp: 32_000,
+                maxHp: 32_000,
+                position: { x: bPos.x - 80 + i * 50, y: bPos.y + 60 },
+                summonSpellId: ZANZILI_ZOMBIE_SUMMON,
+                despawnAtElapsedMs: (engine.elapsed || 0) + 60_000,
+              });
+            }
+          } else if (kind === 'fire') {
+            spawnCombatUnit(engine, {
+              id: `zanzil_berserker_${Date.now()}`,
+              name: '古拉巴什狂战士',
+              unitKind: 'ADD',
+              role: 'ENEMY',
+              classId: 'NPC',
+              hp: 95_000,
+              maxHp: 95_000,
+              position: { x: bPos.x + 65, y: bPos.y + 45 },
+              summonSpellId: GURUBASHI_BERSERKER_SUMMON,
+              despawnAtElapsedMs: (engine.elapsed || 0) + 60_000,
+            });
+          }
+
           engine.effectsManager?.addFloatingText({
             targetId: boss.id,
             text: `🧪 ${ELIXIR_LABEL[kind]}`,

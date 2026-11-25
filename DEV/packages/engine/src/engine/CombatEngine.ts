@@ -31,6 +31,7 @@ import {
   unitHasImmunity,
 } from './BuffEffects.js';
 import { CombatActionLog, type CombatActionEvent } from './CombatActionLog.js';
+import { DbmAlertLog, type DbmAlert } from './DbmManager.js';
 import {
   resolveUnitKind,
   spawnTimedSummons,
@@ -113,10 +114,19 @@ export const SPELL_ID_TO_NAME: Record<string, string> = {
   druid_lacerate: '割伤',
   druid_shred: '撕碎',
   druid_rip: '割裂',
+  druid_rake: '斜掠',
+  druid_ferocious_bite: '凶猛撕咬',
+  druid_skull_bash: '迎头痛击',
+  druid_berserk: '狂暴',
   druid_frenzied_regeneration: '狂暴回复',
   druid_growl: '低吼',
   shred: '撕碎',
   rip: '割裂',
+  rake: '斜掠',
+  ferocious_bite: '凶猛撕咬',
+  hemorrhage: '出血',
+  rogue_hemorrhage: '出血',
+  mage_frozen_orb: '寒冰宝珠',
   frenzied_regeneration: '狂暴回复',
   growl: '低吼',
   efflorescence: '百花齐放',
@@ -413,6 +423,7 @@ export class CombatEngine {
   }> = [];
   private schoolLockouts: Map<string, Map<SpellSchool, number>> = new Map();
   private earthShieldLastProcMs: Map<string, number> = new Map();
+  private boneShieldLastProcMs: Map<string, number> = new Map();
   private elapsedMs = 0;
 
   /** 影牙1号等首领战窒息术后安全治疗窗口剩余时长 (ms)，在此期间首领无法对友方造成任何伤害 */
@@ -430,6 +441,8 @@ export class CombatEngine {
   readonly effectsManager: EffectsManager;
   /** Host→guest action echo (cast/ground/summon) for FX sync */
   readonly actionLog: CombatActionLog;
+  /** Host-authoritative DBM tactical alert queue */
+  readonly dbmLog: DbmAlertLog;
   /** Optional hook so host UI can paint FX immediately when actions are logged */
   onCombatAction: ((ev: CombatActionEvent) => void) | null = null;
 
@@ -443,6 +456,25 @@ export class CombatEngine {
     this.cooldownManager = new CooldownManager();
     this.effectsManager  = new EffectsManager(this);
     this.actionLog       = new CombatActionLog();
+    this.dbmLog          = new DbmAlertLog();
+  }
+
+  /** Emit a DBM tactical alert (host/engine authoritative). */
+  emitDbmAlert(
+    partial: Omit<DbmAlert, 'id' | 'atMs' | 'ttlMs'> & {
+      id?: string;
+      atMs?: number;
+      ttlMs?: number;
+      dedupeKey?: string;
+      cooldownMs?: number;
+    }
+  ): DbmAlert | null {
+    return this.dbmLog.push(partial);
+  }
+
+  /** Drain pending DBM alerts for host HUD + COMBAT_STATE broadcast. */
+  drainDbmAlerts(): DbmAlert[] {
+    return this.dbmLog.drain();
   }
 
   /** Record a player/AI action for room FX sync (host only). */
@@ -528,7 +560,7 @@ export class CombatEngine {
   }
 
   getSpell(id: string): Spell | undefined {
-    return this.spellBook.get(id);
+    return this.spellBook.get(id) || (getSpellByAnyId(id) as any);
   }
 
   // ── Spell School Lockout ───────────────────────────────────────
@@ -721,7 +753,7 @@ export class CombatEngine {
   castSpell(casterId: string, spellId: string, targetId: string): boolean {
     const caster = this.units.get(casterId);
     const target = this.units.get(targetId);
-    const spell  = this.spellBook.get(spellId);
+    const spell = this.spellBook.get(spellId) || (caster ? (getSpellByAnyId(spellId, caster.classId) as any) : undefined);
     if (!caster || !caster.isAlive || !target || !spell) return false;
 
     // Hard CC (Asphyxiate airborne stun, etc.): cannot start new casts
@@ -886,7 +918,13 @@ export class CombatEngine {
       }
     }
 
-    for (const eff of spell.effects) {
+    const effectsList = spell.effects || (
+      (spell as any).isDispel ? [{ type: 'DISPEL', dispelTypes: (spell as any).dispelTypes }] :
+      (spell as any).isHeal ? [{ type: 'HEAL', baseValue: (spell as any).directHeal }] :
+      (spell as any).isDamage ? [{ type: 'SPELL_DAMAGE', baseValue: (spell as any).directDamage }] :
+      []
+    );
+    for (const eff of effectsList) {
       const effect = eff as any;
       let kind = effect.kind;
       let school: SpellSchool = effect.school ?? spell.school ?? 'PHYSICAL';
@@ -1074,8 +1112,13 @@ export class CombatEngine {
             auraId === 'unleash_life' ||
             auraId === 'ascendance' ||
             auraId === 'ancestral_guidance';
+          const isBoneShield = auraId === 'bone_shield' || spell.id === 'dk_bone_shield';
           const stacks =
-            auraId === 'earth_shield' || spell.id === 'shaman_earth_shield' ? Math.max(9, maxStacks) : 1;
+            auraId === 'earth_shield' || spell.id === 'shaman_earth_shield'
+              ? Math.max(9, maxStacks)
+              : isBoneShield
+              ? Math.max(6, maxStacks)
+              : 1;
           const isRaidBuff =
             Boolean((spell as any).isRaidBuff) ||
             isRaidWideBuffSpellId(spell.id) ||
@@ -1085,12 +1128,12 @@ export class CombatEngine {
             applyTimedAura(buffTargetId, {
               spellId: auraId || spell.id,
               name:
-                auraId === 'earth_shield' || spell.id === 'shaman_earth_shield'
+                auraId === 'earth_shield' || spell.id === 'shaman_earth_shield' || isBoneShield
                   ? `${spell.name} (${stacks}层)`
                   : spell.name,
               kind: isDebuff ? 'DEBUFF' : 'BUFF',
               tags:
-                auraId === 'earth_shield' || spell.id === 'shaman_earth_shield'
+                auraId === 'earth_shield' || spell.id === 'shaman_earth_shield' || isBoneShield
                   ? ['SHIELD']
                   : isDebuff
                   ? ['STAT']
@@ -1145,6 +1188,64 @@ export class CombatEngine {
           const isPersonalResource = resKind !== 'MANA';
           const restoreTargetId = (target.role === 'ENEMY' || (target.role as string) === 'BOSS' || !(target as any).isPlayer || spell.targetType === 'SELF' || isPersonalResource) ? casterId : targetId;
           this.resourceManager.restore(restoreTargetId, resKind, baseValue);
+          break;
+        }
+
+        case 'DISPEL': {
+          const dispelTarget = (target.role === 'ENEMY' || (target.role as string) === 'BOSS')
+            ? (targetId ? this.units.get(targetId) : null) || target
+            : (targetId ? this.units.get(targetId) : null) || caster;
+          if (!dispelTarget) break;
+
+          let allowedTypes: string[] = effect.dispelTypes || [];
+          if (allowedTypes.length === 0) {
+            const sid = spell.id;
+            const spec = (caster.spec || '').toUpperCase();
+            const isResto = spec === 'RESTORATION' || spec === 'RESTO' || spec === 'RESTO_HEAL';
+            if (sid.includes('natures_cure')) {
+              allowedTypes = ['MAGIC', 'CURSE', 'POISON'];
+            } else if (sid.includes('remove_corruption')) {
+              allowedTypes = isResto ? ['MAGIC', 'CURSE', 'POISON'] : ['CURSE', 'POISON'];
+            } else if (sid.includes('cleanse_spirit')) {
+              allowedTypes = isResto ? ['MAGIC', 'CURSE'] : ['CURSE'];
+            } else if (sid.includes('cleanse')) {
+              allowedTypes = spec === 'HOLY' ? ['MAGIC', 'POISON', 'DISEASE'] : ['POISON', 'DISEASE'];
+            } else if (sid.includes('dispel_magic') || sid.includes('purify')) {
+              allowedTypes = ['MAGIC', 'DISEASE'];
+            } else if (sid.includes('remove_curse')) {
+              allowedTypes = ['CURSE'];
+            }
+          }
+
+          if (dispelTarget.role !== 'ENEMY') {
+            const debuffIdx = dispelTarget.buffs.findIndex((b) => {
+              if (b.kind !== 'DEBUFF') return false;
+              const dType = b.dispelType || (
+                (b.school === 'SHADOW' || b.school === 'ARCANE') && (b.name.includes('诅咒') || b.spellId.includes('curse')) ? 'CURSE' :
+                (b.school === 'NATURE' && (b.name.includes('毒') || b.spellId.includes('poison') || b.spellId.includes('toxic'))) ? 'POISON' :
+                (b.school === 'SHADOW' && (b.name.includes('疾病') || b.name.includes('疫') || b.spellId.includes('disease') || b.spellId.includes('plague'))) ? 'DISEASE' :
+                (b.school === 'FIRE' || b.school === 'FROST' || b.school === 'ARCANE' || b.school === 'HOLY' || b.name.includes('魔')) ? 'MAGIC' :
+                undefined
+              );
+              return dType && allowedTypes.includes(dType);
+            });
+            if (debuffIdx !== -1) {
+              const removed = dispelTarget.buffs.splice(debuffIdx, 1)[0];
+              this.effectsManager?.addFloatingText?.({
+                targetId: dispelTarget.id,
+                text: `✨ 驱散成功: ${removed.name}`,
+                category: 'HEAL',
+                isCrit: true,
+              });
+              this.emitEvent({
+                kind: 'BUFF_REMOVED',
+                sourceId: casterId,
+                targetId: dispelTarget.id,
+                spellId: removed.spellId,
+                timestamp: this.elapsedMs,
+              });
+            }
+          }
           break;
         }
 
@@ -1452,6 +1553,35 @@ export class CombatEngine {
           if (esBuff.stacks <= 0) {
             target.buffs.splice(esIdx, 1);
           }
+        }
+      }
+    }
+
+    // ── 1b. 白骨之盾 (Bone Shield) 受击消耗 1 层（2 秒内置 CD，带 20% 减伤） ──
+    if (effective > 0 && target.hp > 0 && target.role !== 'ENEMY' && target.buffs?.length) {
+      const bsIdx = target.buffs.findIndex(
+        b => b.spellId === 'bone_shield' || b.spellId === 'dk_bone_shield'
+      );
+      if (bsIdx !== -1) {
+        const bsBuff = target.buffs[bsIdx];
+        const lastProc = this.boneShieldLastProcMs.get(targetId) ?? -99999;
+        if ((bsBuff.stacks || 0) > 0 && this.elapsedMs - lastProc >= 2000) {
+          this.boneShieldLastProcMs.set(targetId, this.elapsedMs);
+          bsBuff.stacks = Math.max(0, (bsBuff.stacks || 1) - 1);
+          if (bsBuff.stacks <= 0) {
+            target.buffs.splice(bsIdx, 1);
+            this.auraManager.removeBuff(target, bsBuff.spellId);
+          } else {
+            bsBuff.name = `白骨之盾 (${bsBuff.stacks}层)`;
+          }
+          this.effectsManager?.addFloatingText({
+            targetId,
+            text: bsBuff.stacks > 0 ? `💀 骨盾 -1 (${bsBuff.stacks}层)` : '💀 白骨之盾破碎',
+            category: 'STATUS',
+            isCrit: false,
+            isToPlayer: Boolean(target.isPlayer),
+            createdAtMs: Date.now(),
+          });
         }
       }
     }
@@ -1779,6 +1909,40 @@ export class CombatEngine {
       unit.mp = Math.round(unit.maxMp * mpFraction);
     }
     this.emitEvent({ kind: 'HEAL', sourceId: unitId, targetId: unitId, value: unit.hp, isCrit: false, timestamp: this.elapsedMs });
+    return true;
+  }
+
+  /**
+   * 跑尸归来满状态：满血满蓝/资源、清威胁与 debuff 层（权威座位本地应用）。
+   */
+  applyCorpseRunFullVitals(unitId: string): boolean {
+    const unit = this.units.get(unitId);
+    if (!unit) return false;
+    unit.isAlive = true;
+    unit.alive = true;
+    unit.hp = unit.maxHp;
+    unit.mp = unit.maxMp;
+    unit.energy = unit.classId === 'ROGUE' ? 100 : (unit.energy ?? 0);
+    unit.focus = unit.classId === 'HUNTER' ? 100 : (unit.focus ?? 0);
+    unit.rage = unit.classId === 'WARRIOR' ? 25 : (unit.rage ?? 0);
+    unit.holyPower = 0;
+    unit.absorb = 0;
+    unit.buffs = (unit.buffs || []).filter((b) => b.kind === 'BUFF');
+    unit.threatTable = [];
+    if (unit.resources) {
+      for (const res of unit.resources) {
+        if (res.kind === 'MANA') res.current = res.max;
+        else if (res.kind === 'ENERGY') res.current = 100;
+        else if (res.kind === 'FOCUS') res.current = 100;
+        else if (res.kind === 'RAGE') res.current = 25;
+        else if (res.kind === 'HOLY_POWER' || res.kind === 'COMBO_POINTS') res.current = 0;
+      }
+    }
+    if (unit.runes) {
+      for (const r of unit.runes) {
+        r.cooldownMs = 0;
+      }
+    }
     return true;
   }
 
@@ -2246,11 +2410,13 @@ export class CombatEngine {
     this.pendingCasts = [];
     this.schoolLockouts.clear();
     this.earthShieldLastProcMs.clear();
+    this.boneShieldLastProcMs.clear();
     this.units.clear();
     this.threatManager.resetAll();
     this.cooldownManager.reset();
     this.effectsManager.clearAll();
     this.actionLog.clear();
+    this.dbmLog.clear();
   }
 
   /** Host-side compact snapshot for room combat sync (guests apply, do not tick). */
@@ -2416,6 +2582,32 @@ export class CombatEngine {
       unit.rage = s.rage;
       unit.runicPower = s.runicPower;
       unit.focus = s.focus;
+      if (!unit.resources) unit.resources = [];
+      if (s.maxMp != null && s.maxMp > 0) {
+        const mRes = unit.resources.find((r) => r.kind === 'MANA');
+        if (mRes) {
+          if (s.mp != null) mRes.current = s.mp;
+          mRes.max = s.maxMp;
+        } else {
+          unit.resources.push({ kind: 'MANA', current: s.mp ?? s.maxMp, max: s.maxMp });
+        }
+      }
+      if (s.energy != null) {
+        const eRes = unit.resources.find((r) => r.kind === 'ENERGY');
+        if (eRes) eRes.current = s.energy;
+      }
+      if (s.rage != null) {
+        const rRes = unit.resources.find((r) => r.kind === 'RAGE');
+        if (rRes) rRes.current = s.rage;
+      }
+      if (s.runicPower != null) {
+        const rpRes = unit.resources.find((r) => r.kind === 'RUNIC_POWER');
+        if (rpRes) rpRes.current = s.runicPower;
+      }
+      if (s.focus != null) {
+        const fRes = unit.resources.find((r) => r.kind === 'FOCUS');
+        if (fRes) fRes.current = s.focus;
+      }
       if (s.runes) unit.runes = s.runes.map((r) => ({ ...r }));
       unit.absorb = s.absorb;
       unit.position = { ...s.position };

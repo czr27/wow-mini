@@ -162,6 +162,17 @@ export const FocusUnitFrame: React.FC<FocusUnitFrameProps> = ({
 
   // Shield icon for uninterruptible casting
   const isShielded = castState ? !castState.interruptible : false;
+  const prevCastProgressRef = useRef<number>(0);
+  const targetCastRatio = castState
+    ? castState.endFlash
+      ? 1
+      : Math.min(1, Math.max(0, castState.progress || 0))
+    : 0;
+  const snapCastBar =
+    !castState ||
+    Boolean(castState.endFlash) ||
+    targetCastRatio < prevCastProgressRef.current - 0.05;
+  prevCastProgressRef.current = targetCastRatio;
 
   const handleClickFrame = (e: React.MouseEvent) => {
     if ((e.target as HTMLElement).closest('button')) return;
@@ -329,11 +340,27 @@ export const FocusUnitFrame: React.FC<FocusUnitFrameProps> = ({
         {castState && (
           <div className="mt-1.5 pt-1 border-t border-[#2d2d44]/70">
             <CastBarSpellHover castState={castState}>
-              <div className="relative h-[18px] rounded bg-[#0e0e18] border border-amber-500/60 overflow-hidden shadow-md flex items-center justify-between px-1.5 cursor-help">
+              <div
+                className={`relative h-[18px] rounded bg-[#0e0e18] overflow-hidden shadow-md flex items-center justify-between px-1.5 cursor-help border ${
+                  castState.endFlash === 'success'
+                    ? 'border-emerald-400/80'
+                    : castState.endFlash === 'interrupt'
+                      ? 'border-red-500/80'
+                      : 'border-amber-500/60'
+                }`}
+              >
                 <div
-                  className="absolute inset-y-0 left-0 transition-all duration-100 z-0 bg-gradient-to-r from-amber-600 via-amber-500 to-yellow-400"
+                  className={`absolute inset-y-0 left-0 w-full origin-left z-0 ${
+                    castState.endFlash === 'success'
+                      ? 'bg-gradient-to-r from-emerald-700 via-emerald-500 to-lime-300'
+                      : castState.endFlash === 'interrupt'
+                        ? 'bg-gradient-to-r from-red-800 via-red-600 to-rose-400'
+                        : 'bg-gradient-to-r from-amber-600 via-amber-500 to-yellow-400'
+                  }`}
                   style={{
-                    width: `${Math.min(100, Math.max(0, (castState.progress || 0) * 100))}%`,
+                    transform: `scaleX(${targetCastRatio})`,
+                    transition: snapCastBar ? 'none' : 'transform 55ms linear',
+                    willChange: 'transform',
                   }}
                 />
 
@@ -353,11 +380,15 @@ export const FocusUnitFrame: React.FC<FocusUnitFrameProps> = ({
                     className="text-[9.5px] font-bold text-white tracking-wide truncate"
                     style={{ textShadow: '0 0 2px #000, 0 1px 2px #000' }}
                   >
-                    {castState.spellName}
+                    {castState.endFlash === 'success'
+                      ? `${castState.spellName} ✓`
+                      : castState.endFlash === 'interrupt'
+                        ? `${castState.spellName} ✕`
+                        : castState.spellName}
                   </span>
                 </div>
 
-                {!isFriendly && (
+                {!isFriendly && !castState.endFlash && (
                   <div className="relative z-10 flex items-center pointer-events-none flex-shrink-0 ml-1">
                     {isShielded ? (
                       <span className="text-[10px] text-amber-300 filter drop-shadow">🛡️</span>

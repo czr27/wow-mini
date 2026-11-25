@@ -357,6 +357,38 @@ export const ROGUE: ClassSpec = {
     },
 
     {
+      id: 'rogue_hemorrhage',
+      name: '出血',
+      castTimeMs: 0,
+      gcdType: 'rogue',
+      gcdCategory: 'ROGUE',
+      cooldownMs: 0,
+      resourceCost: 'ENERGY',
+      resourceCostAmount: 35,
+      targetType: 'SINGLE_ENEMY',
+      school: 'PHYSICAL',
+      spec: 'SUBTLETY_DPS',
+      effects: [
+        {
+          type: 'PHYSICAL_DAMAGE',
+          baseValue: 7200,
+          description: '出血打击造成物理伤害并奖励1个连击点数，消耗35点能量',
+        },
+        {
+          type: 'BUFF',
+          auraId: 'combo_point_add_1',
+          description: '生成1连击点',
+        },
+        {
+          type: 'DEBUFF',
+          auraId: 'hemorrhage_debuff',
+          durationMs: 60_000,
+          description: '使目标受到的物理与流血伤害提高，持续1分钟',
+        },
+      ],
+    },
+
+    {
       id: 'rogue_backstab',
       name: '背刺',
       castTimeMs: 0,

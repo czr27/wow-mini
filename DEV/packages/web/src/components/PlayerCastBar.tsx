@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { SPELL_ICONS } from '../assets/pixelIcons.js';
 import type { PlayerCastState } from './ActionBar.js';
 import { clampHudPosToViewport } from '../utils/hudLayout.js';
+import { useSmoothCastProgress } from '../hooks/useSmoothCastProgress.js';
 
 export interface PlayerCastBarProps {
   playerCast: PlayerCastState | null;
@@ -115,6 +116,21 @@ export const PlayerCastBar: React.FC<PlayerCastBarProps> = ({
   const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number } | null>(null);
   const latestPosRef = useRef<{ x: number; y: number }>(pos);
   const lastCastRef = useRef<PlayerCastState | null>(null);
+  const fillRef = useRef<HTMLDivElement | null>(null);
+  const timerRef = useRef<HTMLSpanElement | null>(null);
+
+  const activeCastKey = playerCast
+    ? `${playerCast.spellId}:${playerCast.isChannel ? 'ch' : 'cast'}:${playerCast.totalMs}:${playerCast.startedAtMs ?? ''}`
+    : '';
+
+  useSmoothCastProgress({
+    active: Boolean(playerCast),
+    castKey: activeCastKey,
+    elapsedMs: playerCast?.elapsedMs ?? 0,
+    totalMs: playerCast?.totalMs ?? 1,
+    fillRef,
+    timerRef,
+  });
 
   useEffect(() => {
     latestPosRef.current = pos;
@@ -258,22 +274,30 @@ export const PlayerCastBar: React.FC<PlayerCastBarProps> = ({
     spellId: string;
     fillPct: number;
     fillMode: 'cast' | 'channel' | 'success' | 'interrupted';
-    timerText: string;
+    timerText?: string;
     labelOverride?: string;
     preview?: boolean;
+    smooth?: boolean;
   }) => {
     const {
       spellName,
       spellId,
       fillPct,
       fillMode,
-      timerText,
+      timerText = '',
       labelOverride,
       preview = false,
+      smooth = false,
     } = opts;
 
     const pct = Math.min(100, Math.max(0, fillPct));
     const displayName = labelOverride || spellName;
+    const fillBg =
+      fillMode === 'interrupted'
+        ? 'linear-gradient(180deg, #e05555 0%, #cc3333 40%, #991111 100%)'
+        : fillMode === 'success' || fillMode === 'channel'
+        ? 'linear-gradient(180deg, #66ee66 0%, #33cc33 40%, #1a991a 100%)'
+        : 'linear-gradient(180deg, #ffe066 0%, #e6b800 42%, #b8860b 100%)';
 
     return (
       <div
@@ -309,17 +333,15 @@ export const PlayerCastBar: React.FC<PlayerCastBarProps> = ({
                 border: '1px solid #1c1c1c',
               }}
             >
-              {/* Fill */}
+              {/* Fill (GPU-composited scaleX, no layout-thrashing width transition) */}
               <div
-                className="absolute inset-y-0 left-0 transition-[width] duration-75"
+                ref={smooth ? fillRef : undefined}
+                className="absolute inset-y-0 left-0 w-full origin-left"
                 style={{
-                  width: `${pct}%`,
-                  background:
-                    fillMode === 'interrupted'
-                      ? 'linear-gradient(180deg, #e05555 0%, #cc3333 40%, #991111 100%)'
-                      : fillMode === 'success' || fillMode === 'channel'
-                      ? 'linear-gradient(180deg, #66ee66 0%, #33cc33 40%, #1a991a 100%)'
-                      : 'linear-gradient(180deg, #ffe066 0%, #e6b800 42%, #b8860b 100%)',
+                  ...(smooth ? {} : { transform: `scaleX(${pct / 100})` }),
+                  transformOrigin: 'left center',
+                  willChange: 'transform',
+                  background: fillBg,
                   boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.35)',
                 }}
               />
@@ -342,6 +364,7 @@ export const PlayerCastBar: React.FC<PlayerCastBarProps> = ({
               {/* Remaining time (right) */}
               <div className="absolute inset-y-0 right-1.5 flex items-center pointer-events-none">
                 <span
+                  ref={smooth ? timerRef : undefined}
                   className="font-mono font-bold"
                   style={{
                     fontSize: 10,
@@ -349,7 +372,7 @@ export const PlayerCastBar: React.FC<PlayerCastBarProps> = ({
                     textShadow: '0 1px 2px #000',
                   }}
                 >
-                  {timerText}
+                  {smooth ? null : timerText}
                 </span>
               </div>
             </div>
@@ -415,9 +438,8 @@ export const PlayerCastBar: React.FC<PlayerCastBarProps> = ({
 
   if (!playerCast) return null;
 
-  // Active cast / channel — always grow left → right
+  // Active cast / channel — always grow left → right at display refresh rate
   const isChannel = !!playerCast.isChannel;
-  const fillPct = Math.min(100, Math.max(0, playerCast.progress * 100));
 
   return (
     <div
@@ -428,9 +450,9 @@ export const PlayerCastBar: React.FC<PlayerCastBarProps> = ({
       {renderClassicBar({
         spellName: playerCast.spellName,
         spellId: playerCast.spellId,
-        fillPct,
+        fillPct: 0,
         fillMode: isChannel ? 'channel' : 'cast',
-        timerText: formatRemain(playerCast.elapsedMs, playerCast.totalMs, isChannel),
+        smooth: true,
       })}
     </div>
   );

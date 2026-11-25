@@ -155,15 +155,16 @@ export function startPlayerCastBranches(ctx: StartPlayerCastBranchesCtx): boolea
         return true;
       } else if (slot.spellId === 'revive') {
         const deadTarget = effectiveFriendly;
-        deadTarget.alive = true;
-        deadTarget.isAlive = true;
-        deadTarget.hp = Math.round(deadTarget.maxHp * 0.35);
-        engine.effectsManager?.addFloatingText({
-          targetId: deadTarget.id,
-          text: '⚡ 自然迅捷·起死回生！',
-          category: 'STATUS',
-          isCrit: true,
-        });
+        // Always go through resurrectUnit so withNetworkVitals can publish RESURRECT
+        if (deadTarget && engine.resurrectUnit(deadTarget.id, 0.35, 0.35)) {
+          engine.effectsManager?.addFloatingText({
+            targetId: deadTarget.id,
+            text: '⚡ 自然迅捷·起死回生！',
+            category: 'STATUS',
+            isCrit: true,
+          });
+          onFriendlyUnitsChanged();
+        }
         triggerSlotCooldown();
         return true;
       }

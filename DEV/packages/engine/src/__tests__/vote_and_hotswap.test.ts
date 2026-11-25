@@ -135,14 +135,36 @@ test('inheritCombatUnitFromAi remaps identity and stops AI control even on id dr
     },
   };
   engine.addUnit(orphanAi);
+  // Post hot-swap room: replaced AI id gone from members; engine still holds drifted seat
+  const roomAfter = {
+    members: [
+      {
+        id: 'joiner_1',
+        name: '火法玩家',
+        classId: 'MAGE',
+        spec: 'FIRE',
+        role: 'DPS',
+        isPlayer: true,
+        isAi: false,
+        isHost: false,
+        isReady: true,
+        slotIndex: 0,
+      },
+    ],
+  } as any;
 
-  const inherited = mgr.inheritCombatUnitFromAi(engine, 'missing_room_ai_id', {
-    id: 'joiner_1',
-    name: '火法玩家',
-    classId: 'MAGE',
-    spec: 'FIRE',
-    role: 'DPS',
-  });
+  const inherited = mgr.inheritCombatUnitFromAi(
+    engine,
+    'missing_room_ai_id',
+    {
+      id: 'joiner_1',
+      name: '火法玩家',
+      classId: 'MAGE',
+      spec: 'FIRE',
+      role: 'DPS',
+    },
+    roomAfter
+  );
   assert.ok(inherited);
   assert.equal(inherited!.id, 'joiner_1');
   assert.equal(inherited!.name, '火法玩家');

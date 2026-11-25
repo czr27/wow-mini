@@ -35,7 +35,7 @@ import { executePlayerInstantEffects } from './executePlayerInstantEffects.js';
 import { startPlayerCastBranches } from './startPlayerCastBranches.js';
 import { computePlayerGcdMs } from './playerGcd.js';
 import { withNetworkVitals } from './withNetworkVitals.js';
-import { publishCastStart } from './castLifecycleNet.js';
+import { publishCastLand, publishCastStart } from './castLifecycleNet.js';
 
 /** Local CD map + shared-CD aliases — action-bar / cast gates. */
 function asPlayerClassId(
@@ -183,7 +183,7 @@ export type HandlePlayerCastSlotCtx = {
   setIncomingHeals: (updater: (prev: Record<string, number>) => Record<string, number>) => void;
   onFriendlyUnitsChanged: () => void;
   bossAi: BossAI | null;
-  handleDispelUnit: (targetUnitId?: string | null) => void;
+  handleDispelUnit: (targetUnitId?: string | null, skipResourceCost?: boolean) => void;
   onScreenShake: (ms: number) => void;
 };
 
@@ -745,7 +745,23 @@ export function handlePlayerCastSlot(slotIdx: number, ctx: HandlePlayerCastSlotC
     })
   );
   if (handledInstant) {
-    // Instants: no cast bar; CAST_LAND optional for FX sync — skip HUD bar noise
+    // Instants: no cast bar; ST still publish CAST_LAND so remotes play hit FX / snowflakes.
+    // AoE already publishes AOE_PULSE via emitLocalAoePulse — skip to avoid false ST projectiles.
+    const isAoeInstant =
+      !!normSlotSpell?.isAOE ||
+      slot.spellId === 'wild_growth' ||
+      slot.spellId === 'tranquility';
+    if (!isAoeInstant) {
+      publishCastLand({
+        unitId: player.id,
+        spellId: slot.spellId,
+        spellName: slot.name,
+        targetId: isFriendlySpell
+          ? effectiveFriendly?.id || player.id
+          : effectiveTarget?.id || boss?.id || player.id,
+        isHarmful: !isFriendlySpell,
+      });
+    }
     return;
   }
 

@@ -236,4 +236,175 @@ describe('combatHitFx', () => {
     assert.equal(state.snowBursts[0].cy, 30);
     assert.equal(state.snowBursts[0].fading, true);
   });
+
+  it('近战单体为突刺(thrust)，近战 AOE 为横扫(sweep)，远程 AOE 不产生横扫', () => {
+    const warrior = unit({
+      id: 'w1',
+      name: '战',
+      classId: 'WARRIOR',
+      role: 'DPS',
+      position: { x: 100, y: 100 },
+    });
+    const mage = unit({
+      id: 'm1',
+      name: '法',
+      classId: 'MAGE',
+      role: 'DPS',
+      position: { x: 40, y: 100 },
+    });
+    const boss = unit({
+      id: 'boss',
+      name: 'B',
+      classId: 'BOSS',
+      role: 'ENEMY',
+      unitKind: 'BOSS',
+      position: { x: 130, y: 100 },
+    });
+    const map = new Map<string, Unit>([
+      [warrior.id, warrior],
+      [mage.id, mage],
+      [boss.id, boss],
+    ]);
+    const state = createHitFxState();
+    const seen = new Set<string>();
+    const now = 2000;
+
+    // 1. Single-target melee -> thrust
+    ingestCombatActionsAsHitFx(state, {
+      actions: [
+        {
+          id: 'st_mortal',
+          atMs: now,
+          actorId: warrior.id,
+          spellId: 'mortal_strike',
+          spellName: '致死打击',
+          kind: 'INSTANT',
+          targetId: boss.id,
+        },
+      ],
+      unitsById: map,
+      seenIds: seen,
+      now,
+    });
+    assert.equal(state.slashes.length, HIT_FX_IMPACT_COUNT);
+    assert.equal(state.slashes[0].mode, 'thrust');
+
+    // 2. AoE melee spin (Whirlwind) -> sweep with wide spin arc
+    ingestCombatActionsAsHitFx(state, {
+      actions: [
+        {
+          id: 'aoe_ww',
+          atMs: now + 10,
+          actorId: warrior.id,
+          spellId: 'whirlwind',
+          spellName: '旋风斩',
+          kind: 'INSTANT',
+          targetId: boss.id,
+          x: 100,
+          y: 100,
+          radius: 120,
+          aoePulse: true,
+        },
+      ],
+      unitsById: map,
+      seenIds: seen,
+      now: now + 10,
+    });
+    const wwSlashes = state.slashes.filter((s) => s.id.startsWith('aoe_ww'));
+    assert.equal(wwSlashes.length, 2);
+    assert.equal(wwSlashes[0].mode, 'sweep');
+    assert.ok((wwSlashes[0].sweepArcRad ?? 0) > Math.PI * 1.4);
+
+    // 3. AoE melee frontal cleave -> sweep (narrower than spin)
+    ingestCombatActionsAsHitFx(state, {
+      actions: [
+        {
+          id: 'aoe_cleave',
+          atMs: now + 20,
+          actorId: warrior.id,
+          spellId: 'cleave',
+          spellName: '顺劈斩',
+          kind: 'INSTANT',
+          targetId: boss.id,
+          x: 100,
+          y: 100,
+          radius: 100,
+          aoePulse: true,
+        },
+      ],
+      unitsById: map,
+      seenIds: seen,
+      now: now + 20,
+    });
+    const cleaveSlashes = state.slashes.filter((s) => s.id.startsWith('aoe_cleave'));
+    assert.equal(cleaveSlashes.length, 2);
+    assert.equal(cleaveSlashes[0].mode, 'sweep');
+    assert.ok((cleaveSlashes[0].sweepArcRad ?? 0) < (wwSlashes[0].sweepArcRad ?? 0));
+
+    // 4. Ranged caster AoE (Blizzard) -> no melee sweep
+    const beforeMage = state.slashes.length;
+    ingestCombatActionsAsHitFx(state, {
+      actions: [
+        {
+          id: 'aoe_blizzard',
+          atMs: now + 30,
+          actorId: mage.id,
+          spellId: 'blizzard',
+          spellName: '暴风雪',
+          kind: 'INSTANT',
+          x: 130,
+          y: 100,
+          radius: 200,
+          aoePulse: true,
+        },
+      ],
+      unitsById: map,
+      seenIds: seen,
+      now: now + 30,
+    });
+    assert.equal(state.slashes.length, beforeMage);
+
+    // 5. Boss melee AoE -> sweep at boss scale; Boss magic AoE -> no melee sweep
+    ingestCombatActionsAsHitFx(state, {
+      actions: [
+        {
+          id: 'boss_aoe_cleave',
+          atMs: now + 40,
+          actorId: boss.id,
+          spellId: 'boss_cleave',
+          spellName: '顺劈',
+          kind: 'INSTANT',
+          targetId: warrior.id,
+          x: 130,
+          y: 100,
+          radius: 120,
+          aoePulse: true,
+          visualTone: 'ENEMY',
+        },
+        {
+          id: 'boss_aoe_nova',
+          atMs: now + 50,
+          actorId: boss.id,
+          spellId: 'shadow_nova',
+          spellName: '全场暗影新星',
+          kind: 'INSTANT',
+          targetId: warrior.id,
+          x: 130,
+          y: 100,
+          radius: 400,
+          aoePulse: true,
+          visualTone: 'ENEMY',
+        },
+      ],
+      unitsById: map,
+      seenIds: seen,
+      now: now + 40,
+    });
+    const bossCleave = state.slashes.filter((s) => s.id.startsWith('boss_aoe_cleave'));
+    const bossNova = state.slashes.filter((s) => s.id.startsWith('boss_aoe_nova'));
+    assert.equal(bossCleave.length, 2);
+    assert.equal(bossCleave[0].mode, 'sweep');
+    assert.equal(bossCleave[0].scale, HIT_FX_BOSS_SIZE_MULT);
+    assert.equal(bossNova.length, 0);
+  });
 });

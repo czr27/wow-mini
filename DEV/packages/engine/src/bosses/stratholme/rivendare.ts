@@ -108,6 +108,38 @@ export const RivendareEncounter: BossEncounterModule = {
           });
         },
       },
+      {
+        id: 'death_pact',
+        name: '死亡契约',
+        castTimeMs: 1500,
+        cooldownMs: 22_000,
+        lastCastMs: -5_000,
+        interruptible: false,
+        school: 'SHADOW',
+        range: 400,
+        targetKind: 'SELF',
+        description: '献祭存活的骷髅为男爵恢复 5% 生命值',
+        execute: (boss, engine) => {
+          const livingSkel = engine.enemyUnits.find(
+            (e) =>
+              e.summonSpellId === SKELETON_SUMMON &&
+              (e.alive ?? e.isAlive) &&
+              (e.hp ?? 0) > 0
+          );
+          if (!livingSkel) return;
+          livingSkel.hp = 0;
+          livingSkel.alive = false;
+          livingSkel.isAlive = false;
+          const healAmt = Math.max(1, Math.round((boss.maxHp || 100_000) * 0.05));
+          engine.healUnit(boss, boss, healAmt, false, '死亡契约');
+          engine.effectsManager?.addFloatingText({
+            targetId: boss.id,
+            text: '💀 死亡契约！吞噬骷髅回血！',
+            category: 'HEAL',
+            isCrit: true,
+          });
+        },
+      },
     ];
   },
 

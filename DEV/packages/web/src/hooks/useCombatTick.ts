@@ -13,6 +13,7 @@ import type {
   NetworkVoteState,
   PlayerInputPayload,
   AIPersonality,
+  DbmAlert,
 } from '@cata-raid-sim/engine';
 import type { PlayerCastState } from '../components/ActionBar.js';
 import type { IncomingHealCast } from '../components/RaidFrames.js';
@@ -23,6 +24,7 @@ import {
   type CombatTickMutableState,
 } from '../combat/runCombatTick.js';
 import type { AiActiveCast } from '../combat/aiCombatExecutor.js';
+import type { CompanionCastHud } from '../combat/castLifecycleNet.js';
 
 /** Grouped refs for the 20Hz tick (keeps App call-site readable). */
 export type CombatTickRefs = {
@@ -33,6 +35,8 @@ export type CombatTickRefs = {
   guestCastTimelinesRef: MutableRefObject<NetworkCastTimeline[]>;
   guestGcdTimelinesRef: MutableRefObject<NetworkGcdTimeline[]>;
   guestCdTimelinesRef: MutableRefObject<NetworkCooldownTimeline[]>;
+  companionCastsRef?: MutableRefObject<Record<string, CompanionCastHud>>;
+  guestBossOverheadSkillRef?: MutableRefObject<string | null>;
   playerCastRef: MutableRefObject<PlayerCastState | null>;
   pendingGuestInputsRef: MutableRefObject<PlayerInputPayload[]>;
   activeRoomIdRef: MutableRefObject<string | null>;
@@ -58,7 +62,29 @@ export type CombatTickSetters = {
   setPlayerGcdTotalMs: Dispatch<SetStateAction<number>>;
   setPlayerCooldowns: Dispatch<SetStateAction<Record<string, { cdRemainingMs: number; totalCdMs: number }>>>;
   setCompanionCasts: Dispatch<
-    SetStateAction<Record<string, { spellName: string; progress: number; spellId?: string }>>
+    SetStateAction<
+      Record<
+        string,
+        {
+          spellName: string;
+          progress: number;
+          spellId?: string;
+          totalMs?: number;
+          interruptible?: boolean;
+          endFlash?: 'success' | 'interrupt';
+          flashUntilMs?: number;
+        }
+      >
+    >
+  >;
+  setGuestBossCasting?: Dispatch<
+    SetStateAction<{
+      spellName: string;
+      spellId?: string;
+      elapsedMs: number;
+      castTimeMs: number;
+      interruptible: boolean;
+    } | null>
   >;
   setWipeVoteTimerMs: Dispatch<SetStateAction<number>>;
   setIsApproaching: Dispatch<SetStateAction<boolean>>;
@@ -94,6 +120,7 @@ export type CombatTickCallbacks = {
   isAiCdReady: (unitId: string, spellId: string, cdMs: number) => boolean;
   markAiCdUsed: (unitId: string, spellId: string) => void;
   notifyOom: (u: Unit, engine: CombatEngine) => void;
+  onDbmAlerts?: (alerts: DbmAlert[]) => void;
 };
 
 /** Grouped deps for useCombatTick (flattened into CombatTickCtx inside the hook). */

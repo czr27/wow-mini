@@ -13,6 +13,7 @@ import {
   Unit,
   GroundEffect,
   FloatingCombatText,
+  DbmAlert,
   DungeonClearCertificate,
   DungeonDifficulty,
   CustomDifficultySettings,
@@ -95,6 +96,7 @@ import { type AiActiveCast } from './combat/aiCombatExecutor.js';
 import { confirmGroundTarget } from './combat/confirmGroundTarget.js';
 import { clearMazeSync, setMazeSyncRoomId } from './combat/mazeSyncBridge.js';
 import { dispelUnit } from './combat/dispelUnit.js';
+import { withNetworkVitals } from './combat/withNetworkVitals.js';
 import { pickNearestHostileExcluding } from './combat/tabTargetHostile.js';
 import {
   getPredictedHealAmount as getPredictedHealAmountCore,
@@ -105,6 +107,7 @@ import {
   notifyOom as notifyOomCore,
 } from './combat/aiUnitHelpers.js';
 import { publishCastInterrupt } from './combat/castLifecycleNet.js';
+import { dispatchCombatFxActions } from './combat/dispatchCombatFx.js';
 import { LobbyScreen, CombatHudScreen } from './screens/index.js';
 
 export function App() {
@@ -221,13 +224,42 @@ export function App() {
   // Dynamic Cast and Resurrection States
   const [playerCast, setPlayerCast] = useState<PlayerCastState | null>(null);
   const [companionCasts, setCompanionCasts] = useState<
-    Record<string, { spellName: string; progress: number; spellId?: string }>
+    Record<
+      string,
+      {
+        spellName: string;
+        progress: number;
+        spellId?: string;
+        totalMs?: number;
+        interruptible?: boolean;
+        endFlash?: 'success' | 'interrupt';
+        flashUntilMs?: number;
+      }
+    >
   >({});
+  const companionCastsRef = useRef<Record<string, import('./combat/castLifecycleNet.js').CompanionCastHud>>({});
+  const guestBossOverheadSkillRef = useRef<string | null>(null);
   const [revivingUnitId, setRevivingUnitId] = useState<string | null>(null);
   const [reviveProgress, setReviveProgress] = useState(0);
   const [isCorpseRunning, setIsCorpseRunning] = useState(false);
   const [corpseRunTimerMs, setCorpseRunTimerMs] = useState(0);
   const [groundTargetState, setGroundTargetState] = useState<GroundTargetState | null>(null);
+  const [dbmAlerts, setDbmAlerts] = useState<DbmAlert[]>([]);
+  const pushDbmAlerts = useCallback((incoming: DbmAlert[]) => {
+    if (!incoming || incoming.length === 0) return;
+    const now = Date.now();
+    setDbmAlerts((prev) => {
+      const alive = prev.filter((a) => now - a.atMs < (a.ttlMs || 3500));
+      const seen = new Set(alive.map((a) => a.id));
+      const next = [...alive];
+      for (const item of incoming) {
+        if (seen.has(item.id)) continue;
+        seen.add(item.id);
+        next.push({ ...item, atMs: now });
+      }
+      return next.slice(-12);
+    });
+  }, []);
   const [customSlotLayout, setCustomSlotLayout] = useState<ActionSlot[] | null>(null);
   /** Which char+spec `customSlotLayout` belongs to — prevents stale skills after character switch. */
   const customSlotOwnerRef = useRef<string | null>(null);
@@ -281,14 +313,12 @@ export function App() {
   const [autoApproachTarget, setAutoApproachTarget] = useState<{ targetX: number; targetY: number; desiredDist: number; pendingSlotIdx: number } | null>(null);
   const prevRunPhaseRef = useRef<RunPhase>('LOBBY');
 
-  // Host: paint AoE rings as soon as actionLog records a pulse (boss/AI/player)
+  // Paint hit FX / AoE pulses as soon as actionLog records them
+  // (local casts + remote APPLY via applyCombatEffect → logCombatAction).
   useEffect(() => {
     const engine = engineRef.current;
     engine.onCombatAction = (ev) => {
-      if (!ev.aoePulse) return;
-      window.dispatchEvent(
-        new CustomEvent('cata_combat_actions', { detail: { actions: [ev], local: true } })
-      );
+      dispatchCombatFxActions([ev], { local: true });
     };
     return () => {
       engine.onCombatAction = null;
@@ -416,6 +446,8 @@ export function App() {
     guestCastTimelinesRef,
     guestCdTimelinesRef,
     guestGcdTimelinesRef,
+    companionCastsRef,
+    guestBossOverheadSkillRef,
     playerCastRef,
     pendingGuestInputsRef,
     applyWipeVoteResultRef,
@@ -449,6 +481,7 @@ export function App() {
     setGroundEffects,
     setFloatingTexts,
     setGuestBossCasting,
+    onDbmAlerts: pushDbmAlerts,
   });
 
   // ── [Game Load] 启动：下载 ART 图标 + 拉取账号，显示加载进度界面 ──
@@ -727,31 +760,30 @@ export function App() {
     });
   };
 
-  const handleDispelUnit = (targetUnitId?: string | null) => {
-    // Guest: report only — host resolves & broadcasts; avoid local double-apply
-    if (isNetworkGuestRef.current && netClient.connected && activeRoomIdRef.current && currentChar) {
-      netClient.sendPlayerInput(activeRoomIdRef.current, {
-        kind: 'DISPEL',
-        playerId: currentChar.id,
-        targetId: targetUnitId || selectedTargetId || currentChar.id,
-      });
-      return;
-    }
+  const handleDispelUnit = (targetUnitId?: string | null, skipResourceCost?: boolean) => {
     const engine = engineRef.current;
     const player = engine.friendlyUnits.find(u => u.isPlayer);
     if (!player) return;
-    dispelUnit({
-      engine,
-      player,
-      classId: currentChar?.classId,
-      lastSpec: currentChar?.lastSpec,
-      playerGcdRemainingMs,
-      playerCooldowns,
-      selectedTargetId,
-      targetUnitId,
-      triggerCooldown,
-      triggerGcd,
-    });
+    // Guest: local resolve + EFFECT (target authority); host no longer strips foreign buffs
+    const run = () =>
+      dispelUnit({
+        engine,
+        player,
+        classId: currentChar?.classId,
+        lastSpec: currentChar?.lastSpec,
+        playerGcdRemainingMs,
+        playerCooldowns,
+        selectedTargetId,
+        targetUnitId,
+        skipResourceCost,
+        triggerCooldown,
+        triggerGcd,
+      });
+    if (isNetworkGuestRef.current && netClient.connected && activeRoomIdRef.current) {
+      withNetworkVitals(engine, run);
+      return;
+    }
+    run();
   };
 
   /** Guest WASD/click-move → host (throttled). Host broadcasts positions in COMBAT_STATE. */
@@ -1172,6 +1204,8 @@ export function App() {
       guestCastTimelinesRef,
       guestGcdTimelinesRef,
       guestCdTimelinesRef,
+      companionCastsRef,
+      guestBossOverheadSkillRef,
       playerCastRef,
       pendingGuestInputsRef,
       activeRoomIdRef,
@@ -1196,6 +1230,7 @@ export function App() {
       setPlayerGcdTotalMs,
       setPlayerCooldowns,
       setCompanionCasts,
+      setGuestBossCasting,
       setWipeVoteTimerMs,
       setIsApproaching,
       setGroundEffects,
@@ -1229,6 +1264,7 @@ export function App() {
       isAiCdReady,
       markAiCdUsed,
       notifyOom,
+      onDbmAlerts: pushDbmAlerts,
     },
   });
 
@@ -1383,7 +1419,7 @@ export function App() {
     setMySkipVote(null);
     setWipeNetworkVote(null);
     setMyWipeVote(null);
-    // Host return / leave destroys room; guests just leave
+    // 房主先广播 ROOM_CLOSED（客人离房）；客人只 ROOM_LEAVE
     if (activeRoomId && currentChar) {
       if (isNetworkHostRef.current || (!netClient.connected && roomManager.getRoom(activeRoomId)?.hostId === currentChar.id)) {
         roomFacadeRef.current.closeRoom(activeRoomId, 'host_left');
@@ -2094,6 +2130,7 @@ export function App() {
             bossTargetId={bossTargetId}
             groundEffects={groundEffects}
             floatingTexts={floatingTexts}
+            dbmAlerts={dbmAlerts}
             runPhase={runPhase}
             isApproaching={isApproaching}
             screenShake={screenShake}

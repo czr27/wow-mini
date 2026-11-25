@@ -269,3 +269,16 @@ export function worldAabbCoveringCanvas(
     maxY: maxY + pad,
   };
 }
+
+/**
+ * 2.5D boss room mouse chord movement rule:
+ * Holding RMB (orbit view) and pressing LMB moves forward like 'W';
+ * Releasing LMB (or RMB) stops moving forward.
+ */
+export function isMouseChordMoveActive(
+  isIsoAllowed: boolean,
+  rmbHeld: boolean,
+  lmbHeld: boolean
+): boolean {
+  return Boolean(isIsoAllowed && rmbHeld && lmbHeld);
+}

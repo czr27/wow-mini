@@ -18,15 +18,18 @@
 │  DEV/packages/web/src/         前端表现层（React + Tailwind + Canvas）   │
 │  · components/                 登录角色、房间大厅/详情、动作条、团队框架  │
 │  · screens/                    大厅/战斗画面壳（LobbyScreen、CombatHud） │
-│  · combat/                     消耗/阵容/施法闸门/效果表/AI 执行/20Hz 帧  │
+│  · combat/                     消耗/阵容/网络权威/效果总线/AI执行/20Hz帧  │
 │  · hooks/ & utils/             大厅/WS 同步/tick/施法 barrel、HUD 布局     │
 │  · App.tsx                     顶层装配壳（状态 + deps 装配；见 L1 §4）    │
+├─────────────────────────────────────────────────────────────────────────┤
+│  DEV/packages/server/src/      Node.js 服务端（Phase 3 多人联机服务）    │
+│  · roomWs.ts & roomVotes.ts    WebSocket 大厅广播、战斗快照中继与投票协调 │
 ├─────────────────────────────────────────────────────────────────────────┤
 │  DEV/packages/engine/src/      纯引擎核心层（纯 TS，零 DOM 依赖，可单测） │
 │  · engine/                     20Hz 战斗引擎、施法状态机、光环/CD/仇恨   │
 │  · classes/                    10 职业技能定义 + ClassRegistry 单一注册表 │
-│  · ai/ & bosses/               通用规则 AI + 副本首领时间轴与机制        │
-│  · room/ & auth/               房间队列生命周期、账号角色与 UI 布局持久化 │
+│  · bosses/ & ai/               模块化 6 副本 Boss 机制 + 通用规则 AI     │
+│  · room/ & auth/               房间生命周期、排队替补、账号角色与持久化   │
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 

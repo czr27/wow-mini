@@ -31,7 +31,7 @@ export function unitHasExhaustion(u: Unit | null | undefined): boolean {
       (b.remainingMs ?? 0) > 0 &&
       (b.spellId === EXHAUSTION_SPELL_ID ||
         b.spellId === 'temporal_displacement' ||
-        (b.tags || []).includes('EXHAUSTION'))
+        ((b.tags as string[]) || []).includes('EXHAUSTION'))
   );
 }
 
@@ -41,7 +41,7 @@ function makeExhaustionBuff(casterId: string, targetId: string): Buff {
     spellId: EXHAUSTION_SPELL_ID,
     name: '疲惫',
     kind: 'DEBUFF',
-    tags: ['EXHAUSTION'],
+    tags: ['EXHAUSTION' as any],
     sourceUnitId: casterId,
     targetUnitId: targetId,
     stacks: 1,

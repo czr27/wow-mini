@@ -151,9 +151,11 @@ export const SkillBookModal: React.FC<Props> = ({
       if (e.code.startsWith('Digit')) {
         baseKey = e.code.replace('Digit', '');
       } else if (e.code.startsWith('Key')) {
-        baseKey = e.code.replace('Key', '');
-      } else if (e.key >= 'F1' && e.key <= 'F12') {
+        baseKey = e.code.replace('Key', '').toUpperCase();
+      } else if (/^F([1-9]|1[0-2])$/i.test(e.key)) {
         baseKey = e.key.toUpperCase();
+      } else if (e.code === 'Backquote') {
+        baseKey = '`';
       } else if (e.code === 'Minus') {
         baseKey = '-';
       } else if (e.code === 'Equal') {
@@ -164,8 +166,8 @@ export const SkillBookModal: React.FC<Props> = ({
 
       const parts: string[] = [];
       if (e.ctrlKey) parts.push('CTRL');
-      if (e.shiftKey) parts.push('SHIFT');
       if (e.altKey) parts.push('ALT');
+      if (e.shiftKey) parts.push('SHIFT');
       parts.push(baseKey);
 
       const resultKey = parts.join('+');

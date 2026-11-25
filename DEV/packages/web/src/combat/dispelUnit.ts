@@ -1,5 +1,6 @@
 import type { ClassId, CombatEngine, Unit } from '@cata-raid-sim/engine';
 import { getPlayerDispelCapabilities, DEBUFF_REGISTRY } from '../components/RaidFrames.js';
+import { SPELL_MANA_COSTS } from './spellCosts.js';
 
 export type DispelUnitCtx = {
   engine: CombatEngine;
@@ -10,13 +11,16 @@ export type DispelUnitCtx = {
   playerCooldowns: Record<string, { cdRemainingMs: number; totalCdMs: number }>;
   selectedTargetId: string | null;
   targetUnitId?: string | null;
+  skipResourceCost?: boolean;
   triggerCooldown: (spellId: string, totalCdMs: number) => void;
   triggerGcd: (spellId?: string) => void;
 };
 
 function resolveDispelSpellId(classId: ClassId | undefined, lastSpec: string | undefined): string {
   if (classId === 'DRUID') {
-    return lastSpec === 'RESTORATION' ? 'natures_cure' : 'remove_corruption';
+    const sp = (lastSpec || '').toUpperCase();
+    const isResto = sp === 'RESTORATION' || sp === 'RESTO' || sp === 'RESTO_HEAL';
+    return isResto ? 'natures_cure' : 'remove_corruption';
   }
   if (classId === 'SHAMAN') return 'cleanse_spirit';
   if (classId === 'PALADIN') return 'cleanse';
@@ -65,10 +69,28 @@ export function dispelUnit(ctx: DispelUnitCtx): void {
 
   const dispelSpellId = resolveDispelSpellId(classId, lastSpec);
 
-  if ((playerCooldowns[dispelSpellId]?.cdRemainingMs || 0) > 0) {
+  const isDruidDispelOnCd =
+    classId === 'DRUID' &&
+    ((playerCooldowns['remove_corruption']?.cdRemainingMs || 0) > 0 ||
+      (playerCooldowns['natures_cure']?.cdRemainingMs || 0) > 0);
+
+  if ((playerCooldowns[dispelSpellId]?.cdRemainingMs || 0) > 0 || isDruidDispelOnCd) {
     engine.effectsManager?.addFloatingText({
       targetId: player.id,
       text: '驱散法术还在冷却中！',
+      category: 'STATUS',
+      isCrit: false,
+    });
+    return;
+  }
+
+  const manaCost = SPELL_MANA_COSTS[dispelSpellId] || 2200;
+  const manaRes = player.resources?.find((r) => r.kind === 'MANA');
+  const currentMana = manaRes ? manaRes.current : (player.mp ?? 0);
+  if (!ctx.skipResourceCost && currentMana < manaCost) {
+    engine.effectsManager?.addFloatingText({
+      targetId: player.id,
+      text: '法力不足！',
       category: 'STATUS',
       isCrit: false,
     });
@@ -101,7 +123,14 @@ export function dispelUnit(ctx: DispelUnitCtx): void {
   const debuffIdx = target.buffs.findIndex((b) => {
     if (b.kind !== 'DEBUFF') return false;
     const meta = DEBUFF_REGISTRY[b.spellId];
-    return meta?.dispelType && allowedDispels.includes(meta.dispelType);
+    const dispelType = b.dispelType || meta?.dispelType || (
+      (b.school === 'SHADOW' || b.school === 'ARCANE') && (b.name.includes('诅咒') || b.spellId.includes('curse')) ? 'CURSE' :
+      (b.school === 'NATURE' && (b.name.includes('毒') || b.spellId.includes('poison') || b.spellId.includes('toxic'))) ? 'POISON' :
+      (b.school === 'SHADOW' && (b.name.includes('疾病') || b.name.includes('疫') || b.spellId.includes('disease') || b.spellId.includes('plague'))) ? 'DISEASE' :
+      (b.school === 'FIRE' || b.school === 'FROST' || b.school === 'ARCANE' || b.school === 'HOLY' || b.name.includes('魔')) ? 'MAGIC' :
+      undefined
+    );
+    return dispelType && allowedDispels.includes(dispelType as any);
   });
 
   if (debuffIdx === -1) {
@@ -114,10 +143,23 @@ export function dispelUnit(ctx: DispelUnitCtx): void {
     return;
   }
 
+  if (!ctx.skipResourceCost) {
+    if (manaRes) {
+      manaRes.current = Math.max(0, manaRes.current - manaCost);
+    }
+    if (player.mp != null) {
+      player.mp = Math.max(0, player.mp - manaCost);
+    }
+  }
+
   const removed = target.buffs[debuffIdx];
   target.buffs.splice(debuffIdx, 1);
 
   triggerCooldown(dispelSpellId, 8000);
+  if (classId === 'DRUID') {
+    triggerCooldown('remove_corruption', 8000);
+    triggerCooldown('natures_cure', 8000);
+  }
   triggerGcd();
 
   engine.effectsManager?.addFloatingText({

@@ -5,6 +5,7 @@ import {
   FloatingCombatText,
   RunPhase,
   evaluateGroundFormationPosition,
+  findLooseAddForTank,
   orderTanksByThreatPriority,
   clampPosWithinTankRange,
   GroundTargetState,
@@ -12,6 +13,7 @@ import {
   resolveFidgetIdleThresholdMs,
   clampToMazePath,
   getMazeDrawOrigin,
+  MAZE_HUD_SAFE_INSETS,
   MAZE_TRAVERSE_SPEED_SCALE,
   resolveAoeAlphaByRadiusPx,
   isTotemUnit,
@@ -34,6 +36,11 @@ import {
 } from '../combat/mazeSyncBridge.js';
 import { resolveLocalFloatingTextMode } from './floatingTextFilter.js';
 import {
+  computePathGeometry,
+  selectExitClosestHumanLeader,
+  stepManualMazeCompanion,
+} from './mazeFollowAi.js';
+import {
   applyCanvasViewTransform,
   enterScreenSpaceFromIso,
   ISO_ORBIT_PX_PER_TURN,
@@ -42,6 +49,7 @@ import {
   pitchDegFromOrbitDrag,
   pitchDegToSin,
   screenDirToWorld,
+  isMouseChordMoveActive,
   viewRelativeFacingRad,
   viewDepthKey,
   viewToWorld,
@@ -78,12 +86,22 @@ import {
   drawClassAoePulses,
   type ClassAoePulseState,
 } from '../combat/combatClassAoePulse.js';
+import { drawUnitSelectionRing } from '../combat/unitSelectionRing.js';
 import { drawFiveManBossModel, drawFiveManBossFallback } from './fiveManBossModels.js';
 import {
+  NEON_INK,
   drawClassEightDirBody,
+  drawCyberBox,
+  drawEightDirLayers,
   drawFacingEyePair,
+  drawNeonGlowCircle,
+  drawNeonGlowLine,
+  drawNeonGlowRect,
+  facingHandBiasX,
   getActiveFacingPose,
+  isFacingBack,
   withBossEightDirFacing,
+  type BossEightDirOpts,
 } from './eightDirModels.js';
 
 interface Props {
@@ -129,6 +147,8 @@ interface Props {
   onAutoNavChange?: (active: boolean) => void;
   /** Per-character canvas display prefs (bars / names / FX / terrain) */
   combatDisplayPrefs?: CombatDisplayPrefs | null;
+  /** Living enemy units (boss + summoned adds) for Tank AI add-pickup positioning */
+  enemyUnits?: Unit[];
 }
 
 export type MobModelType =
@@ -185,305 +205,424 @@ interface EncounterSCTItem {
 
 function drawBaronAshbury(ctx: CanvasRenderingContext2D, boss: Unit, tickCount: number) {
   const isArchangel = boss.hp < boss.maxHp * 0.3;
+  const pose = getActiveFacingPose();
+  const isBack = isFacingBack(pose);
+  const e = pose.eyeBiasX;
+  const neonEdge = isArchangel ? '#FF1744' : '#E879F9';
+  const eyeColor = isArchangel ? '#FF1744' : '#00FF87';
 
-  // Dark Archangel Void Wings under 30% HP
-  if (isArchangel) {
-    ctx.save();
-    const wingFlap = Math.sin(tickCount * 0.15) * 8;
-    // Left Wing
-    ctx.fillStyle = 'rgba(124, 58, 237, 0.85)';
-    ctx.beginPath();
-    ctx.moveTo(-15, -25);
-    ctx.quadraticCurveTo(-65 + wingFlap, -60, -75 + wingFlap, -20);
-    ctx.quadraticCurveTo(-50 + wingFlap, 10, -15, 0);
-    ctx.fill();
-    // Right Wing
-    ctx.beginPath();
-    ctx.moveTo(15, -25);
-    ctx.quadraticCurveTo(65 - wingFlap, -60, 75 - wingFlap, -20);
-    ctx.quadraticCurveTo(50 - wingFlap, 10, 15, 0);
-    ctx.fill();
+  const drawBack = () => {
+    // 黑暗大天使形态：霓虹赛博虚空蝠翼
+    if (isArchangel) {
+      const wingFlap = Math.sin(tickCount * 0.16) * 8;
+      ctx.fillStyle = NEON_INK;
+      ctx.beginPath();
+      ctx.moveTo(-14, -26);
+      ctx.quadraticCurveTo(-68 + wingFlap, -64, -78 + wingFlap, -20);
+      ctx.quadraticCurveTo(-52 + wingFlap, 12, -14, 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(14, -26);
+      ctx.quadraticCurveTo(68 - wingFlap, -64, 78 - wingFlap, -20);
+      ctx.quadraticCurveTo(52 - wingFlap, 12, 14, 2);
+      ctx.fill();
 
-    // Void particles
-    ctx.fillStyle = '#C084FC';
-    for (let i = 0; i < 4; i++) {
-      const px = -60 + ((i * 35 + tickCount * 3) % 120);
-      const py = -40 + Math.sin(tickCount * 0.2 + i) * 15;
-      ctx.fillRect(px, py, 3, 3);
+      ctx.fillStyle = 'rgba(139, 92, 246, 0.85)';
+      ctx.beginPath();
+      ctx.moveTo(-14, -24);
+      ctx.quadraticCurveTo(-62 + wingFlap, -58, -72 + wingFlap, -20);
+      ctx.quadraticCurveTo(-48 + wingFlap, 8, -14, 0);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(14, -24);
+      ctx.quadraticCurveTo(62 - wingFlap, -58, 72 - wingFlap, -20);
+      ctx.quadraticCurveTo(48 - wingFlap, 8, 14, 0);
+      ctx.fill();
+
+      // 翼骨霓虹紫脉
+      drawNeonGlowLine(ctx, -14, -22, -62 + wingFlap, -32, 2, '#D946EF', 0.95);
+      drawNeonGlowLine(ctx, 14, -22, 62 - wingFlap, -32, 2, '#D946EF', 0.95);
     }
-    ctx.restore();
 
-    ctx.fillStyle = '#A855F7';
+    // 高耸贵族燕尾披风（背面覆盖背部）
+    const cloakW = isBack ? 46 : 38;
+    drawCyberBox(ctx, -cloakW / 2 - e * 0.3, -30, cloakW, 60, '#160b29', NEON_INK, neonEdge, 2);
+    if (isBack) {
+      drawNeonGlowLine(ctx, 0, -24, 0, 22, 2, neonEdge, 0.9);
+    }
+  };
+
+  const drawCore = () => {
+    // 维多利亚暗紫礼服主体
+    drawCyberBox(ctx, -21, -30, 42, 58, '#120a21', NEON_INK, neonEdge, 1.5);
+    drawCyberBox(ctx, -17, -28, 34, 13, '#3b0764', NEON_INK, neonEdge, 1.4);
+
+    // 贵族白领结（Jabot）+ 胸前脉冲虚空核
+    ctx.fillStyle = '#f8fafc';
+    ctx.beginPath();
+    ctx.moveTo(e * 0.4, -26);
+    ctx.lineTo(-8 + e * 0.4, -14);
+    ctx.lineTo(8 + e * 0.4, -14);
+    ctx.closePath();
+    ctx.fill();
+    drawNeonGlowCircle(ctx, e * 0.4, -19, 3.2, isArchangel ? '#FF1744' : '#A855F7', 1);
+
+    // 高耸立领
+    ctx.fillStyle = NEON_INK;
+    ctx.beginPath();
+    ctx.moveTo(-15, -36);
+    ctx.lineTo(-22, -53);
+    ctx.lineTo(-10, -41);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(15, -36);
+    ctx.lineTo(22, -53);
+    ctx.lineTo(10, -41);
+    ctx.fill();
+    drawNeonGlowLine(ctx, -15, -38, -20, -50, 1.6, neonEdge, 0.85, null);
+    drawNeonGlowLine(ctx, 15, -38, 20, -50, 1.6, neonEdge, 0.85, null);
+
+    // 骷髅贵族面容
+    ctx.fillStyle = NEON_INK;
+    ctx.beginPath();
+    ctx.arc(0, -42, 15.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#cbd5e1';
+    ctx.beginPath();
+    ctx.arc(0, -42, 13.6, 0, Math.PI * 2);
+    ctx.fill();
+
+    drawFacingEyePair(ctx, eyeColor, {
+      y: -44,
+      size: 3.4,
+      halfGap: 5,
+      look: isArchangel ? 'hollow' : 'glow',
+    });
+  };
+
+  const drawFront = () => {
+    // 贵族礼服袖爪（八向偏移）
+    const hBias = facingHandBiasX(pose);
+    drawCyberBox(ctx, -27 + hBias, -10, 7, 18, '#1e1b2e', NEON_INK, neonEdge, 1.2);
+    drawCyberBox(ctx, 20 + hBias, -10, 7, 18, '#1e1b2e', NEON_INK, neonEdge, 1.2);
+    drawNeonGlowCircle(ctx, -23.5 + hBias, 10, 2.5, eyeColor, 0.9);
+    drawNeonGlowCircle(ctx, 23.5 + hBias, 10, 2.5, eyeColor, 0.9);
+  };
+
+  drawEightDirLayers(pose, { back: drawBack, core: drawCore, front: drawFront });
+
+  if (isArchangel) {
+    ctx.fillStyle = '#E879F9';
     ctx.font = 'bold 11px sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText('😈 黑暗大天使形态 (狂暴暗影箭雨！)', 0, -84);
   }
-
-  // Victorian Tailcoat Body
-  ctx.fillStyle = '#1e1b2e';
-  ctx.fillRect(-22, -30, 44, 58);
-  // Imperial Purple Lapels
-  ctx.fillStyle = '#4c1d95';
-  ctx.fillRect(-18, -28, 36, 12);
-  // White Cravat / Jabot
-  ctx.fillStyle = '#e2e8f0';
-  ctx.beginPath();
-  ctx.moveTo(0, -26);
-  ctx.lineTo(-8, -14);
-  ctx.lineTo(8, -14);
-  ctx.closePath();
-  ctx.fill();
-
-  // Skeletal Visage
-  ctx.fillStyle = '#cbd5e1';
-  ctx.beginPath();
-  ctx.arc(0, -42, 14, 0, Math.PI * 2);
-  ctx.fill();
-  // Eyes: Green normally, Red in Archangel — biased by eight-dir facing
-  drawFacingEyePair(ctx, isArchangel ? '#EF4444' : '#10B981', {
-    y: -44,
-    size: 3.2,
-    halfGap: 5,
-    look: isArchangel ? 'hollow' : 'glow',
-  });
-
-  // High arched collar
-  ctx.fillStyle = '#312e81';
-  ctx.beginPath();
-  ctx.moveTo(-14, -36);
-  ctx.lineTo(-20, -50);
-  ctx.lineTo(-12, -40);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.moveTo(14, -36);
-  ctx.lineTo(20, -50);
-  ctx.lineTo(12, -40);
-  ctx.fill();
 }
 
 function drawBaronSilverlaine(ctx: CanvasRenderingContext2D, boss: Unit, tickCount: number) {
-  // Ethereal Ghost Lord Worgen (translucent cyan)
+  const pose = getActiveFacingPose();
+  const isBack = isFacingBack(pose);
+  const e = pose.eyeBiasX;
+  const hBias = facingHandBiasX(pose);
+  const wSide = pose.weaponSide;
+
   ctx.save();
-  const alpha = 0.82 + Math.sin(tickCount * 0.08) * 0.12;
-  ctx.globalAlpha = alpha;
+  ctx.globalAlpha = 0.86 + Math.sin(tickCount * 0.09) * 0.1;
 
-  // Ghost wolf body
-  ctx.fillStyle = '#0f766e';
-  ctx.fillRect(-24, -30, 48, 56);
-  // Ghost wisps
-  ctx.fillStyle = '#2dd4bf';
-  ctx.fillRect(-20, -26, 40, 14);
+  const drawBack = () => {
+    // 幽灵狼人脊背毛刺与灵体尾焰
+    if (isBack) {
+      drawNeonGlowLine(ctx, 0, -34, 0, 18, 3, '#00F5D4', 0.95);
+      drawNeonGlowLine(ctx, -8, -20, -14, -10, 2, '#2DD4BF', 0.85);
+      drawNeonGlowLine(ctx, 8, -20, 14, -10, 2, '#2DD4BF', 0.85);
+    }
+    drawNeonGlowCircle(ctx, -e * 0.5, 20, 10, '#00F5D4', 0.55, null);
+  };
 
-  // Wolf Spirit Head
-  ctx.fillStyle = '#115e59';
-  ctx.beginPath();
-  ctx.arc(0, -42, 15, 0, Math.PI * 2);
-  ctx.fill();
+  const drawCore = () => {
+    // 深青灵体躯干 + 霓虹青色肋骨/战甲纹
+    drawCyberBox(ctx, -23, -30, 46, 56, '#062c30', NEON_INK, '#00F5D4', 1.8);
+    drawCyberBox(ctx, -18, -25, 36, 13, '#0f5257', NEON_INK, '#2DD4BF', 1.4);
+    for (let i = 0; i < 3; i++) {
+      drawNeonGlowRect(ctx, -12, -8 + i * 7, 24, 2.2, '#00F5D4', 0.85, null);
+    }
 
-  // Wolf Ears
-  ctx.fillStyle = '#14b8a6';
-  ctx.beginPath();
-  ctx.moveTo(-12, -50);
-  ctx.lineTo(-6, -62);
-  ctx.lineTo(-2, -50);
-  ctx.fill();
-  ctx.beginPath();
-  ctx.moveTo(12, -50);
-  ctx.lineTo(6, -62);
-  ctx.lineTo(2, -50);
-  ctx.fill();
+    // 狼人头颅 + 尖耳
+    ctx.fillStyle = NEON_INK;
+    ctx.beginPath();
+    ctx.arc(0, -42, 16, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#0d4f52';
+    ctx.beginPath();
+    ctx.arc(0, -42, 14.5, 0, Math.PI * 2);
+    ctx.fill();
 
-  // Snout & Fangs
-  ctx.fillStyle = '#0d9488';
-  ctx.fillRect(-6, -42, 12, 8);
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(-4, -34, 2, 3);
-  ctx.fillRect(2, -34, 2, 3);
+    // 狼耳（霓虹青边）
+    ctx.fillStyle = '#0f766e';
+    ctx.beginPath();
+    ctx.moveTo(-13, -50);
+    ctx.lineTo(-6, -64);
+    ctx.lineTo(-1, -51);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.moveTo(13, -50);
+    ctx.lineTo(6, -64);
+    ctx.lineTo(1, -51);
+    ctx.fill();
+    drawNeonGlowLine(ctx, -11, -52, -6, -63, 1.5, '#00F5D4', 0.9, null);
+    drawNeonGlowLine(ctx, 11, -52, 6, -63, 1.5, '#00F5D4', 0.9, null);
 
-  // Spectral Pale Eyes — eight-dir bias
-  drawFacingEyePair(ctx, '#99f6e4', { y: -46, size: 3, halfGap: 4.5, look: 'beast' });
+    // 狼吻与獠牙（随 eyeBiasX 产生侧面突吻）
+    if (pose.showFace) {
+      drawCyberBox(ctx, -6 + e * 1.1, -41, 12, 8, '#115e59', NEON_INK);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(-4 + e * 1.1, -33, 2.2, 3.4);
+      ctx.fillRect(2 + e * 1.1, -33, 2.2, 3.4);
+    }
 
-  // Ethereal Claws
-  ctx.fillStyle = '#5eead4';
-  ctx.fillRect(-32, -8, 8, 22);
-  ctx.fillRect(24, -8, 8, 22);
+    drawFacingEyePair(ctx, '#5EEAD4', { y: -46.5, size: 3.2, halfGap: 4.8, look: 'beast' });
+  };
 
+  const drawFront = () => {
+    // 幽灵双利爪（主侧突出）
+    const frontX = 25 * wSide + hBias;
+    const rearX = -25 * wSide + hBias;
+    drawCyberBox(ctx, frontX - 4, -10, 8, 22, '#0d9488', NEON_INK, '#00F5D4', 1.5);
+    drawCyberBox(ctx, rearX - 3.5, -6, 7, 18, '#0f766e', NEON_INK, '#2DD4BF', 1.2);
+    for (let i = -1; i <= 1; i++) {
+      drawNeonGlowLine(ctx, frontX + i * 2.4, 12, frontX + i * 2.8, 21, 1.6, '#00F5D4', 1);
+    }
+  };
+
+  drawEightDirLayers(pose, { back: drawBack, core: drawCore, front: drawFront });
   ctx.restore();
 }
 
 function drawCommanderSpringvale(ctx: CanvasRenderingContext2D, boss: Unit, tickCount: number) {
-  // Heavy Steel Plate
-  ctx.fillStyle = '#334155';
-  ctx.fillRect(-25, -30, 50, 58);
-  // Unholy Miasma Green Inlay
-  ctx.fillStyle = '#15803d';
-  ctx.fillRect(-20, -26, 40, 14);
+  const pose = getActiveFacingPose();
+  const isBack = isFacingBack(pose);
+  const wSide = pose.weaponSide;
+  const hBias = facingHandBiasX(pose);
+  const e = pose.eyeBiasX;
 
-  // Greathelm Visor
-  ctx.fillStyle = '#1e293b';
-  ctx.beginPath();
-  ctx.arc(0, -44, 15, 0, Math.PI * 2);
-  ctx.fill();
-  // Glowing green visor eyes — eight-dir bias
-  drawFacingEyePair(ctx, '#22c55e', { y: -45, size: 3.2, halfGap: 5.5, look: 'visor' });
+  const drawBack = () => {
+    // 堕落十字军破损披风
+    const cloakW = isBack ? 48 : 38;
+    drawCyberBox(ctx, -cloakW / 2 - e * 0.2, -30, cloakW, 60, '#0f1f14', NEON_INK, '#39FF14', 1.6);
+    if (isBack) {
+      // 背面腐化十字架霓虹纹
+      drawNeonGlowLine(ctx, 0, -20, 0, 14, 2.4, '#39FF14', 0.9);
+      drawNeonGlowLine(ctx, -10, -10, 10, -10, 2.4, '#39FF14', 0.9);
+    }
+  };
 
-  // Massive Spiked Shoulders (Pauldrons)
-  ctx.fillStyle = '#475569';
-  ctx.fillRect(-38, -36, 15, 20);
-  ctx.fillRect(23, -36, 15, 20);
-  ctx.fillStyle = '#94a3b8';
-  ctx.fillRect(-34, -44, 6, 9);
-  ctx.fillRect(28, -44, 6, 9);
+  const drawCore = () => {
+    // 脚下亵渎霓虹毒雾
+    drawNeonGlowCircle(ctx, 0, 32, 26, '#22C55E', 0.35, null);
 
-  // Skull Tower Shield (Left Arm)
-  ctx.fillStyle = '#1e293b';
-  ctx.fillRect(-44, -14, 16, 42);
-  ctx.fillStyle = '#cbd5e1';
-  ctx.beginPath();
-  ctx.arc(-36, 4, 5, 0, Math.PI * 2);
-  ctx.fill();
+    // 黑铁重甲躯干 + 霓虹天灾毒绿胸甲裂纹
+    drawCyberBox(ctx, -25, -30, 50, 58, '#182030', NEON_INK, '#39FF14', 1.6);
+    drawCyberBox(ctx, -20, -26, 40, 15, '#0f291e', NEON_INK, '#39FF14', 1.5);
+    drawNeonGlowLine(ctx, -12, -20, 12, -16, 2, '#39FF14', 0.9);
 
-  // Two-handed Claymore (Right Arm)
-  ctx.fillStyle = '#94a3b8';
-  ctx.fillRect(30, -38, 5, 68);
-  ctx.fillStyle = '#f59e0b';
-  ctx.fillRect(26, -10, 13, 5);
+    // 巨型尖刺肩甲（魔兽大肩甲魂）
+    drawCyberBox(ctx, -38, -37, 16, 22, '#273244', NEON_INK, '#39FF14', 1.6);
+    drawCyberBox(ctx, 22, -37, 16, 22, '#273244', NEON_INK, '#39FF14', 1.6);
+    drawCyberBox(ctx, -34, -46, 6, 9, '#64748b', NEON_INK);
+    drawCyberBox(ctx, 28, -46, 6, 9, '#64748b', NEON_INK);
 
-  // Unholy Foot Miasma
-  ctx.fillStyle = 'rgba(34, 197, 94, 0.25)';
-  ctx.beginPath();
-  ctx.arc(0, 32, 28, 0, Math.PI * 2);
-  ctx.fill();
+    // 重型铁盔
+    ctx.fillStyle = NEON_INK;
+    ctx.beginPath();
+    ctx.arc(0, -44, 16.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#1e293b';
+    ctx.beginPath();
+    ctx.arc(0, -44, 15, 0, Math.PI * 2);
+    ctx.fill();
+
+    drawFacingEyePair(ctx, '#39FF14', { y: -45, size: 3.4, halfGap: 5.5, look: 'visor' });
+  };
+
+  const drawFront = () => {
+    // 副手（-wSide）：骷髅塔盾
+    const shieldX = -38 * wSide + hBias;
+    drawCyberBox(ctx, shieldX - 8, -16, 16, 44, '#131c2e', NEON_INK, '#39FF14', 1.6);
+    drawNeonGlowCircle(ctx, shieldX, 4, 5.2, '#39FF14', 0.95, '#e2e8f0');
+
+    // 主手（+wSide）：双手邪恶符文巨剑
+    const swordX = 32 * wSide + hBias;
+    drawCyberBox(ctx, swordX - 3, -42, 6, 70, '#475569', NEON_INK, '#39FF14', 1.5);
+    drawNeonGlowLine(ctx, swordX, -38, swordX, 14, 2.2, '#39FF14', 1);
+    drawCyberBox(ctx, swordX - 7, -10, 14, 5, '#d97706', NEON_INK);
+  };
+
+  drawEightDirLayers(pose, { back: drawBack, core: drawCore, front: drawFront });
 }
 
 function drawLordWalden(ctx: CanvasRenderingContext2D, boss: Unit, tickCount: number) {
-  // Leather Apron Body
-  ctx.fillStyle = '#451a03';
-  ctx.fillRect(-20, -28, 40, 56);
-  ctx.fillStyle = '#78350f';
-  ctx.fillRect(-16, -24, 32, 38);
+  const pose = getActiveFacingPose();
+  const isBack = isFacingBack(pose);
+  const wSide = pose.weaponSide;
+  const hBias = facingHandBiasX(pose);
+  const e = pose.eyeBiasX;
+  const bobY = Math.sin(tickCount * 0.16) * 2.2;
 
-  // Head & Mad Alchemist Hair
-  ctx.fillStyle = '#fed7aa';
-  ctx.beginPath();
-  ctx.arc(0, -40, 13, 0, Math.PI * 2);
-  ctx.fill();
-  // Wild grey hair
-  ctx.fillStyle = '#e2e8f0';
-  ctx.fillRect(-15, -48, 30, 8);
-  ctx.fillRect(-17, -44, 6, 12);
-  ctx.fillRect(11, -44, 6, 12);
+  const drawBack = () => {
+    // 背面：大型赛博霓虹炼金反应罐背包
+    if (isBack) {
+      drawCyberBox(ctx, -16, -26, 32, 38, '#1e293b', NEON_INK, '#00F0FF', 1.6);
+      drawNeonGlowRect(ctx, -11, -18, 8, 22, '#39FF14', 0.95);
+      drawNeonGlowRect(ctx, 3, -18, 8, 22, '#00F0FF', 0.95);
+    }
+  };
 
-  // Brass Goggles + toxic facing lenses
-  {
-    const pose = getActiveFacingPose();
+  const drawCore = () => {
+    // 暗褐皮围裙 + 化学背带
+    drawCyberBox(ctx, -20, -28, 40, 56, '#271306', NEON_INK, '#FF5500', 1.4);
+    drawCyberBox(ctx, -16, -24, 32, 38, '#451a03', NEON_INK);
+
+    // 疯狂炼金师炸毛灰发 + 头颅
+    ctx.fillStyle = NEON_INK;
+    ctx.beginPath();
+    ctx.arc(0, -40, 14.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#fed7aa';
+    ctx.beginPath();
+    ctx.arc(0, -40, 13, 0, Math.PI * 2);
+    ctx.fill();
+
+    drawCyberBox(ctx, -15, -49, 30, 8, '#cbd5e1', NEON_INK);
+    drawCyberBox(ctx, -17, -45, 6, 12, '#cbd5e1', NEON_INK);
+    drawCyberBox(ctx, 11, -45, 6, 12, '#cbd5e1', NEON_INK);
+
+    // 赛博铜制护目镜 + 霓虹毒绿镜片
     if (pose.showFace) {
-      const e = pose.eyeBiasX;
       const a0 = ctx.globalAlpha;
       ctx.globalAlpha = a0 * pose.faceAlpha;
-      ctx.fillStyle = '#ca8a04';
-      ctx.fillRect(-9 + e, -43, 8, 7);
-      ctx.fillRect(1 + e, -43, 8, 7);
+      drawCyberBox(ctx, -9 + e, -44, 8, 7, '#ca8a04', NEON_INK);
+      drawCyberBox(ctx, 1 + e, -44, 8, 7, '#ca8a04', NEON_INK);
       ctx.globalAlpha = a0;
-      drawFacingEyePair(ctx, '#4ade80', { y: -41.5, size: 2.6, halfGap: 5, look: 'toxic' });
+      drawFacingEyePair(ctx, '#39FF14', { y: -42, size: 2.8, halfGap: 5, look: 'toxic' });
     }
-  }
 
-  // Bandolier of chemical vials
-  ctx.fillStyle = '#1c1917';
-  ctx.fillRect(-18, -14, 36, 6);
-  const vialColors = ['#22c55e', '#ef4444', '#38bdf8'];
-  vialColors.forEach((color, i) => {
-    ctx.fillStyle = color;
-    ctx.fillRect(-12 + i * 10, -20, 6, 9);
-    ctx.fillStyle = '#e2e8f0';
-    ctx.fillRect(-11 + i * 10, -22, 4, 2);
-  });
+    // 胸前高饱和三色霓虹药剂瓶背带
+    if (!isBack) {
+      ctx.fillStyle = NEON_INK;
+      ctx.fillRect(-18, -14, 36, 6);
+      const vialColors = ['#39FF14', '#FF2A55', '#00F0FF'];
+      vialColors.forEach((color, i) => {
+        drawNeonGlowRect(ctx, -12 + i * 10, -20, 6, 9, color, 0.95);
+        ctx.fillStyle = '#f8fafc';
+        ctx.fillRect(-11 + i * 10, -22, 4, 2);
+      });
+    }
+  };
 
-  // Bubbling Flask in Hand
-  const bobY = Math.sin(tickCount * 0.15) * 2;
-  ctx.fillStyle = '#38bdf8';
-  ctx.beginPath();
-  ctx.arc(28, -6 + bobY, 8, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = '#f8fafc';
-  ctx.fillRect(26, -18 + bobY, 4, 6);
+  const drawFront = () => {
+    // 手中冒泡霓虹冰蓝烧瓶 + 上升气泡
+    const fx = 28 * wSide + hBias;
+    drawNeonGlowCircle(ctx, fx, -6 + bobY, 8.2, '#00F0FF', 1);
+    ctx.fillStyle = NEON_INK;
+    ctx.fillRect(fx - 2.5, -18 + bobY, 5, 6);
+    ctx.fillStyle = '#f8fafc';
+    ctx.fillRect(fx - 1.5, -17 + bobY, 3, 5);
 
-  // Drifting chemical smoke puffs
-  ctx.fillStyle = 'rgba(56, 189, 248, 0.45)';
-  ctx.beginPath();
-  ctx.arc(28, -24 + bobY, 4, 0, Math.PI * 2);
-  ctx.arc(31, -30 + bobY, 6, 0, Math.PI * 2);
-  ctx.fill();
+    drawNeonGlowCircle(ctx, fx, -24 + bobY, 3.2, '#00F0FF', 0.7, null);
+    drawNeonGlowCircle(ctx, fx + 3 * wSide, -31 + bobY, 4.2, '#39FF14', 0.65, null);
+  };
+
+  drawEightDirLayers(pose, { back: drawBack, core: drawCore, front: drawFront });
 }
 
 function drawLordGodfrey(ctx: CanvasRenderingContext2D, boss: Unit, tickCount: number) {
-  // Burgundy Longcoat Body
-  ctx.fillStyle = '#4c0519';
-  ctx.fillRect(-22, -30, 44, 58);
-  // Gold Double-breasted Buttons
-  ctx.fillStyle = '#facc15';
-  for (let i = 0; i < 4; i++) {
-    ctx.fillRect(-6, -22 + i * 9, 3, 3);
-    ctx.fillRect(3, -22 + i * 9, 3, 3);
-  }
+  const pose = getActiveFacingPose();
+  const isBack = isFacingBack(pose);
+  const wSide = pose.weaponSide;
+  const hBias = facingHandBiasX(pose);
+  const sf = pose.sideFactor;
+  const e = pose.eyeBiasX;
 
-  // Head & Aristocratic Grey Hair
-  ctx.fillStyle = '#fde68a';
-  ctx.beginPath();
-  ctx.arc(0, -42, 13, 0, Math.PI * 2);
-  ctx.fill();
-  ctx.fillStyle = '#94a3b8';
-  ctx.fillRect(-14, -50, 28, 8);
-  ctx.fillRect(-16, -46, 5, 14);
-  ctx.fillRect(11, -46, 5, 14);
+  const drawBack = () => {
+    // 酒红贵族长风衣高领 + 背面霓虹绯红镶边
+    const coatW = isBack ? 46 : 42;
+    drawCyberBox(ctx, -coatW / 2 - e * 0.2, -30, coatW, 60, '#2b0718', NEON_INK, '#FF2A55', 1.8);
+    if (isBack) {
+      drawNeonGlowLine(ctx, -12, -24, -14, 24, 1.6, '#FACC15', 0.85, null);
+      drawNeonGlowLine(ctx, 12, -24, 14, 24, 1.6, '#FACC15', 0.85, null);
+    }
+  };
 
-  // Wire spectacles + facing eyes
-  {
-    const pose = getActiveFacingPose();
-    const e = pose.showFace ? pose.eyeBiasX : 0;
+  const drawCore = () => {
+    // 酒红双排扣长风衣 + 耀金纽扣
+    drawCyberBox(ctx, -22, -30, 44, 58, '#3b071e', NEON_INK, '#FF2A55', 1.6);
+    if (!isBack) {
+      for (let i = 0; i < 4; i++) {
+        drawNeonGlowRect(ctx, -6 + e * 0.3, -22 + i * 9, 3, 3, '#FACC15', 0.9);
+        drawNeonGlowRect(ctx, 3 + e * 0.3, -22 + i * 9, 3, 3, '#FACC15', 0.9);
+      }
+    }
+
+    // 贵族面容 + 灰白长发
+    ctx.fillStyle = NEON_INK;
+    ctx.beginPath();
+    ctx.arc(0, -42, 14.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#fde68a';
+    ctx.beginPath();
+    ctx.arc(0, -42, 13, 0, Math.PI * 2);
+    ctx.fill();
+    drawCyberBox(ctx, -14, -50, 28, 8, '#cbd5e1', NEON_INK);
+    drawCyberBox(ctx, -16, -46, 5, 14, '#cbd5e1', NEON_INK);
+    drawCyberBox(ctx, 11, -46, 5, 14, '#cbd5e1', NEON_INK);
+
+    // 金丝眼镜 + 冷冽反光瞳孔
     if (pose.showFace) {
-      ctx.strokeStyle = '#d4af37';
-      ctx.lineWidth = 1.2;
+      ctx.strokeStyle = '#FACC15';
+      ctx.lineWidth = 1.4;
       ctx.strokeRect(-8 + e, -44, 6, 5);
       ctx.strokeRect(2 + e, -44, 6, 5);
-      drawFacingEyePair(ctx, '#1e293b', { y: -43, size: 2.4, halfGap: 5, look: 'hollow' });
+      drawFacingEyePair(ctx, '#FF2A55', { y: -43, size: 2.6, halfGap: 5, look: 'hollow' });
     }
-  }
+  };
 
-  // Godfrey's Dual Flintlock Pistols
-  // Left Pistol
-  ctx.fillStyle = '#78350f';
-  ctx.fillRect(-34, -14, 16, 6);
-  ctx.fillStyle = '#52525b';
-  ctx.fillRect(-38, -12, 18, 6);
-  ctx.fillStyle = '#d4af37';
-  ctx.fillRect(-26, -14, 4, 10);
+  const drawFront = () => {
+    // 双持赛博燧发火枪（正面左右展开，侧面随 sideFactor 错位前指）
+    const spread = 24 * (1 - sf * 0.35);
+    const lx = -spread + hBias;
+    const rx = spread + hBias;
+    const gunDirL = sf > 0.5 ? wSide : -1;
+    const gunDirR = sf > 0.5 ? wSide : 1;
 
-  // Right Pistol
-  ctx.fillStyle = '#78350f';
-  ctx.fillRect(18, -14, 16, 6);
-  ctx.fillStyle = '#52525b';
-  ctx.fillRect(20, -12, 18, 6);
-  ctx.fillStyle = '#d4af37';
-  ctx.fillRect(22, -14, 4, 10);
+    // 左枪
+    drawCyberBox(ctx, lx - 8, -14, 16, 6, '#78350f', NEON_INK);
+    drawCyberBox(ctx, lx + (gunDirL > 0 ? -4 : -14), -12, 18, 5, '#475569', NEON_INK, '#FF2A55', 1.2);
+    ctx.fillStyle = '#FACC15';
+    ctx.fillRect(lx - 2, -14, 4, 10);
 
-  // Gunpowder smoke & muzzle spark
-  const shootTick = tickCount % 25;
-  if (shootTick < 5) {
-    ctx.fillStyle = '#f59e0b';
-    ctx.beginPath();
-    ctx.arc(-42, -9, 4, 0, Math.PI * 2);
-    ctx.arc(42, -9, 4, 0, Math.PI * 2);
-    ctx.fill();
-  } else {
-    // Drifting smoke
-    ctx.fillStyle = 'rgba(212, 212, 216, 0.45)';
-    ctx.beginPath();
-    ctx.arc(-42 - shootTick * 0.5, -12 - shootTick * 0.4, 3 + shootTick * 0.3, 0, Math.PI * 2);
-    ctx.arc(42 + shootTick * 0.5, -12 - shootTick * 0.4, 3 + shootTick * 0.3, 0, Math.PI * 2);
-    ctx.fill();
-  }
+    // 右枪
+    drawCyberBox(ctx, rx - 8, -14, 16, 6, '#78350f', NEON_INK);
+    drawCyberBox(ctx, rx + (gunDirR > 0 ? -4 : -14), -12, 18, 5, '#475569', NEON_INK, '#FF2A55', 1.2);
+    ctx.fillStyle = '#FACC15';
+    ctx.fillRect(rx - 2, -14, 4, 10);
+
+    // 霓虹枪口火光 / 硝烟
+    const shootTick = tickCount % 25;
+    const muzzleL = lx + gunDirL * 16;
+    const muzzleR = rx + gunDirR * 16;
+    if (shootTick < 5) {
+      drawNeonGlowCircle(ctx, muzzleL, -9.5, 4.5, '#FF6B00', 1);
+      drawNeonGlowCircle(ctx, muzzleR, -9.5, 4.5, '#FF6B00', 1);
+    } else {
+      ctx.fillStyle = 'rgba(226, 232, 240, 0.42)';
+      ctx.beginPath();
+      ctx.arc(muzzleL + gunDirL * shootTick * 0.4, -12 - shootTick * 0.4, 2.5 + shootTick * 0.22, 0, Math.PI * 2);
+      ctx.arc(muzzleR + gunDirR * shootTick * 0.4, -12 - shootTick * 0.4, 2.5 + shootTick * 0.22, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  };
+
+  drawEightDirLayers(pose, { back: drawBack, core: drawCore, front: drawFront });
 }
 
 // ── Dragon Soul Boss Sub-renderers ──────────────────────────────────────────
@@ -792,8 +931,9 @@ function drawBossModel(
   isSelected: boolean,
   tickCount: number,
   isMoving = false,
-  opts?: { showName?: boolean; facingRad?: number }
+  opts?: { showName?: boolean; facingRad?: number; scale?: number }
 ) {
+  const scale = opts?.scale ?? 0.76;
   const showName = opts?.showName !== false;
   const facingRad =
     opts?.facingRad ??
@@ -804,6 +944,7 @@ function drawBossModel(
   // Running footstep bob animation when pursuing target
   const runBob = isMoving ? Math.abs(Math.sin(tickCount * 0.35)) * 4 : 0;
   ctx.translate(pos.x, pos.y - runBob);
+  if (scale !== 1) ctx.scale(scale, scale);
 
   // Shadow + selection ring at feet (scaled to boss volume — not a full-body circle)
   ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
@@ -813,20 +954,14 @@ function drawBossModel(
   ctx.fill();
 
   if (isSelected) {
-    const footRx = 52 * shadowScale;
-    const footRy = 20 * shadowScale;
-    ctx.beginPath();
-    ctx.ellipse(0, 36, footRx, footRy, 0, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(255, 68, 68, 0.22)';
-    ctx.fill();
-    ctx.strokeStyle = '#FF4444';
-    ctx.lineWidth = 2.5;
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.ellipse(0, 36, footRx * 0.72, footRy * 0.72, 0, 0, Math.PI * 2);
-    ctx.strokeStyle = 'rgba(255, 180, 180, 0.55)';
-    ctx.lineWidth = 1.2;
-    ctx.stroke();
+    drawUnitSelectionRing(ctx, {
+      y: 36,
+      rx: 52 * shadowScale,
+      ry: 20 * shadowScale,
+      isEnemy: true,
+      isBoss: true,
+      tickCount,
+    });
   }
 
   // Subtle dust puffs when boss is running
@@ -839,6 +974,10 @@ function drawBossModel(
   }
 
   const bId = (bossUnit.id || '').toLowerCase();
+  const sfkIds = new Set(['ashbury', 'silverlaine', 'springvale', 'walden', 'godfrey']);
+  const bossOpts: BossEightDirOpts | undefined = sfkIds.has(bId)
+    ? { hideHands: true, hideMouth: true, shoeColor: NEON_INK, backShadeAlpha: 0.08 }
+    : undefined;
 
   // 连续朝向：肩宽/深度/五官；铭牌与施法条不受姿态变换影响
   withBossEightDirFacing(ctx, facingRad, () => {
@@ -874,7 +1013,7 @@ function drawBossModel(
       // 未知 Boss：五人剪影回落（勿误用死亡之翼）
       drawFiveManBossFallback(ctx, tickCount);
     }
-  });
+  }, bossOpts);
 
   // Name-only overhead (when HP also on, name is drawn inside drawBossHpBar)
   if (showName) {
@@ -899,26 +1038,37 @@ function drawBossModel(
     (isCasting ? castingSpellName : null)) as string | null | undefined;
   const castProgress = (bossUnit as any)?.castProgress || 0;
 
-  if (overheadSkillName) {
-    ctx.fillStyle = '#FDE68A';
-    ctx.font = 'bold 9px sans-serif';
-    ctx.fillText(overheadSkillName, 0, -56);
-  }
-
+  // Cast bar: skill name centered on the bar (classic nameplate). Non-cast
+  // overhead announces (e.g. 践踏) still float above when not casting.
   if (isCasting && castingSpellName) {
-    const barW = 74;
-    const barH = 6;
-    const barY = overheadSkillName ? -48 : -55;
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.75)';
+    const barW = 86;
+    const barH = 12;
+    const barY = -52;
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.78)';
     ctx.fillRect(-barW / 2 - 1, barY - 1, barW + 2, barH + 2);
     ctx.fillStyle = '#EAB308';
     ctx.fillRect(-barW / 2, barY, barW * Math.min(1, Math.max(0, castProgress)), barH);
     ctx.strokeStyle = '#713F12';
     ctx.lineWidth = 1;
     ctx.strokeRect(-barW / 2, barY, barW, barH);
-  } else if (isMoving && !overheadSkillName) {
+    ctx.fillStyle = '#FFFFFF';
+    ctx.font = 'bold 9px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.9)';
+    ctx.strokeText(castingSpellName, 0, barY + barH / 2);
+    ctx.fillText(castingSpellName, 0, barY + barH / 2);
+    ctx.textBaseline = 'alphabetic';
+  } else if (overheadSkillName) {
+    ctx.fillStyle = '#FDE68A';
+    ctx.font = 'bold 9px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(overheadSkillName, 0, -56);
+  } else if (isMoving) {
     ctx.fillStyle = '#F87171';
     ctx.font = 'bold 9px sans-serif';
+    ctx.textAlign = 'center';
     ctx.fillText('🏃 追击目标中...', 0, -56);
   }
 
@@ -971,7 +1121,7 @@ function drawClassCharacter(
   idx: number,
   opts?: { scale?: number; showName?: boolean; facingRad?: number }
 ) {
-  const scale = opts?.scale ?? 1;
+  const scale = opts?.scale ?? 0.76;
   const showName = opts?.showName ?? true;
   const facingRad =
     opts?.facingRad ??
@@ -1012,18 +1162,16 @@ function drawClassCharacter(
 
   // Selection ring at feet only (not a full-body circle)
   if (isSelected) {
-    ctx.beginPath();
-    ctx.ellipse(0, footY, footRx, footRy, 0, 0, Math.PI * 2);
-    ctx.fillStyle = 'rgba(255, 215, 0, 0.22)';
-    ctx.fill();
-    ctx.strokeStyle = '#FFD700';
-    ctx.lineWidth = 2;
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.ellipse(0, footY, footRx * 0.7, footRy * 0.7, 0, 0, Math.PI * 2);
-    ctx.strokeStyle = 'rgba(255, 248, 200, 0.55)';
-    ctx.lineWidth = 1;
-    ctx.stroke();
+    drawUnitSelectionRing(ctx, {
+      y: footY,
+      rx: footRx,
+      ry: footRy,
+      isSelf: isPlayer,
+      classId: u.classId,
+      role: u.role,
+      facingRad,
+      tickCount,
+    });
   }
 
   if (u.isPet) {
@@ -1057,8 +1205,11 @@ function drawClassCharacter(
     return;
   }
 
-  // 2. Class body (continuous facing: move dir or cast/attack target)
-  drawClassEightDirBody(ctx, u, sway, facingRad);
+  // 2. Class body (continuous facing; dim ambient neon FX for unrelated teammates)
+  drawClassEightDirBody(ctx, u, sway, facingRad, {
+    fxIntensity: isPlayer || isSelected ? 1 : 0.25,
+    tickCount,
+  });
 
   // Name-only overhead (when HP also on, name is drawn inside drawUnitHpBar)
   if (showName) {
@@ -1273,31 +1424,6 @@ function getCombatFormationPos(
   };
 }
 
-function computePathGeometry(waypoints: Array<{ x: number; y: number }>) {
-  const segLens: number[] = [];
-  let totalLen = 0;
-  for (let i = 0; i < waypoints.length - 1; i++) {
-    const seg = Math.hypot(waypoints[i + 1].x - waypoints[i].x, waypoints[i + 1].y - waypoints[i].y);
-    segLens.push(seg);
-    totalLen += seg;
-  }
-  const getPoint = (dist: number): { x: number; y: number } => {
-    let remaining = Math.max(0, Math.min(totalLen, dist));
-    for (let i = 0; i < segLens.length; i++) {
-      if (remaining <= segLens[i]) {
-        const ratio = segLens[i] > 0 ? remaining / segLens[i] : 0;
-        return {
-          x: waypoints[i].x + (waypoints[i + 1].x - waypoints[i].x) * ratio,
-          y: waypoints[i].y + (waypoints[i + 1].y - waypoints[i].y) * ratio,
-        };
-      }
-      remaining -= segLens[i];
-    }
-    return waypoints[waypoints.length - 1];
-  };
-  return { segLens, totalLen, getPoint };
-}
-
 function makeTrashMob(
   partial: Omit<TrashMob, 'baseX' | 'baseY' | 'visualHp' | 'isDead' | 'isTombstone' | 'dissipateAlpha' | 'hp' | 'isEncounter'> & {
     maxHp: number;
@@ -1479,7 +1605,7 @@ function drawTrashMob(
   mob: TrashMob,
   tickCount: number,
   is20Man: boolean,
-  opts?: { scale?: number; showName?: boolean }
+  opts?: { scale?: number; showName?: boolean; isSelected?: boolean }
 ) {
   const scale = opts?.scale ?? 1;
   const showName = opts?.showName ?? true;
@@ -1500,6 +1626,16 @@ function drawTrashMob(
   ctx.beginPath();
   ctx.ellipse(0, 14, 18, 7, 0, 0, Math.PI * 2);
   ctx.fill();
+
+  if (opts?.isSelected) {
+    drawUnitSelectionRing(ctx, {
+      y: 14,
+      rx: 20,
+      ry: 8,
+      isEnemy: true,
+      tickCount,
+    });
+  }
 
   // 2. Pixel Model by mobModel
   switch (mob.mobModel) {
@@ -2002,6 +2138,90 @@ function drawArenaVignetteScreen(
   ctx.fillRect(0, 0, width, height);
 }
 
+/**
+ * Maze / Cavern floor in *world* space — drawn after applyCanvasViewTransform.
+ * Expands beyond screen bounds to world AABB, so canvas is always filled with
+ * dark cavern cobblestone or volcanic rock that rotates seamlessly with camera in 2.5D.
+ */
+function drawMazeCavernFloorWorld(
+  ctx: CanvasRenderingContext2D,
+  cam: ViewCamera,
+  canvasW: number,
+  canvasH: number,
+  theme: { ambienceColor?: string; wallColor?: string } | null | undefined,
+  is20Man: boolean
+) {
+  const aabb = worldAabbCoveringCanvas(cam, canvasW, canvasH, 120);
+  const { minX, minY, maxX, maxY } = aabb;
+  const w = maxX - minX;
+  const h = maxY - minY;
+
+  // Base cavern floor fill
+  ctx.fillStyle = theme?.ambienceColor || (is20Man ? '#110508' : '#080814');
+  ctx.fillRect(minX, minY, w, h);
+
+  // World-space cavern grid texture (moves and turns with world, no fixed island boundary)
+  const gridSize = 35;
+  const x0 = Math.floor(minX / gridSize) * gridSize;
+  const y0 = Math.floor(minY / gridSize) * gridSize;
+
+  ctx.strokeStyle = is20Man ? 'rgba(239, 68, 68, 0.20)' : '#121124';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let x = x0; x <= maxX; x += gridSize) {
+    ctx.moveTo(x, minY);
+    ctx.lineTo(x, maxY);
+  }
+  for (let y = y0; y <= maxY; y += gridSize) {
+    ctx.moveTo(minX, y);
+    ctx.lineTo(maxX, y);
+  }
+  ctx.stroke();
+
+  // 20-man volcanic lava fissure veins across world space
+  if (is20Man) {
+    ctx.strokeStyle = 'rgba(249, 115, 22, 0.28)';
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(minX + 60, minY + h * 0.35);
+    ctx.quadraticCurveTo(minX + w * 0.4, minY + h * 0.45, minX + w * 0.65, minY + h * 0.3);
+    ctx.quadraticCurveTo(minX + w * 0.85, minY + h * 0.2, maxX - 50, minY + h * 0.5);
+    ctx.stroke();
+  }
+}
+
+/**
+ * Screen-space radial vignette for maze cavern to naturally fade distant edges into deep shadow.
+ */
+function drawMazeCavernVignetteScreen(
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number
+) {
+  const vignette = ctx.createRadialGradient(
+    width / 2,
+    height / 2,
+    Math.min(width, height) * 0.45,
+    width / 2,
+    height / 2,
+    Math.max(width, height) * 0.82
+  );
+  vignette.addColorStop(0, 'rgba(0, 0, 0, 0)');
+  vignette.addColorStop(1, 'rgba(2, 2, 6, 0.62)');
+  ctx.fillStyle = vignette;
+  ctx.fillRect(0, 0, width, height);
+}
+
+/**
+ * Balanced movement speed constants:
+ * - Boss chase speed: 2.8
+ * - AI companion follow speed: 2.4
+ * - Player combat move speed: 3.0 (balanced with boss speed, slightly faster for kiting/mechanics)
+ * - Player maze traversal speed: 3.0 * MAZE_TRAVERSE_SPEED_SCALE
+ */
+const PLAYER_COMBAT_MOVE_SPEED = 3.0;
+const PLAYER_MAZE_MOVE_SPEED = PLAYER_COMBAT_MOVE_SPEED * MAZE_TRAVERSE_SPEED_SCALE;
+
 /** Canvas view zoom: default 1, clamped to ±50%. */
 const CANVAS_VIEW_ZOOM_DEFAULT = 1;
 const CANVAS_VIEW_ZOOM_MIN = CANVAS_VIEW_ZOOM_DEFAULT * 0.5;
@@ -2047,6 +2267,7 @@ export const CombatCanvas: React.FC<Props> = ({
   autoNavActive = true,
   onAutoNavChange,
   combatDisplayPrefs = null,
+  enemyUnits,
 }) => {
   const displayPrefs = resolveCombatDisplayPrefs(combatDisplayPrefs);
   const displayPrefsRef = useRef(displayPrefs);
@@ -2077,25 +2298,41 @@ export const CombatCanvas: React.FC<Props> = ({
       viewYawRadRef.current = 0;
       viewPitchDegRef.current = ISO_PITCH_DEG_DEFAULT;
       orbitDragRef.current = null;
+      isMouseChordMovingRef.current = false;
+      isRmbHeldRef.current = false;
+      isLmbHeldRef.current = false;
     }
   }, [displayPrefs.canvasViewMode]);
 
   useEffect(() => {
     if (runPhase === 'TRAVEL_RECOVERY') {
       orbitDragRef.current = null;
+      isMouseChordMovingRef.current = false;
+      isRmbHeldRef.current = false;
+      isLmbHeldRef.current = false;
     }
   }, [runPhase]);
 
-  /** Maze (TRAVEL_RECOVERY) always locked to top-down; ISO only outside maze. */
+  /** Allow ISO (2.5D) in all run phases including maze travel. */
   const isIsoViewAllowed = () =>
-    displayPrefsRef.current.canvasViewMode === 'ISO' &&
-    runPhaseRef.current !== 'TRAVEL_RECOVERY';
+    displayPrefsRef.current.canvasViewMode === 'ISO';
 
   const getViewCamera = (width: number, height: number): ViewCamera => {
     const mode = isIsoViewAllowed() ? 'ISO' : 'TOPDOWN';
-    const screenX = width / 2;
-    const screenY = height / 2;
-    const zoom = viewZoomRef.current;
+    let screenX = width / 2;
+    let screenY = height / 2;
+    let zoom = viewZoomRef.current;
+    if (runPhaseRef.current === 'TRAVEL_RECOVERY') {
+      const layout = mazeLayoutRef.current;
+      if (layout) {
+        const { originX, originY, mazeW, mazeH } = getMazeDrawOrigin(layout, width, height);
+        screenX = originX + mazeW / 2;
+        screenY = originY + mazeH / 2;
+      } else {
+        screenX = width / 2;
+        screenY = (MAZE_HUD_SAFE_INSETS.top + (height - MAZE_HUD_SAFE_INSETS.bottom)) / 2;
+      }
+    }
     if (mode === 'TOPDOWN') {
       return {
         mode: 'TOPDOWN',
@@ -2113,8 +2350,8 @@ export const CombatCanvas: React.FC<Props> = ({
       yawRad: viewYawRadRef.current,
       pivotX: pivot.x,
       pivotY: pivot.y,
-      screenX,
-      screenY,
+      screenX: width / 2,
+      screenY: height / 2,
       pitchSin: pitchDegToSin(viewPitchDegRef.current),
       zoom,
     };
@@ -2170,6 +2407,13 @@ export const CombatCanvas: React.FC<Props> = ({
   }>>({});
   const keysPressedRef = useRef<Set<string>>(new Set());
 
+  // Mouse chord movement (2.5D boss room: hold RMB + press LMB = walk forward like 'W')
+  const isMouseChordMovingRef = useRef<boolean>(false);
+  const isRmbHeldRef = useRef<boolean>(false);
+  const isLmbHeldRef = useRef<boolean>(false);
+  const suppressNextClickRef = useRef<boolean>(false);
+  const lastChordMoveEndMsRef = useRef<number>(0);
+
   // Mouse Click-to-Move & Auto-Pathfinding in Maze
   const clickTargetRef = useRef<{ x: number; y: number; time: number } | null>(null);
   const autoNavActiveRef = useRef<boolean>(autoNavActive);
@@ -2216,11 +2460,13 @@ export const CombatCanvas: React.FC<Props> = ({
   const travelRemainingMsRef = useRef(travelRemainingMs);
   const totalTravelMsRef = useRef(totalTravelMs);
   const isNetworkGuestRef = useRef(isNetworkGuest);
+  const enemyUnitsRef = useRef<Unit[]>(enemyUnits || []);
   const dungeonTierRef = useRef(dungeonTier);
   const runPhaseLiveRef = useRef(runPhase);
   travelRemainingMsRef.current = travelRemainingMs;
   totalTravelMsRef.current = totalTravelMs;
   isNetworkGuestRef.current = isNetworkGuest;
+  enemyUnitsRef.current = enemyUnits || [];
   dungeonTierRef.current = dungeonTier;
   runPhaseLiveRef.current = runPhase;
 
@@ -2325,6 +2571,10 @@ export const CombatCanvas: React.FC<Props> = ({
 
     const handleBlur = () => {
       keysPressedRef.current.clear();
+      isMouseChordMovingRef.current = false;
+      isRmbHeldRef.current = false;
+      isLmbHeldRef.current = false;
+      orbitDragRef.current = null;
     };
 
     const handleWindowMouseDown = (e: MouseEvent) => {
@@ -2334,15 +2584,35 @@ export const CombatCanvas: React.FC<Props> = ({
       }
     };
 
+    const handleWindowMouseUp = (e: MouseEvent) => {
+      if (e.button === 0) {
+        isLmbHeldRef.current = false;
+        if (isMouseChordMovingRef.current) {
+          isMouseChordMovingRef.current = false;
+          lastChordMoveEndMsRef.current = Date.now();
+          suppressNextClickRef.current = true;
+        }
+      } else if (e.button === 2) {
+        isRmbHeldRef.current = false;
+        if (isMouseChordMovingRef.current) {
+          isMouseChordMovingRef.current = false;
+          lastChordMoveEndMsRef.current = Date.now();
+          suppressNextClickRef.current = true;
+        }
+      }
+    };
+
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
     window.addEventListener('blur', handleBlur);
     window.addEventListener('mousedown', handleWindowMouseDown);
+    window.addEventListener('mouseup', handleWindowMouseUp);
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
       window.removeEventListener('blur', handleBlur);
       window.removeEventListener('mousedown', handleWindowMouseDown);
+      window.removeEventListener('mouseup', handleWindowMouseUp);
     };
   }, [units, onSelectUnit, groundTargetState, onCancelGroundTarget]);
 
@@ -2350,21 +2620,40 @@ export const CombatCanvas: React.FC<Props> = ({
     // Store WORLD coords so reticle/logic stay correct under ISO view transform
     mouseCanvasPosRef.current = clientToWorld(clientX, clientY);
     const drag = orbitDragRef.current;
-    const rmbHeld = drag?.active || ((buttons ?? 0) & 2) !== 0;
-    if (rmbHeld && drag && isIsoViewAllowed()) {
-      const dx = clientX - drag.startClientX;
-      const dy = clientY - drag.startClientY;
-      drag.movedPx = Math.max(drag.movedPx, Math.hypot(dx, dy));
-      // Horizontal → yaw; vertical → pitch (20°↔90°). Sens from prefs (±50% of 1.0).
-      const orbitSens = displayPrefsRef.current.isoOrbitSensitivity || 1;
-      const pitchSens = displayPrefsRef.current.isoPitchSensitivity || 1;
-      // Drag right → yaw positive (mirrored from prior sign)
-      viewYawRadRef.current =
-        drag.yawAtStart + dx * orbitRadiansPerPixel(ISO_ORBIT_PX_PER_TURN) * orbitSens;
-      viewPitchDegRef.current = pitchDegFromOrbitDrag(
-        drag.pitchDegAtStart,
-        dy * pitchSens
-      );
+    const rmbHeld = drag?.active || isRmbHeldRef.current || ((buttons ?? 0) & 2) !== 0;
+    const lmbHeld = isLmbHeldRef.current || ((buttons ?? 0) & 1) !== 0;
+
+    if (isIsoViewAllowed()) {
+      if (rmbHeld && lmbHeld) {
+        if (!isMouseChordMovingRef.current) {
+          isMouseChordMovingRef.current = true;
+          suppressNextClickRef.current = true;
+          if (drag) drag.movedPx = Math.max(drag.movedPx, 999);
+          setAutoNav(false);
+          clickTargetRef.current = null;
+          if (onPlayerMove) onPlayerMove();
+        }
+      } else if (isMouseChordMovingRef.current && (!rmbHeld || !lmbHeld)) {
+        isMouseChordMovingRef.current = false;
+        lastChordMoveEndMsRef.current = Date.now();
+        suppressNextClickRef.current = true;
+      }
+
+      if (rmbHeld && drag) {
+        const dx = clientX - drag.startClientX;
+        const dy = clientY - drag.startClientY;
+        drag.movedPx = Math.max(drag.movedPx, Math.hypot(dx, dy));
+        // Horizontal → yaw; vertical → pitch (20°↔90°). Sens from prefs (±50% of 1.0).
+        const orbitSens = displayPrefsRef.current.isoOrbitSensitivity || 1;
+        const pitchSens = displayPrefsRef.current.isoPitchSensitivity || 1;
+        // Drag right → yaw positive (mirrored from prior sign)
+        viewYawRadRef.current =
+          drag.yawAtStart + dx * orbitRadiansPerPixel(ISO_ORBIT_PX_PER_TURN) * orbitSens;
+        viewPitchDegRef.current = pitchDegFromOrbitDrag(
+          drag.pitchDegAtStart,
+          dy * pitchSens
+        );
+      }
     }
   };
 
@@ -2386,7 +2675,8 @@ export const CombatCanvas: React.FC<Props> = ({
     if (!canvas) return;
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
-      const dir = e.deltaY > 0 ? 1 : e.deltaY < 0 ? -1 : 0;
+      // Wheel up (deltaY < 0) → zoom in; wheel down → zoom out
+      const dir = e.deltaY < 0 ? 1 : e.deltaY > 0 ? -1 : 0;
       if (!dir) return;
       const z = viewZoomRef.current + dir * CANVAS_VIEW_ZOOM_STEP;
       viewZoomRef.current = Math.min(
@@ -2404,41 +2694,90 @@ export const CombatCanvas: React.FC<Props> = ({
   };
 
   const handleCanvasPointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (e.button !== 2) return;
-    e.preventDefault();
-    if (!isIsoViewAllowed()) {
-      // Top-down / maze: right-click still cancels ground targeting (no orbit)
-      if (groundTargetState && onCancelGroundTarget) onCancelGroundTarget();
+    if (e.button === 2) {
+      isRmbHeldRef.current = true;
+      e.preventDefault();
+      if (!isIsoViewAllowed()) {
+        // Top-down / maze: right-click still cancels ground targeting (no orbit)
+        if (groundTargetState && onCancelGroundTarget) onCancelGroundTarget();
+        return;
+      }
+      orbitDragRef.current = {
+        active: true,
+        startClientX: e.clientX,
+        startClientY: e.clientY,
+        yawAtStart: viewYawRadRef.current,
+        pitchDegAtStart: viewPitchDegRef.current,
+        movedPx: 0,
+      };
+      try {
+        (e.currentTarget as HTMLCanvasElement).setPointerCapture(e.pointerId);
+      } catch {}
+
+      // If LMB is already down when RMB is pressed (or buttons has LMB):
+      if (isIsoViewAllowed() && (isLmbHeldRef.current || (e.buttons & 1) !== 0)) {
+        isMouseChordMovingRef.current = true;
+        suppressNextClickRef.current = true;
+        orbitDragRef.current.movedPx = 999;
+        setAutoNav(false);
+        clickTargetRef.current = null;
+        if (onPlayerMove) onPlayerMove();
+      }
       return;
     }
-    orbitDragRef.current = {
-      active: true,
-      startClientX: e.clientX,
-      startClientY: e.clientY,
-      yawAtStart: viewYawRadRef.current,
-      pitchDegAtStart: viewPitchDegRef.current,
-      movedPx: 0,
-    };
-    try {
-      (e.currentTarget as HTMLCanvasElement).setPointerCapture(e.pointerId);
-    } catch {}
+
+    if (e.button === 0) {
+      isLmbHeldRef.current = true;
+      const rmbHeld = isRmbHeldRef.current || orbitDragRef.current?.active || (e.buttons & 2) !== 0;
+      if (isIsoViewAllowed() && rmbHeld) {
+        isMouseChordMovingRef.current = true;
+        suppressNextClickRef.current = true;
+        if (orbitDragRef.current) {
+          orbitDragRef.current.movedPx = Math.max(orbitDragRef.current.movedPx, 999);
+        }
+        setAutoNav(false);
+        clickTargetRef.current = null;
+        if (onPlayerMove) onPlayerMove();
+        e.preventDefault();
+        return;
+      }
+    }
   };
 
   const handleCanvasPointerUp = (e: React.PointerEvent<HTMLCanvasElement>) => {
-    if (e.button !== 2) return;
-    const drag = orbitDragRef.current;
-    orbitDragRef.current = null;
-    try {
-      (e.currentTarget as HTMLCanvasElement).releasePointerCapture(e.pointerId);
-    } catch {}
-    // Short click with almost no drag → cancel ground target (ISO & top-down via other path)
-    if (
-      isIsoViewAllowed() &&
-      groundTargetState &&
-      onCancelGroundTarget &&
-      (!drag || drag.movedPx < 8)
-    ) {
-      onCancelGroundTarget();
+    if (e.button === 0) {
+      isLmbHeldRef.current = false;
+      if (isMouseChordMovingRef.current) {
+        isMouseChordMovingRef.current = false;
+        lastChordMoveEndMsRef.current = Date.now();
+        suppressNextClickRef.current = true;
+        e.preventDefault();
+      }
+      return;
+    }
+
+    if (e.button === 2) {
+      isRmbHeldRef.current = false;
+      if (isMouseChordMovingRef.current) {
+        isMouseChordMovingRef.current = false;
+        lastChordMoveEndMsRef.current = Date.now();
+        suppressNextClickRef.current = true;
+      }
+      const drag = orbitDragRef.current;
+      orbitDragRef.current = null;
+      try {
+        (e.currentTarget as HTMLCanvasElement).releasePointerCapture(e.pointerId);
+      } catch {}
+      // Short click with almost no drag → cancel ground target (ISO & top-down via other path)
+      if (
+        isIsoViewAllowed() &&
+        groundTargetState &&
+        onCancelGroundTarget &&
+        (!drag || drag.movedPx < 8)
+      ) {
+        onCancelGroundTarget();
+      }
+      return;
     }
   };
 
@@ -2446,6 +2785,10 @@ export const CombatCanvas: React.FC<Props> = ({
   // - Click on unit or boss: directly select/target that unit
   // - Click on empty ground: navigate/walk player to clicked position
   const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (suppressNextClickRef.current || Date.now() - lastChordMoveEndMsRef.current < 250) {
+      suppressNextClickRef.current = false;
+      return;
+    }
     const canvas = canvasRef.current;
     if (!canvas) return;
     const { x: clickX, y: clickY } = clientToWorld(e.clientX, e.clientY);
@@ -2665,7 +3008,8 @@ export const CombatCanvas: React.FC<Props> = ({
       const keys = keysPressedRef.current;
       let moveX = 0;
       let moveY = 0;
-      if (keys.has('w') || keys.has('arrowup')) moveY -= 1;
+      const isChordMove = isIsoViewAllowed() && isMouseChordMovingRef.current;
+      if (keys.has('w') || keys.has('arrowup') || isChordMove) moveY -= 1;
       if (keys.has('s') || keys.has('arrowdown')) moveY += 1;
       if (keys.has('a') || keys.has('arrowleft')) moveX -= 1;
       if (keys.has('d') || keys.has('arrowright')) moveX += 1;
@@ -2687,7 +3031,8 @@ export const CombatCanvas: React.FC<Props> = ({
           ? DRAGON_SOUL_WAYPOINTS
           : SHADOWFANG_WAYPOINTS;
       const mazeTheme = mazeLayout.theme;
-      const { segLens, totalLen: totalMazeLen, getPoint: getPointAlongMaze } = computePathGeometry(mazeWaypoints);
+      const mazeGeometry = computePathGeometry(mazeWaypoints);
+      const { segLens, totalLen: totalMazeLen, getPoint: getPointAlongMaze } = mazeGeometry;
 
       // ── Synchronized Timeline Calculation (always read live refs) ──
       const totalTProp = totalTravelMsRef.current;
@@ -3171,10 +3516,9 @@ export const CombatCanvas: React.FC<Props> = ({
         setAutoNav(false);
         const worldIntent = screenDirToWorld(moveX, moveY, viewCam);
         const len = Math.hypot(worldIntent.x, worldIntent.y) || 1;
-        // WASD base speed −20% vs prior 8.5 / 5.2; scaled by prefs.moveSensitivity
-        const moveSens = displayPrefsRef.current.moveSensitivity || 1;
+        // Balanced speed: combat vs maze
         const speed =
-          (runPhase === 'TRAVEL_RECOVERY' ? 6.8 * MAZE_TRAVERSE_SPEED_SCALE : 4.16) * moveSens;
+          runPhase === 'TRAVEL_RECOVERY' ? PLAYER_MAZE_MOVE_SPEED : PLAYER_COMBAT_MOVE_SPEED;
         playerMoveDirRef.current = { dx: worldIntent.x / len, dy: worldIntent.y / len };
         playerPosRef.current.x += (worldIntent.x / len) * speed;
         playerPosRef.current.y += (worldIntent.y / len) * speed;
@@ -3197,7 +3541,7 @@ export const CombatCanvas: React.FC<Props> = ({
         const dy = autoApproachTarget.targetY - playerPosRef.current.y;
         const dist = Math.hypot(dx, dy);
         if (dist > autoApproachTarget.desiredDist) {
-          const speed = 4.8;
+          const speed = PLAYER_COMBAT_MOVE_SPEED;
           playerMoveDirRef.current = { dx: dx / dist, dy: dy / dist };
           playerPosRef.current.x += (dx / dist) * Math.min(speed, dist);
           playerPosRef.current.y += (dy / dist) * Math.min(speed, dist);
@@ -3217,13 +3561,14 @@ export const CombatCanvas: React.FC<Props> = ({
           if (onApproachTargetReached) onApproachTargetReached();
         }
       } else if (clickTargetRef.current && canMove) {
-        // Mouse Click-to-Move (maze travel faster)
+        // Mouse Click-to-Move (unified with WASD speed)
         const dest = clickTargetRef.current;
         const dx = dest.x - playerPosRef.current.x;
         const dy = dest.y - playerPosRef.current.y;
         const dist = Math.hypot(dx, dy);
         if (dist > 4) {
-          const speed = runPhase === 'TRAVEL_RECOVERY' ? 8.5 * MAZE_TRAVERSE_SPEED_SCALE : 5.2;
+          const speed =
+            runPhase === 'TRAVEL_RECOVERY' ? PLAYER_MAZE_MOVE_SPEED : PLAYER_COMBAT_MOVE_SPEED;
           playerMoveDirRef.current = { dx: dx / dist, dy: dy / dist };
           playerPosRef.current.x += (dx / dist) * Math.min(speed, dist);
           playerPosRef.current.y += (dy / dist) * Math.min(speed, dist);
@@ -3594,30 +3939,52 @@ export const CombatCanvas: React.FC<Props> = ({
         ctx.globalAlpha = 1;
       };
 
-      /** Wall cells bordering a path — sparse, evenly spaced candles (~40% of prior count). */
+      /** Wall cells bordering a path — rationally placed candles mounted on corridor wall surfaces. */
       const collectMazeWallCandleSites = (layout: MazeLayout): Array<{ x: number; y: number }> => {
         const { originX, originY } = getMazeDrawOrigin(layout, width, height);
         const { cols, rows, cellSize, grid, seed } = layout;
+        const entC = layout.entrance?.col ?? 1;
+        const entR = layout.entrance?.row ?? 1;
+        const exC = layout.exit?.col ?? cols - 2;
+        const exR = layout.exit?.row ?? rows - 2;
+
         const isWall = (c: number, r: number) =>
           c >= 0 && r >= 0 && c < cols && r < rows && !grid[r * cols + c];
-        const bordersPath = (c: number, r: number) => {
-          const n = [
-            [c + 1, r],
-            [c - 1, r],
-            [c, r + 1],
-            [c, r - 1],
-          ];
-          return n.some(
-            ([nc, nr]) => nc >= 0 && nr >= 0 && nc < cols && nr < rows && !!grid[nr * cols + nc]
-          );
-        };
-        // Full map candidates (not left-half mirror) → more even coverage
-        const candidates: Array<{ c: number; r: number }> = [];
-        for (let r = 0; r < rows; r++) {
-          for (let c = 0; c < cols; c++) {
-            if (isWall(c, r) && bordersPath(c, r)) candidates.push({ c, r });
+        const isPath = (c: number, r: number) =>
+          c >= 0 && r >= 0 && c < cols && r < rows && !!grid[r * cols + c];
+
+        // Wall candidate with direction vector pointing towards adjacent path for wall mounting
+        type CandleCand = { c: number; r: number; dx: number; dy: number };
+        const candidates: CandleCand[] = [];
+
+        // Exclude outer band (eroded rock hull) and entrance/exit proximity
+        for (let r = 2; r < rows - 2; r++) {
+          for (let c = 2; c < cols - 2; c++) {
+            if (!isWall(c, r)) continue;
+            if (Math.hypot(c - entC, r - entR) < 2.5 || Math.hypot(c - exC, r - exR) < 2.5) continue;
+
+            // Determine which neighboring cell is path
+            let dx = 0;
+            let dy = 0;
+            if (isPath(c, r + 1)) {
+              // Path is below -> candle sits on bottom wall edge shining down into corridor
+              dy = 0.35;
+            } else if (isPath(c, r - 1)) {
+              // Path is above -> candle sits on top wall edge shining up
+              dy = -0.35;
+            } else if (isPath(c + 1, r)) {
+              // Path is right -> candle sits on right wall edge
+              dx = 0.35;
+            } else if (isPath(c - 1, r)) {
+              // Path is left -> candle sits on left wall edge
+              dx = -0.35;
+            } else {
+              continue; // no direct orthogonal path border
+            }
+            candidates.push({ c, r, dx, dy });
           }
         }
+
         let s = (seed >>> 0) || 1;
         const rand = () => {
           s = (Math.imul(1664525, s) + 1013904223) >>> 0;
@@ -3627,31 +3994,34 @@ export const CombatCanvas: React.FC<Props> = ({
           const j = Math.floor(rand() * (i + 1));
           [candidates[i], candidates[j]] = [candidates[j], candidates[i]];
         }
-        // 数量减少六成 → 保留约 40%；随机洗牌后再按最小间距均匀抽取
-        const pickN = Math.max(2, Math.min(8, Math.floor(candidates.length / 18)));
-        const minDist = Math.max(4, Math.floor(Math.sqrt((cols * rows) / Math.max(1, pickN * 3))));
-        const picked: Array<{ c: number; r: number }> = [];
+
+        // 数量合理：5人 12~16 盏，20人 18~24 盏，间距均匀，氛围感充足
+        const is20 = is20Man;
+        const pickN = is20
+          ? Math.max(16, Math.min(24, Math.floor(candidates.length / 10)))
+          : Math.max(12, Math.min(16, Math.floor(candidates.length / 12)));
+        const minDist = Math.max(4, Math.floor(Math.sqrt((cols * rows) / Math.max(1, pickN * 2.2))));
+        const picked: CandleCand[] = [];
         for (const cand of candidates) {
           if (picked.length >= pickN) break;
-          if (
-            picked.every(
-              (p) => Math.hypot(p.c - cand.c, p.r - cand.r) >= minDist
-            )
-          ) {
+          if (picked.every((p) => Math.hypot(p.c - cand.c, p.r - cand.r) >= minDist)) {
             picked.push(cand);
           }
         }
-        // If spacing rejected too many, fill remaining without minDist
+        // Fill remaining with minDist >= 3 if needed
         for (const cand of candidates) {
           if (picked.length >= pickN) break;
           if (picked.some((p) => p.c === cand.c && p.r === cand.r)) continue;
-          picked.push(cand);
+          if (picked.every((p) => Math.hypot(p.c - cand.c, p.r - cand.r) >= 3)) {
+            picked.push(cand);
+          }
         }
+
         const sites: Array<{ x: number; y: number }> = [];
         for (const p of picked) {
           sites.push({
-            x: originX + p.c * cellSize + cellSize / 2,
-            y: originY + p.r * cellSize + cellSize * 0.35,
+            x: originX + p.c * cellSize + cellSize / 2 + p.dx * cellSize,
+            y: originY + p.r * cellSize + cellSize / 2 + p.dy * cellSize,
           });
         }
         return sites;
@@ -3702,38 +4072,14 @@ export const CombatCanvas: React.FC<Props> = ({
 
         approachElapsedRef.current = 0;
 
+        // Apply world-space camera transform FIRST so all floor and maze elements yaw/pitch synchronously
+        applyCanvasViewTransform(ctx, viewCam);
+
+        // Infinite/full-screen cavern floor & world grid (eliminates "island in black void" look)
+        drawMazeCavernFloorWorld(ctx, viewCam, width, height, mazeTheme, is20Man);
+
         if (is20Man) {
           // ── Dragon Soul (20-man Obsidian & Molten Magma) ──
-          // Screen-fixed ambience / texture (does not yaw with ISO camera)
-          ctx.fillStyle = mazeTheme?.ambienceColor || '#110508';
-          ctx.fillRect(0, 0, width, height);
-
-          // Glowing lava fissure grid
-          ctx.strokeStyle = 'rgba(239, 68, 68, 0.22)';
-          ctx.lineWidth = 1;
-          for (let x = 0; x < width; x += 35) {
-            ctx.beginPath();
-            ctx.moveTo(x, 0);
-            ctx.lineTo(x, height);
-            ctx.stroke();
-          }
-          for (let y = 0; y < height; y += 35) {
-            ctx.beginPath();
-            ctx.moveTo(0, y);
-            ctx.lineTo(width, y);
-            ctx.stroke();
-          }
-
-          // Molten Magma Fissures (ambience only — no explicit maze path stroke)
-          ctx.strokeStyle = 'rgba(249, 115, 22, 0.35)';
-          ctx.lineWidth = 3;
-          ctx.beginPath();
-          ctx.moveTo(50, 220);
-          ctx.quadraticCurveTo(280, 260, 420, 210);
-          ctx.quadraticCurveTo(550, 160, 750, 280);
-          ctx.stroke();
-
-          applyCanvasViewTransform(ctx, viewCam);
           drawPrimWalls(mazeLayout, mazeTheme);
 
           // Wall candles (30% size) — random left-right symmetric on maze walls
@@ -3747,27 +4093,6 @@ export const CombatCanvas: React.FC<Props> = ({
           drawBlueExitPortal(ex.x, ex.y);
         } else {
           // ── Shadowfang Keep (5-man Castle Corridors) ──
-          // Screen-fixed ambience / texture (does not yaw with ISO camera)
-          ctx.fillStyle = mazeTheme?.ambienceColor || '#080814';
-          ctx.fillRect(0, 0, width, height);
-
-          // Cobblestone grid
-          ctx.strokeStyle = '#121124';
-          ctx.lineWidth = 1;
-          for (let x = 0; x < width; x += 35) {
-            ctx.beginPath();
-            ctx.moveTo(x, 0);
-            ctx.lineTo(x, height);
-            ctx.stroke();
-          }
-          for (let y = 0; y < height; y += 35) {
-            ctx.beginPath();
-            ctx.moveTo(0, y);
-            ctx.lineTo(width, y);
-            ctx.stroke();
-          }
-
-          applyCanvasViewTransform(ctx, viewCam);
           drawPrimWalls(mazeLayout, mazeTheme);
 
           // Wall candles (30% size) — random left-right symmetric on maze walls
@@ -3788,7 +4113,11 @@ export const CombatCanvas: React.FC<Props> = ({
             const oy = mob.y;
             mob.x = sp.x;
             mob.y = sp.y;
-            drawTrashMob(ctx, mob, tickCount, is20Man, { scale: 0.5, showName: false });
+            drawTrashMob(ctx, mob, tickCount, is20Man, {
+              scale: 0.5,
+              showName: false,
+              isSelected: mob.id === selectedUnitId,
+            });
             mob.x = ox;
             mob.y = oy;
           });
@@ -3822,9 +4151,28 @@ export const CombatCanvas: React.FC<Props> = ({
           return orderA - orderB;
         });
 
+        const manualLeader =
+          !autoNavActiveRef.current && !hasDeadMembers
+            ? selectExitClosestHumanLeader(
+                units
+                  .filter((unit) => unit.isPlayer || unit.isHumanControlled)
+                  .map((unit) => ({
+                    id: unit.id,
+                    position: unit.isPlayer
+                      ? playerPosRef.current
+                      : (companionPositionsRef.current[unit.id] || unit.position || playerPosRef.current),
+                    isAlive: !!(unit.isAlive ?? unit.alive ?? true) && unit.hp > 0,
+                    isLocalPlayer: !!unit.isPlayer,
+                  })),
+                mazeWaypoints,
+                segLens
+              )
+            : null;
+
         sortedParty.forEach((u, rank) => {
           const isPlayer = u.isPlayer;
           let targetPos: { x: number; y: number };
+          let directStepped = false;
 
           if (autoNavActiveRef.current && !hasDeadMembers) {
             // March + encounter share the same path lead — fight at predicted stop, no teleport to mobs
@@ -3841,15 +4189,44 @@ export const CombatCanvas: React.FC<Props> = ({
               else targetPos = { x: targetPos.x - 5 - (rank % 3) * 3, y: targetPos.y - 4 };
             }
           } else {
-            // Manual movement
-            targetPos = isPlayer
-              ? playerPosRef.current
-              : (companionPositionsRef.current[u.id] || { x: 60 + (rank % 5) * 18, y: 80 });
+            // Manual movement: mirror remote humans/host-authoritative units, or AI follows exit-closest human along corridor
+            const followHostPos =
+              !isPlayer &&
+              syncRemotePositions &&
+              !!u.position &&
+              (isNetworkGuestRef.current || !!u.isHumanControlled);
 
-            if (!isPlayer && !hasDeadMembers) {
-              const targetX = playerPosRef.current.x - (rank + 1) * 18;
-              const targetY = playerPosRef.current.y + (rank % 2 === 0 ? 10 : -10);
-              targetPos = { x: targetX, y: targetY };
+            if (isPlayer) {
+              targetPos = playerPosRef.current;
+            } else if (followHostPos && u.position) {
+              targetPos = { x: u.position.x, y: u.position.y };
+            } else if (!hasDeadMembers && manualLeader) {
+              const cur = companionPositionsRef.current[u.id] || {
+                x: manualLeader.position.x,
+                y: manualLeader.position.y,
+              };
+              targetPos = stepManualMazeCompanion({
+                unitId: u.id,
+                role: u.role,
+                classId: u.classId,
+                rank,
+                is20Man,
+                leaderPos: manualLeader.position,
+                leaderDistAlongPath: manualLeader.distAlongPath,
+                currentPos: cur,
+                waypoints: mazeWaypoints,
+                geometry: mazeGeometry,
+                cellSize: mazeLayout.cellSize,
+                currentEncounterPack,
+                tickCount,
+                speedScale: MAZE_TRAVERSE_SPEED_SCALE,
+              });
+              directStepped = true;
+            } else {
+              targetPos = companionPositionsRef.current[u.id] || {
+                x: 60 + (rank % 5) * 18,
+                y: 80,
+              };
             }
           }
 
@@ -3858,21 +4235,26 @@ export const CombatCanvas: React.FC<Props> = ({
             ? playerPosRef.current
             : (companionPositionsRef.current[u.id] || { x: targetPos.x, y: targetPos.y });
 
-          const dx = targetPos.x - curPos.x;
-          const dy = targetPos.y - curPos.y;
-          const dist = Math.hypot(dx, dy);
-
-          if (dist > 0.5) {
-            // Cap step so encounter/timeline corrections never look like teleports
-            const step = Math.min(
-              dist,
-              Math.min(8.5 * MAZE_TRAVERSE_SPEED_SCALE, Math.max(3.6 * MAZE_TRAVERSE_SPEED_SCALE, dist * 0.22 * MAZE_TRAVERSE_SPEED_SCALE))
-            );
-            curPos.x += (dx / dist) * step;
-            curPos.y += (dy / dist) * step;
-          } else {
+          if (directStepped) {
             curPos.x = targetPos.x;
             curPos.y = targetPos.y;
+          } else {
+            const dx = targetPos.x - curPos.x;
+            const dy = targetPos.y - curPos.y;
+            const dist = Math.hypot(dx, dy);
+
+            if (dist > 0.5) {
+              // Cap step so encounter/timeline corrections never look like teleports
+              const step = Math.min(
+                dist,
+                Math.min(8.5 * MAZE_TRAVERSE_SPEED_SCALE, Math.max(3.6 * MAZE_TRAVERSE_SPEED_SCALE, dist * 0.22 * MAZE_TRAVERSE_SPEED_SCALE))
+              );
+              curPos.x += (dx / dist) * step;
+              curPos.y += (dy / dist) * step;
+            } else {
+              curPos.x = targetPos.x;
+              curPos.y = targetPos.y;
+            }
           }
 
           if (isPlayer) {
@@ -3944,7 +4326,10 @@ export const CombatCanvas: React.FC<Props> = ({
           });
         });
 
+        // Restore context to screen coordinates and apply radial vignette to fade edges naturally
         ctx.restore();
+        drawMazeCavernVignetteScreen(ctx, width, height);
+
         animId = requestAnimationFrame(render);
         return;
       }
@@ -4528,13 +4913,22 @@ export const CombatCanvas: React.FC<Props> = ({
         const defaultTarget = getCombatFormationPos(u, idx, bossPos, hpPct);
 
         // 2. 走位可行域求交：躲红圈 → 仇恨纠偏 → 危血绿圈 → 健康输出位叠层 → 主坦 25 码
+        const looseAddForTank =
+          u.role === 'TANK'
+            ? findLooseAddForTank(u, enemyUnitsRef.current, bossUnit, units)
+            : null;
+        const attackTargetPos =
+          looseAddForTank?.position
+            ? { x: looseAddForTank.position.x, y: looseAddForTank.position.y }
+            : bossPos;
+
         const formationResult = evaluateGroundFormationPosition({
           currentPos: pos,
           unit: u,
           groundEffects,
           defaultTarget,
           bossPos,
-          attackTargetPos: bossPos,
+          attackTargetPos,
           tankPos: primaryTank && primaryTank.id !== u.id ? primaryTankPos : undefined,
           bossFacingRad,
           bossTargetUnitId: bossTargetId,
@@ -5119,8 +5513,8 @@ export const CombatCanvas: React.FC<Props> = ({
         title={
           groundTargetState
             ? '单击有效区域释放技能，右键或ESC取消'
-            : displayPrefs.canvasViewMode === 'ISO' && runPhase !== 'TRAVEL_RECOVERY'
-              ? '2.5D：按住右键左右转 / 上下俯仰(20°–垂直) · 单击地面移动 · 滚轮缩放'
+            : displayPrefs.canvasViewMode === 'ISO'
+              ? '2.5D：按住右键左右转 / 上下俯仰(20°–垂直) · 按住右键按左键向前走 · 单击地面移动 · 滚轮缩放'
               : '单击地面移动，单击或双击角色选中目标 · 滚轮缩放视角'
         }
       />
@@ -5139,13 +5533,11 @@ export const CombatCanvas: React.FC<Props> = ({
         <span>
           单击地面跑动 · 单击选人 · 长按 <strong className="text-white bg-slate-800 px-1 rounded">W A S D</strong> 连续移动 ·
           滚轮缩放（±50%）
-          {displayPrefs.canvasViewMode === 'ISO' && runPhase === 'TRAVEL_RECOVERY' ? (
-            <> · 迷宫阶段锁定俯视</>
-          ) : displayPrefs.canvasViewMode === 'ISO' ? (
+          {displayPrefs.canvasViewMode === 'ISO' ? (
             <>
               {' '}
               · 按住 <strong className="text-amber-300 bg-slate-800 px-1 rounded">右键</strong>{' '}
-              左右转视角 · 上下调俯仰（上 20° / 下垂直）
+              左右转视角/俯仰 · 按住右键按 <strong className="text-amber-300 bg-slate-800 px-1 rounded">左键</strong> 向前走
             </>
           ) : null}
           · 按 <strong className="text-amber-300 bg-slate-800 px-1 rounded">Alt+1~5</strong> 切换当前小队目标 · 施法距离不足自动跑向目标

@@ -22,6 +22,7 @@ function makeDk(engine: CombatEngine): Unit {
     isAlive: true,
     hp: 100000,
     maxHp: 100000,
+    absorb: 0,
     runicPower: 0,
     resources: [{ kind: 'RUNIC_POWER', current: 0, max: 100 }],
     runes: createDefaultDkRunes(),

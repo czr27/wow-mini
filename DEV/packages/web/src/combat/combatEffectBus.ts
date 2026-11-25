@@ -86,6 +86,20 @@ export class EffectGatherQueue {
     this.snapshots.set(snap.ownerId, snap);
   }
 
+  /** Drop a leaving owner's queued seat mirror so it cannot reappear after AI takeover. */
+  dropSnapshot(ownerId: string) {
+    if (!ownerId) return;
+    this.snapshots.delete(ownerId);
+  }
+
+  /** Drop effects authored by / targeting a leaving seat (in-flight gather only). */
+  dropEffectsForOwner(ownerId: string) {
+    if (!ownerId) return;
+    this.effects = this.effects.filter(
+      (e) => e.sourceId !== ownerId && e.targetId !== ownerId
+    );
+  }
+
   /** Returns payload when due; null if nothing to send or interval not elapsed. */
   tryFlush(nowMs = Date.now()): {
     effects: CombatEffect[];
@@ -143,6 +157,11 @@ export function emitCombatEffect(opts: {
   applyLocal: (effect: CombatEffect) => void;
   send: EffectSendFn;
   nowMs?: number;
+  /**
+   * When false, foreign-target outbound effects are not marked applied so the
+   * author can stack the relayed delta on batch echo (vital path).
+   */
+  markForeignOutbound?: boolean;
 }): CombatEffect {
   const nowMs = opts.nowMs ?? Date.now();
   const effectId =
@@ -156,8 +175,9 @@ export function emitCombatEffect(opts: {
     if (opts.applied.mark(effectId)) {
       opts.applyLocal(effect);
     }
-  } else {
-    // Still record outbound ids we authored so batch echo of our CAST_START etc. is fine
+  } else if (opts.markForeignOutbound !== false) {
+    // CAST HUD / summons: mark so batch echo does not double-fire FX.
+    // Vital relays set markForeignOutbound=false so the caster can apply on echo.
     opts.applied.mark(effectId);
   }
   opts.send(effect);

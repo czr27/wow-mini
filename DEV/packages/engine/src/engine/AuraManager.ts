@@ -57,12 +57,17 @@ export class AuraManager {
     const existing = target.buffs.find(b => b.spellId === partial.spellId && b.sourceUnitId === partial.sourceUnitId);
 
     if (existing) {
+      const maxStacks = Math.max(1, existing.maxStacks || partial.maxStacks || 1);
+      existing.maxStacks = maxStacks;
+      // Absolute stacks (>1) SET layers (bone shield 6, network APPLY_BUFF); else +1 under max.
+      if (typeof partial.stacks === 'number' && partial.stacks > 1) {
+        existing.stacks = Math.min(maxStacks, Math.round(partial.stacks));
+      } else if (existing.stacks < maxStacks) {
+        existing.stacks++;
+      }
       if (existing.spellId === 'lifebloom') {
         // Shared timer (Cata): stacks amplify ticks/bloom; all stacks expire together.
         const duration = partial.durationMs || 15000;
-        if (existing.stacks < existing.maxStacks) {
-          existing.stacks++;
-        }
         existing.remainingMs = duration;
         existing.durationMs = duration;
         delete existing.stackRemainingMs;
@@ -80,18 +85,19 @@ export class AuraManager {
       } else {
         // Refresh duration
         existing.remainingMs = partial.durationMs;
-        // Add stack if below max
-        if (existing.stacks < existing.maxStacks) {
-          existing.stacks++;
-          this.engine.emitEvent({
-            kind: 'BUFF_APPLIED',
-            sourceId: partial.sourceUnitId,
-            targetId: target.id,
-            spellId: partial.spellId,
-            value: existing.stacks,
-            timestamp: this.engine.elapsed,
-          });
+        if (existing.stacks > 1 && /层\)\s*$/.test(existing.name || '')) {
+          existing.name = (existing.name || '').replace(/\(\d+层\)/, `(${existing.stacks}层)`);
+        } else if (existing.stacks > 1 && existing.spellId === 'bone_shield') {
+          existing.name = `白骨之盾 (${existing.stacks}层)`;
         }
+        this.engine.emitEvent({
+          kind: 'BUFF_APPLIED',
+          sourceId: partial.sourceUnitId,
+          targetId: target.id,
+          spellId: partial.spellId,
+          value: existing.stacks,
+          timestamp: this.engine.elapsed,
+        });
       }
     } else {
       const isLifebloom = partial.spellId === 'lifebloom';

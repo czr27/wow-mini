@@ -94,6 +94,7 @@ export function useRoomLobby(deps: RoomLobbyDeps) {
       const room = roomFacadeRef.current.getRoom(activeRoomId) || roomManager.getRoom(activeRoomId);
       const isHost = room?.hostId === currentChar.id || isNetworkHostRef.current;
       if (isHost) {
+        // 先广播 ROOM_CLOSED，客人立刻离房；再清本地
         roomFacadeRef.current.closeRoom(activeRoomId, 'host_left');
       } else {
         roomFacadeRef.current.leaveRoom(activeRoomId, currentChar.id);

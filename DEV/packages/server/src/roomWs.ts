@@ -401,13 +401,16 @@ export class RoomWsHub {
 
     const roomId = session.roomId;
     if (!roomId) return;
-    this.votes.clearRoom(roomId);
     const room = this.roomManager.getRoom(roomId);
-    if (!room) return;
+    if (!room) {
+      this.votes.clearRoom(roomId);
+      return;
+    }
 
     const inRun = room.status === 'IN_COMBAT' || room.status === 'OUT_OF_COMBAT';
 
     if (room.hostId === session.playerId) {
+      this.votes.clearRoom(roomId);
       this.destroyRoomAndNotify(roomId, reason === 'heartbeat_timeout' ? 'host_timeout' : 'host_left', inRun);
       return;
     }
@@ -524,6 +527,14 @@ export class RoomWsHub {
         existing.disconnectTimer = undefined;
       }
 
+      // 断线宽限期内用新 WebSocket 重连：保留原房间归属（若仍在该房席位中），避免房主被幽灵房扫描误杀
+      const existingRoom = existing?.roomId ? this.roomManager.getRoom(existing.roomId) : undefined;
+      const stillSeated = !!existingRoom?.members.some(
+        (m) => m.id === auth.playerId && !m.isAi
+      );
+      const preservedRoomId =
+        prevOnThisWs?.roomId ?? (stillSeated && existing?.roomId ? existing.roomId : null);
+
       const session: ClientSession = {
         ws,
         playerId: auth.playerId,
@@ -532,7 +543,7 @@ export class RoomWsHub {
         classId: auth.classId,
         spec: auth.spec,
         role: auth.role,
-        roomId: prevOnThisWs?.roomId ?? null,
+        roomId: preservedRoomId,
         lastPongMs: Date.now(),
       };
       this.sessionsByPlayer.set(auth.playerId, session);
@@ -801,7 +812,48 @@ export class RoomWsHub {
             if (action.role) this.roomManager.addAiMember(roomId, action.role);
             break;
           case 'KICK':
-            if (action.memberId) this.roomManager.kickMember(roomId, action.memberId);
+            if (action.memberId) {
+              const targetId = action.memberId;
+              const isTargetInRoom = room.members.some((m) => m.id === targetId);
+              if (!isTargetInRoom || targetId === room.hostId) break;
+              const rawSess = this.sessionsByPlayer.get(targetId);
+              const targetSess = rawSess?.roomId === roomId ? rawSess : undefined;
+              const inRun =
+                room.status === 'IN_COMBAT' || room.status === 'OUT_OF_COMBAT';
+              if (targetSess) {
+                targetSess.roomId = null;
+                this.send(targetSess.ws, {
+                  type: 'ROOM_CLOSED',
+                  roomId,
+                  timeMs: Date.now(),
+                  payload: {
+                    roomId,
+                    reason: 'kicked',
+                    forceSummary: false,
+                  },
+                });
+              }
+              if (inRun) {
+                // Mid-run: AI takeover instead of empty seat (keep WS logged in)
+                const replaced = this.roomManager.replaceHumanWithAi(roomId, targetId);
+                if (replaced.ok && replaced.room) {
+                  this.broadcastRoom(roomId, {
+                    type: 'MEMBER_REPLACE_AI',
+                    roomId,
+                    timeMs: Date.now(),
+                    payload: {
+                      roomId,
+                      playerId: targetId,
+                      aiMemberId: replaced.aiMemberId,
+                      room: replaced.room,
+                    },
+                  });
+                  this.pushRoomUpdate(replaced.room);
+                }
+                break;
+              }
+              this.roomManager.kickMember(roomId, targetId);
+            }
             break;
           case 'SET_READY':
             this.roomManager.setPlayerReady(roomId, session.playerId, !!action.ready);
@@ -871,8 +923,8 @@ export class RoomWsHub {
       case 'VOTE_CAST': {
         const roomId = msg.roomId || session.roomId;
         if (!roomId) break;
-        // Drop cross-room spoofing (same guard as PLAYER_INPUT / COMBAT_STATE)
-        if (session.roomId && session.roomId !== roomId) break;
+        // Drop unjoined / cross-room spoofing
+        if (session.roomId !== roomId) break;
         const body = msg.payload as VoteCastPayload;
         if (!body?.kind || !body.choice) break;
         const humans = this.humanIdsInRoom(roomId);
@@ -903,7 +955,7 @@ export class RoomWsHub {
       case 'PLAYER_INPUT': {
         if (!msg.roomId && session.roomId) msg.roomId = session.roomId;
         if (!msg.roomId) break;
-        if (session.roomId && session.roomId !== msg.roomId) break;
+        if (session.roomId !== msg.roomId) break;
         const input = msg.payload as PlayerInputPayload;
         if (input?.kind === 'REQUEST_SKIP_TRAVEL') {
           // 发起跳过行军：点跳过的人直接算同意（优先 payload.playerId，回退 session）
@@ -942,7 +994,7 @@ export class RoomWsHub {
         // Guests/host authors → relay to room (host gathers; peers may ignore)
         if (!msg.roomId && session.roomId) msg.roomId = session.roomId;
         if (!msg.roomId) break;
-        if (session.roomId && session.roomId !== msg.roomId) break;
+        if (session.roomId !== msg.roomId) break;
         this.broadcastRoom(msg.roomId, msg, session.playerId);
         break;
       }
@@ -951,9 +1003,9 @@ export class RoomWsHub {
         // Host → all: fan-out gathered effects (original effectIds preserved)
         if (!msg.roomId && session.roomId) msg.roomId = session.roomId;
         if (!msg.roomId) break;
-        if (session.roomId && session.roomId !== msg.roomId) break;
+        if (session.roomId !== msg.roomId) break;
         const room = this.roomManager.getRoom(msg.roomId);
-        if (room && room.hostId !== session.playerId) break;
+        if (!room || room.hostId !== session.playerId) break;
         this.broadcastRoom(msg.roomId, msg, session.playerId);
         break;
       }
@@ -965,8 +1017,15 @@ export class RoomWsHub {
         // Relay only within room; combat tick stays on host client
         if (!msg.roomId && session.roomId) msg.roomId = session.roomId;
         if (!msg.roomId) break;
-        // Drop cross-room spoofing (session must belong to this room)
-        if (session.roomId && session.roomId !== msg.roomId) break;
+        // Drop unjoined / cross-room spoofing (session must belong to this room)
+        if (session.roomId !== msg.roomId) break;
+        const hostCheckRoom = this.roomManager.getRoom(msg.roomId);
+        if (
+          msg.type !== 'CAST_INTERRUPT' &&
+          (!hostCheckRoom || hostCheckRoom.hostId !== session.playerId)
+        ) {
+          break;
+        }
 
         if (msg.type === 'COMBAT_STATE') {
           const snap = msg.payload as any;

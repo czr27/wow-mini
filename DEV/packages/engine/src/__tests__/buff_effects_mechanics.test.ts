@@ -168,6 +168,60 @@ describe('Buff 机械效果：团队增益 / 无敌 / 减伤', () => {
     assert.equal(mage.hp, hp0, '冰箱期间火焰伤害免疫');
   });
 
+  it('6. 白骨之盾：施放初始 6 层与 20% 减伤，受击扣 1 层，2 秒内置 CD 保护，扣完移除', () => {
+    const engine = new CombatEngine();
+    registerClassSpells(engine, 'DK');
+    const dk = makeAlly('dk_tank', 1, { classId: 'DK', role: 'TANK' });
+    dk.hp = 100_000;
+    dk.maxHp = 100_000;
+    const boss = makeBoss();
+    engine.addUnit(dk);
+    engine.addUnit(boss);
+
+    // 施放白骨之盾
+    assert.equal(castAndResolve(engine, 'dk_tank', 'dk_bone_shield', 'dk_tank'), true);
+    const bsBuff = dk.buffs.find(b => b.spellId === 'bone_shield');
+    assert.ok(bsBuff, '应挂上白骨之盾 buff');
+    assert.equal(bsBuff?.stacks, 6, '初始层数应为 6 层');
+    assert.equal(bsBuff?.durationMs, 300_000, '持续时间应为 5 分钟 (300_000ms)');
+
+    // 第 1 次受击：10000 原始伤害经过 20% 减伤实扣 8000，且消耗 1 层骨盾 (6 -> 5)
+    const hp0 = dk.hp;
+    engine.applyDamage(boss.id, dk.id, 10000, false, 'boss_hit', 'PHYSICAL');
+    assert.equal(dk.hp, hp0 - 8000, '骨盾提供 20% 减伤');
+    assert.equal(bsBuff?.stacks, 5, '受击后骨盾消耗 1 层变为 5 层');
+
+    // 500ms 后立刻第 2 次受击（受制于 2s 内置 CD，骨盾不重复扣层，但减伤依然生效）
+    engine.tick(500);
+    const hp1 = dk.hp;
+    engine.applyDamage(boss.id, dk.id, 10000, false, 'boss_hit_fast', 'PHYSICAL');
+    assert.equal(dk.hp, hp1 - 8000, '2s 内置 CD 期间 20% 减伤依然生效');
+    assert.equal(bsBuff?.stacks, 5, '2s 内置 CD 内再次受击不应重复扣除层数');
+
+    // 推进 2000ms（总计经过 2.5s，已过内置 CD）第 3 次受击：应再次扣 1 层 (5 -> 4)
+    engine.tick(2000);
+    const hp2 = dk.hp;
+    engine.applyDamage(boss.id, dk.id, 10000, false, 'boss_hit_after_icd', 'PHYSICAL');
+    assert.equal(dk.hp, hp2 - 8000, '减伤依然生效');
+    assert.equal(bsBuff?.stacks, 4, '冷却过后受击应扣除第 2 层变为 4 层');
+
+    // 依次消耗剩余 4 层（4 -> 3 -> 2 -> 1 -> 0 移除）
+    for (let remaining = 3; remaining >= 0; remaining--) {
+      engine.tick(2000);
+      engine.applyDamage(boss.id, dk.id, 10000, false, 'boss_strike', 'PHYSICAL');
+      if (remaining > 0) {
+        assert.equal(bsBuff?.stacks, remaining);
+      }
+    }
+
+    // 验证全部层数消耗后 buff 被彻底移除，且再次受击失去 20% 减伤
+    assert.equal(dk.buffs.some(b => b.spellId === 'bone_shield'), false, '层数耗尽后白骨之盾应彻底移除');
+    const hpLast = dk.hp;
+    engine.tick(2000);
+    engine.applyDamage(boss.id, dk.id, 10000, false, 'boss_normal_hit', 'PHYSICAL');
+    assert.equal(dk.hp, hpLast - 10000, '骨盾移除后承受全额 10000 伤害');
+  });
+
 });
 
 /*

@@ -10,6 +10,7 @@ import type {
   Unit,
 } from '@cata-raid-sim/engine';
 import { applyCombatEffectToEngine } from './applyCombatEffect.js';
+import { isPreservedUnit } from './applyWorldSnapshotPreserveAuth.js';
 import {
   AppliedEffectRing,
   CombatEffectIdGen,
@@ -40,10 +41,14 @@ let ctx: CombatAuthorityContext = {
   isUnitLocalAuthority: () => true,
 };
 
+/** Owners cleared by leave/AI takeover — ignore late OWNER_SNAPSHOTs until next combat epoch. */
+const purgedOwnerIds = new Set<string>();
+
 export function beginCombatEffectEpoch(epochMs?: number) {
   idGen.beginEpoch(epochMs);
   applied.clear();
   gather.clear();
+  purgedOwnerIds.clear();
 }
 
 export function configureCombatAuthority(next: Partial<CombatAuthorityContext>) {
@@ -127,6 +132,29 @@ export function publishCombatEffectAlreadyApplied(
   return effect;
 }
 
+/**
+ * Relay a vital/event for a foreign-authority target: send only, do not mark.
+ * Author applies the delta when host batch (or peer live relay) echoes back.
+ */
+export function publishCombatEffectRelay(
+  partial: Omit<CombatEffect, 'effectId'> & { effectId?: string }
+): CombatEffect | null {
+  const ownerId = ctx.localPlayerId || partial.sourceId;
+  if (!ownerId) return null;
+  const effectId = partial.effectId || idGen.next(ownerId);
+  const effect: CombatEffect = { ...partial, effectId, atMs: partial.atMs ?? Date.now() };
+  enqueueOrSend(effect);
+  return effect;
+}
+
+/** After local-authority RESURRECT, push seat vitals so remotes do not wait for full world mirror. */
+export function publishOwnerSnapshotForUnit(engine: CombatEngine, unitId: string): void {
+  const ownerId = ctx.localPlayerId;
+  if (!ownerId || !networkingActive()) return;
+  if (!ctx.isUnitLocalAuthority(unitId)) return;
+  publishOwnerSnapshot(buildLocalOwnerSnapshot(engine, ownerId));
+}
+
 export type HostEffectHudHook = (effect: CombatEffect) => void;
 let hostEffectHudHook: HostEffectHudHook | null = null;
 
@@ -134,29 +162,100 @@ export function setHostEffectHudHook(hook: HostEffectHudHook | null) {
   hostEffectHudHook = hook;
 }
 
-/** Host: ingest guest COMBAT_EFFECT into gather (+ apply if host authority). */
-export function hostReceiveCombatEffect(engine: CombatEngine, effect: CombatEffect) {
-  if (!effect?.effectId) return;
-  gather.enqueueEffect(effect);
-  // Immediate cast-bar HUD for guest casters (don't wait for 200ms batch)
-  if (
-    (effect.kind === 'CAST_START' ||
-      effect.kind === 'CAST_LAND' ||
-      effect.kind === 'INTERRUPT') &&
-    effect.sourceId !== ctx.localPlayerId
-  ) {
-    hostEffectHudHook?.(effect);
+const VITAL_DELTA_KINDS = new Set([
+  'DAMAGE',
+  'HEAL',
+  'RESURRECT',
+  'APPLY_BUFF',
+  'REMOVE_BUFF',
+  'RESOURCE',
+]);
+
+const CAST_HUD_KINDS = new Set([
+  'CAST_START',
+  'CAST_LAND',
+  'INTERRUPT',
+  'AOE_PULSE',
+  'GROUND_PLACE',
+  'SUMMON_SPAWN',
+  'SUMMON_DESPAWN',
+]);
+
+/**
+ * Shared ingest for one COMBAT_EFFECT (host live receive OR batch unpack).
+ *
+ * - Local-authority targets: apply (only authority “算”).
+ * - Host + foreign vitals: do NOT apply — only gather/forward; splice others’ HP via OWNER_SNAPSHOT.
+ * - Guests + foreign vitals: stack relayed deltas for display.
+ * - HUD / ground / summon kinds: apply everywhere for FX.
+ */
+export function ingestCombatEffect(
+  engine: CombatEngine,
+  effect: CombatEffect,
+  opts?: {
+    onHudEffect?: (e: CombatEffect) => void;
+    /** When true, also enqueue into host gather (guest→host live path). */
+    enqueueGather?: boolean;
   }
-  if (ctx.isUnitLocalAuthority(effect.targetId)) {
-    consumeRemoteEffect(effect, applied, (e) => applyCombatEffectToEngine(engine, e));
-  } else {
-    // Record so we don't re-apply if echoed in our own batch
-    applied.mark(effect.effectId);
+): void {
+  if (!effect?.effectId) return;
+  if (opts?.enqueueGather) gather.enqueueEffect(effect);
+
+  const isCastHud =
+    effect.kind === 'CAST_START' ||
+    effect.kind === 'CAST_LAND' ||
+    effect.kind === 'INTERRUPT';
+  if (isCastHud && effect.sourceId !== ctx.localPlayerId) {
+    opts?.onHudEffect?.(effect);
+  }
+
+  const isVital = VITAL_DELTA_KINDS.has(effect.kind);
+  const isHudVisual = CAST_HUD_KINDS.has(effect.kind);
+  const isLocalTarget = ctx.isUnitLocalAuthority(effect.targetId);
+
+  // Host is a relay for others’ seats: receive → splice (owner snap) → forward. No foreign vitals math.
+  if (ctx.isNetworkHost && isVital && !isLocalTarget) {
+    opts?.onHudEffect?.(effect);
+    return;
+  }
+
+  if (isLocalTarget || isVital || isHudVisual) {
+    const appliedNow = consumeRemoteEffect(effect, applied, (e) => {
+      applyCombatEffectToEngine(engine, e);
+      // Authority seat: after rez, push owner vitals for host to splice+broadcast
+      if (e.kind === 'RESURRECT' && ctx.isUnitLocalAuthority(e.targetId)) {
+        publishOwnerSnapshotForUnit(engine, e.targetId);
+      }
+    });
+    if (appliedNow && isHudVisual && !isCastHud && !isLocalTarget) {
+      opts?.onHudEffect?.(effect);
+    }
+  } else if (applied.mark(effect.effectId)) {
+    opts?.onHudEffect?.(effect);
   }
 }
 
+/** Host: gather guest EFFECT for batch fan-out; apply only host-authority seats. */
+export function hostReceiveCombatEffect(engine: CombatEngine, effect: CombatEffect) {
+  ingestCombatEffect(engine, effect, {
+    enqueueGather: true,
+    onHudEffect: (e) => hostEffectHudHook?.(e),
+  });
+}
+
 export function hostReceiveOwnerSnapshot(snap: OwnerSnapshot) {
+  if (!snap?.ownerId) return;
+  // Late packets from a leaver must not revive their seat after AI takeover
+  if (purgedOwnerIds.has(snap.ownerId) && !snap.purge) return;
   gather.enqueueSnapshot(snap);
+}
+
+/** Player left: drop their queued OWNER_SNAPSHOT / effects so AI takeover is clean. */
+export function dropGatherOwnerTraces(ownerId: string) {
+  if (!ownerId) return;
+  gather.dropSnapshot(ownerId);
+  gather.dropEffectsForOwner(ownerId);
+  purgedOwnerIds.add(ownerId);
 }
 
 export function publishOwnerSnapshot(snap: OwnerSnapshot) {
@@ -188,15 +287,22 @@ export function hostFlushCombatBatch(
   return batch as CombatBatch;
 }
 
-const CAST_HUD_KINDS = new Set([
-  'CAST_START',
-  'CAST_LAND',
-  'INTERRUPT',
-  'AOE_PULSE',
-  'GROUND_PLACE',
-  'SUMMON_SPAWN',
-  'SUMMON_DESPAWN',
-]);
+/** Immediate fan-out (player leave purge + new AI seat). */
+export function hostForceFlushCombatBatch(roomId: string): CombatBatch | null {
+  if (!networkingActive() || !ctx.isNetworkHost) return null;
+  const flushed = gather.forceFlush();
+  if (!flushed) return null;
+  if (flushed.effects.length === 0 && flushed.snapshots.length === 0) return null;
+  const batch: Omit<CombatBatch, 'seq'> = {
+    roomId,
+    timeMs: Date.now(),
+    effects: flushed.effects,
+    snapshots: flushed.snapshots,
+    ackedEffectIds: flushed.ackedEffectIds,
+  };
+  netClient.sendCombatBatch(batch);
+  return batch as CombatBatch;
+}
 
 /** Any client: unpack COMBAT_BATCH — apply effects we own; merge foreign owner snapshots. */
 export function applyCombatBatch(
@@ -208,25 +314,7 @@ export function applyCombatBatch(
   }
 ) {
   for (const effect of batch.effects || []) {
-    const isCastHud =
-      effect.kind === 'CAST_START' ||
-      effect.kind === 'CAST_LAND' ||
-      effect.kind === 'INTERRUPT';
-    // Cast bars key off sourceId (caster), not target — always HUD-notify for remote casters
-    if (isCastHud && effect.sourceId !== ctx.localPlayerId) {
-      opts?.onHudEffect?.(effect);
-    }
-
-    if (ctx.isUnitLocalAuthority(effect.targetId)) {
-      consumeRemoteEffect(effect, applied, (e) => applyCombatEffectToEngine(engine, e));
-    } else if (CAST_HUD_KINDS.has(effect.kind)) {
-      if (applied.mark(effect.effectId)) {
-        if (!isCastHud) opts?.onHudEffect?.(effect);
-        applyCombatEffectToEngine(engine, effect);
-      }
-    } else if (applied.mark(effect.effectId)) {
-      opts?.onHudEffect?.(effect);
-    }
+    ingestCombatEffect(engine, effect, { onHudEffect: opts?.onHudEffect });
   }
   for (const snap of batch.snapshots || []) {
     if (snap.ownerId === ctx.localPlayerId) continue; // never overwrite self from echo
@@ -240,6 +328,8 @@ export function buildLocalOwnerSnapshot(
   extras?: Partial<OwnerSnapshot>
 ): OwnerSnapshot {
   const all = engine.buildNetworkUnitSnapshots();
+  // Seat-local only (self + owned pets/summons). AI/boss/enemy belong in COMBAT_STATE
+  // full mirror — stuffing them into OWNER_SNAPSHOT made merge prune peer humans.
   const units = all.filter(
     (u) => u.id === ownerId || u.ownerId === ownerId || (u.isPet && u.ownerId === ownerId)
   );
@@ -252,29 +342,101 @@ export function buildLocalOwnerSnapshot(
 }
 
 export function mergeOwnerSnapshotUnits(engine: CombatEngine, snap: OwnerSnapshot) {
-  if (snap.units?.length) {
-    // Merge only units belonging to that owner (and their pets)
-    const existing = engine.buildNetworkUnitSnapshots();
-    const keep = existing.filter(
-      (u) =>
-        u.id !== snap.ownerId && u.ownerId !== snap.ownerId && !(u.isPet && u.ownerId === snap.ownerId)
-    );
-    const me = ctx.localPlayerId;
-    const keptMine = me ? existing.filter((u) => u.id === me || u.ownerId === me) : [];
-    const others = keep.filter((u) => u.id !== me && u.ownerId !== me);
-    const merged: NetworkUnitSnapshot[] = [...others, ...keptMine, ...snap.units];
-    const byId = new Map<string, NetworkUnitSnapshot>();
-    for (const u of merged) byId.set(u.id, u);
-    engine.applyNetworkUnitSnapshots([...byId.values()]);
+  const { isUnitLocalAuthority, localPlayerId } = ctx;
+
+  // Explicit purge (player leave): erase owner seat + owned pets/ground even if units=[]
+  if (snap.purge) {
+    dropGatherOwnerTraces(snap.ownerId);
+    const owned = engine
+      .getAllUnits()
+      .filter((u) => u.id === snap.ownerId || u.ownerId === snap.ownerId);
+    for (const u of owned) engine.removeUnit(u.id);
+    if (engine.effectsManager?.groundEffects) {
+      engine.effectsManager.groundEffects = engine.effectsManager.groundEffects.filter(
+        (g) => g.ownerId !== snap.ownerId
+      );
+    }
+    return;
   }
-  // Replace that owner's ground/totem FX from snapshot
+
+  if (snap.units?.length) {
+    const existing = engine.buildNetworkUnitSnapshots();
+    // Self / pets / owned summons: always keep live local sim — never snapshot overwrite
+    const preservedLocal = existing.filter((u) =>
+      isPreservedUnit(u.id, u.ownerId, u.isPet, isUnitLocalAuthority, localPlayerId)
+    );
+    const preservedIds = new Set(preservedLocal.map((u) => u.id));
+
+    // Strip any local-authority seats from foreign owner payload (hp/buffs/pos/alive)
+    const fromSnap = snap.units
+      .filter((s) => !isPreservedUnit(s.id, s.ownerId, s.isPet, isUnitLocalAuthority, localPlayerId))
+      .map((s) =>
+        // Snap owner is always a human authority seat — never let flags drop to "AI"
+        s.id === snap.ownerId
+          ? { ...s, isHumanControlled: true, isPlayer: s.id === localPlayerId }
+          : s
+      );
+    const snapIds = new Set(fromSnap.map((u) => u.id));
+    const rawSnapIds = new Set(snap.units.map((u) => u.id));
+
+    const others = existing.filter((u) => {
+      if (preservedIds.has(u.id)) return false;
+      if (snapIds.has(u.id)) return false;
+
+      // Snap owner seat omitted from payload → keep existing (do NOT treat as despawn).
+      // This was wiping guests off the host roster/map while their EFFECTS still synced.
+      if (u.id === snap.ownerId && !rawSnapIds.has(u.id)) return true;
+
+      const isHumanSeat = !!(u.isHumanControlled || u.isPlayer);
+      // Peer humans are never owned by this snap — always keep when not replaced
+      if (isHumanSeat && !rawSnapIds.has(u.id)) return true;
+
+      // Owner pets/summons omitted from snap → despawn
+      if (
+        u.id === snap.ownerId ||
+        u.ownerId === snap.ownerId ||
+        (u.isPet && u.ownerId === snap.ownerId)
+      ) {
+        return false;
+      }
+      if (rawSnapIds.has(u.id)) return false;
+      return true;
+    });
+
+    const byId = new Map<string, NetworkUnitSnapshot>();
+    for (const u of others) byId.set(u.id, u);
+    for (const u of fromSnap) byId.set(u.id, u);
+    // Preserved last so applyNetworkUnitSnapshots never sees foreign vitals for our seats
+    for (const u of preservedLocal) byId.set(u.id, u);
+    engine.applyNetworkUnitSnapshots([...byId.values()]);
+
+    if (localPlayerId) {
+      for (const u of engine.friendlyUnits) {
+        const isMe = u.id === localPlayerId;
+        u.isPlayer = isMe;
+        if (isMe) u.isHumanControlled = true;
+        // Keep other humans marked so ROOM_UPDATE / AI prune cannot eat them
+        if (!isMe && u.id === snap.ownerId) u.isHumanControlled = true;
+      }
+    }
+  }
+
+  // Replace that owner's ground/totem FX — never touch local-authority FX
   if (snap.groundEffects && engine.effectsManager) {
     const kept = (engine.effectsManager.groundEffects || []).filter(
-      (g) => g.ownerId !== snap.ownerId
+      (g) =>
+        isUnitLocalAuthority(g.ownerId) ||
+        (localPlayerId && g.ownerId === localPlayerId) ||
+        g.ownerId !== snap.ownerId
+    );
+    const foreignGround = snap.groundEffects.filter(
+      (g) =>
+        !isUnitLocalAuthority(g.ownerId) &&
+        !(localPlayerId && g.ownerId === localPlayerId)
     );
     engine.effectsManager.groundEffects = [
       ...kept,
-      ...snap.groundEffects.map((g) => ({
+      ...foreignGround.map((g) => ({
         id: g.id,
         kind: g.kind,
         spellId: g.spellId,
@@ -284,9 +446,11 @@ export function mergeOwnerSnapshotUnits(engine: CombatEngine, snap: OwnerSnapsho
         radius: g.radius,
         colorHex: g.colorHex,
         remainingMs: g.remainingMs,
-        tickIntervalMs: 1000,
+        tickIntervalMs: g.tickIntervalMs ?? 1000,
         tickElapsedMs: 0,
-        tickValue: 0,
+        tickValue: g.tickValue ?? 0,
+        facingRad: g.facingRad,
+        coneAngleRad: g.coneAngleRad,
       })),
     ] as any;
   }
@@ -305,9 +469,17 @@ export function makeHostAuthorityPredicate(
       return true;
     }
     if (u.ownerId === hostPlayerId) return true;
+    // Guest humans and anything they own (pets/totem units)
     if (u.isHumanControlled && u.id !== hostPlayerId) return false;
     if (u.isPlayer && u.id !== hostPlayerId) return false;
-    return true; // AI, boss, enemies, host pets
+    // Pets/summons: only foreign if owner is another human — AI/boss pets stay host-world
+    if (u.ownerId && u.ownerId !== hostPlayerId) {
+      const owner = engine.getUnit(u.ownerId);
+      if (owner && (owner.isHumanControlled || owner.isPlayer) && owner.id !== hostPlayerId) {
+        return false;
+      }
+    }
+    return true; // AI, boss, enemies, AI/boss summons, host pets
   };
 }
 

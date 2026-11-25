@@ -1,7 +1,20 @@
 import type { Unit } from '../../types.js';
 import type { CombatEngine } from '../../engine/CombatEngine.js';
 
+import type { DbmRoleHint, DbmSeverity } from '../../engine/DbmManager.js';
+
 export type TargetKind = 'MELEE_TARGET' | 'RANGED_TARGET' | 'AOE' | 'SELF';
+
+export interface BossSkillDbmMeta {
+  /** 简短战术建议（如 "注意分散"、"近距分摊，注意治疗"、"先杀小怪"） */
+  advice: string;
+  severity?: DbmSeverity;
+  roleHint?: DbmRoleHint;
+  /** 技能冷却即将结束前多少毫秒发出高威胁预告（0 表示不提前预告） */
+  preWarnMs?: number;
+  ttlMs?: number;
+  announceOnCast?: boolean;
+}
 
 export interface BossSkill {
   id: string;
@@ -14,6 +27,8 @@ export interface BossSkill {
   description: string;
   range?: number;
   targetKind?: TargetKind;
+  /** 可选：副本设计期显式声明的 DBM 战术建议；未声明时引擎自动推导 */
+  dbm?: BossSkillDbmMeta;
   execute: (boss: Unit, engine: CombatEngine) => void;
 }
 

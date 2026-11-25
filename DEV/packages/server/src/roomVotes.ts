@@ -17,7 +17,8 @@ const WIPE_VOTE_TIMEOUT_MS = 15_000;
 /**
  * Server-side vote tallies for wipe retry and skip-travel.
  * Skip-travel: majority YES required; 10s timeout => disagree (NO).
- * Wipe: majority RETRY/FINISH among votes; 15s timeout => RETRY.
+ * Wipe: majority RETRY/FINISH; all voted with tie => FINISH (结算);
+ * incomplete 15s timeout => RETRY (AFK continue).
  */
 export class RoomVoteTracker {
   private votes = new Map<string, ActiveRoomVote>();
@@ -130,20 +131,22 @@ export class RoomVoteTracker {
         return { state, earlyResult: 'NO' };
       }
     } else {
+      const n = cur.state.eligiblePlayerIds.length;
+      const retry = cur.state.eligiblePlayerIds.filter((id) => cur.state.votes[id] === 'RETRY').length;
+      const finish = cur.state.eligiblePlayerIds.filter((id) => cur.state.votes[id] === 'FINISH').length;
+      const allVoted = cur.state.eligiblePlayerIds.every((id) => !!cur.state.votes[id]);
       const majority = resolveWipeMajority(cur.state.eligiblePlayerIds, cur.state.votes) as WipeVoteChoice | null;
-      const allVoted = cur.state.eligiblePlayerIds.every((id) => cur.state.votes[id]);
-      if (majority && (allVoted || majority)) {
-        // Resolve early once a strict majority exists
-        const retry = cur.state.eligiblePlayerIds.filter((id) => cur.state.votes[id] === 'RETRY').length;
-        const finish = cur.state.eligiblePlayerIds.filter((id) => cur.state.votes[id] === 'FINISH').length;
-        if (retry > cur.state.eligiblePlayerIds.length / 2 || finish > cur.state.eligiblePlayerIds.length / 2) {
-          cur.state.resolved = true;
-          cur.state.result = majority;
-          if (cur.timer) clearTimeout(cur.timer);
-          const state = snapshot();
-          this.votes.delete(this.key(roomId, kind));
-          return { state, earlyResult: majority };
-        }
+      // Strict majority (> half) can settle before everyone votes
+      const hasStrictMajority = retry > n / 2 || finish > n / 2;
+      // Everyone cast: settle now. 1同意+1结束 (tie) → FINISH 结算, never wait for timeout RETRY
+      const early = hasStrictMajority && majority ? majority : allVoted ? majority || 'FINISH' : null;
+      if (early) {
+        cur.state.resolved = true;
+        cur.state.result = early;
+        if (cur.timer) clearTimeout(cur.timer);
+        const state = snapshot();
+        this.votes.delete(this.key(roomId, kind));
+        return { state, earlyResult: early };
       }
     }
 

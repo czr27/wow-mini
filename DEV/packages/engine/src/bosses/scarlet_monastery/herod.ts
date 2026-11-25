@@ -110,11 +110,11 @@ export const HerodEncounter: BossEncounterModule = {
       }
     }
 
-    // 濒死时刷学徒潮（BaseBossAI 死后不再 tick，故在 ≤1% 触发）
+    // 低血量时刷学徒潮（25% 血量触发，让坦克与团队真正交战清场）
     if (
       !ai.herodDeadApprentices &&
       boss.maxHp > 0 &&
-      boss.hp / boss.maxHp <= 0.01 &&
+      boss.hp / boss.maxHp <= 0.25 &&
       (boss.alive ?? boss.isAlive)
     ) {
       ai.herodDeadApprentices = true;

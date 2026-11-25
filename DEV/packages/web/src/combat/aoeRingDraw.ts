@@ -29,6 +29,14 @@ export const AOE_RING_GROW_MS = 240;
 /** Start radius as fraction of final while throwing / at land. */
 export const AOE_RING_START_FRAC = 0.12;
 
+export type AoeRingMotif =
+  | 'WATER_RIPPLE'
+  | 'NATURE_PETAL'
+  | 'HOLY_RUNE'
+  | 'FROST_CRYSTAL'
+  | 'UNHOLY_SIGIL'
+  | 'ARCANE_RING';
+
 export interface AoeRingState {
   id: string;
   x: number;
@@ -38,6 +46,9 @@ export interface AoeRingState {
   /** true → white outline; false → red outline (by caster side, not fill tone) */
   friendlyCaster: boolean;
   baseAlpha: number;
+  /** Deterministic spell/class motif for visual differentiation */
+  spellId?: string;
+  ownerClassId?: string;
   /** When the ring should start fading (performance.now()) */
   fadeAt: number;
   /** Absolute expire after fade completes */
@@ -56,6 +67,62 @@ export interface AoeRingState {
   throwMs: number;
   growMs: number;
   flight: ProjectileFlightStyle;
+}
+
+export function resolveAoeRingMotif(
+  spellId?: string | null,
+  ownerClassId?: string | null,
+  tone?: AoeVisualTone
+): AoeRingMotif {
+  const sid = (spellId || '').toLowerCase();
+  const cid = (ownerClassId || '').toUpperCase();
+  if (sid.includes('healing_rain') || sid.includes('healing_tide') || sid.includes('治疗之雨') || sid.includes('治疗之潮')) {
+    return 'WATER_RIPPLE';
+  }
+  if (
+    sid.includes('efflorescence') ||
+    sid.includes('swiftmend') ||
+    sid.includes('tranquility') ||
+    sid.includes('百花') ||
+    cid === 'DRUID'
+  ) {
+    return 'NATURE_PETAL';
+  }
+  if (
+    sid.includes('power_word_barrier') ||
+    sid.includes('pw_barrier') ||
+    sid.includes('lightwell') ||
+    sid.includes('light_well') ||
+    sid.includes('consecration') ||
+    sid.includes('圣光井') ||
+    cid === 'PRIEST' ||
+    cid === 'PALADIN'
+  ) {
+    return 'HOLY_RUNE';
+  }
+  if (
+    sid.includes('blizzard') ||
+    sid.includes('frozen_orb') ||
+    sid.includes('ring_of_frost') ||
+    sid.includes('暴风雪') ||
+    sid.includes('寒冰宝珠') ||
+    cid === 'MAGE'
+  ) {
+    return 'FROST_CRYSTAL';
+  }
+  if (
+    sid.includes('death_and_decay') ||
+    sid.includes('desecration') ||
+    sid.includes('rain_of_fire') ||
+    sid.includes('枯萎凋零') ||
+    sid.includes('亵渎') ||
+    cid === 'DK' ||
+    cid === 'WARLOCK' ||
+    tone === 'ENEMY'
+  ) {
+    return 'UNHOLY_SIGIL';
+  }
+  return 'ARCANE_RING';
 }
 
 function toneRgb(tone: AoeVisualTone): readonly [number, number, number] {
@@ -177,6 +244,8 @@ export function createPersistentRing(opts: {
   baseAlpha: number;
   remainingMs: number;
   friendlyCaster?: boolean;
+  spellId?: string;
+  ownerClassId?: string;
   now?: number;
   fromX?: number;
   fromY?: number;
@@ -199,6 +268,8 @@ export function createPersistentRing(opts: {
     tone: opts.tone,
     friendlyCaster: opts.friendlyCaster !== false,
     baseAlpha: opts.baseAlpha,
+    spellId: opts.spellId,
+    ownerClassId: opts.ownerClassId,
     fadeAt,
     expireAt: fadeAt + AOE_FADE_MS,
     groundEffectId: opts.id,
@@ -249,6 +320,8 @@ export function syncPersistentRingsFromGround(
       existing.tone = finalTone;
       existing.friendlyCaster = friendlyCaster;
       existing.baseAlpha = baseAlpha;
+      existing.spellId = g.spellId;
+      existing.ownerClassId = owner?.classId;
       // Keep fadeAt in sync with remaining lifetime (don't restart fade early)
       const wantFade = now + Math.max(0, g.remainingMs);
       if (Math.abs(wantFade - existing.fadeAt) > 40) {
@@ -273,6 +346,8 @@ export function syncPersistentRingsFromGround(
         tone: finalTone,
         friendlyCaster,
         baseAlpha,
+        spellId: g.spellId,
+        ownerClassId: owner?.classId,
         remainingMs: g.remainingMs,
         now,
         fromX,
@@ -380,15 +455,37 @@ export function drawAoeRing(
   ctx.arc(pose.x, pose.y, rad, 0, Math.PI * 2);
   ctx.fill();
 
-  // Bright seed at the thrown tip so the lob reads as a projectile
+  // Bright seed + tapered motion trail at the thrown tip so the lob reads as a projectile
   if (pose.throwing) {
+    const age = Math.max(0, now - ring.bornAt);
+    const throwMs = Math.max(1, ring.throwMs || 1);
+    const t = Math.min(1, age / throwMs);
+    const prevT = Math.max(0, t - 0.14);
+    const prevPose = sampleProjectileFlight(
+      ring.fromX,
+      ring.fromY,
+      ring.landX,
+      ring.landY,
+      prevT,
+      ring.flight || 'arc'
+    );
     const seedR = Math.max(4, rad * 0.45);
-    const seedA = Math.min(0.85, alpha + 0.35);
+    const seedA = Math.min(0.88, alpha + 0.38);
+
+    // Tapered motion trail behind thrown aura seed
+    ctx.strokeStyle = `rgba(${r}, ${g}, ${b}, ${seedA * 0.55})`;
+    ctx.lineWidth = Math.max(2, seedR * 0.9);
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(prevPose.x, prevPose.y);
+    ctx.lineTo(pose.x, pose.y);
+    ctx.stroke();
+
     ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${seedA})`;
     ctx.beginPath();
     ctx.arc(pose.x, pose.y, seedR, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = `rgba(${outline[0]}, ${outline[1]}, ${outline[2]}, ${Math.min(0.7, seedA)})`;
+    ctx.strokeStyle = `rgba(${outline[0]}, ${outline[1]}, ${outline[2]}, ${Math.min(0.75, seedA)})`;
     ctx.lineWidth = 1.25;
     ctx.beginPath();
     ctx.arc(pose.x, pose.y, seedR, 0, Math.PI * 2);
@@ -400,6 +497,44 @@ export function drawAoeRing(
     ctx.beginPath();
     ctx.arc(pose.x, pose.y, rad, 0, Math.PI * 2);
     ctx.stroke();
+
+    // Deterministic spell/class motif accents (lightweight, non-cluttering)
+    const motif = resolveAoeRingMotif(ring.spellId, ring.ownerClassId, ring.tone);
+    const accentA = Math.min(0.65, alpha + 0.22);
+    if (rad >= 14) {
+      ctx.strokeStyle = `rgba(${outline[0]}, ${outline[1]}, ${outline[2]}, ${accentA * 0.55})`;
+      ctx.lineWidth = 1;
+      if (motif === 'WATER_RIPPLE') {
+        ctx.beginPath();
+        ctx.arc(pose.x, pose.y, rad * 0.68, 0, Math.PI * 2);
+        ctx.stroke();
+      } else if (motif === 'NATURE_PETAL' || motif === 'FROST_CRYSTAL') {
+        const ticks = 6;
+        ctx.beginPath();
+        for (let i = 0; i < ticks; i++) {
+          const a = (i * Math.PI * 2) / ticks;
+          ctx.moveTo(pose.x + Math.cos(a) * rad * 0.86, pose.y + Math.sin(a) * rad * 0.86);
+          ctx.lineTo(pose.x + Math.cos(a) * rad, pose.y + Math.sin(a) * rad);
+        }
+        ctx.stroke();
+      } else if (motif === 'HOLY_RUNE') {
+        const ticks = 4;
+        ctx.beginPath();
+        for (let i = 0; i < ticks; i++) {
+          const a = (i * Math.PI * 2) / ticks;
+          ctx.moveTo(pose.x + Math.cos(a) * rad * 0.8, pose.y + Math.sin(a) * rad * 0.8);
+          ctx.lineTo(pose.x + Math.cos(a) * rad * 1.06, pose.y + Math.sin(a) * rad * 1.06);
+        }
+        ctx.stroke();
+      } else if (motif === 'UNHOLY_SIGIL') {
+        ctx.save();
+        ctx.setLineDash([5, 5]);
+        ctx.beginPath();
+        ctx.arc(pose.x, pose.y, rad * 0.82, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
   }
 }
 
@@ -428,8 +563,18 @@ export function drawConeWarning(
   ctx.arc(effect.x, effect.y, rad, facing - coneAngle / 2, facing + coneAngle / 2);
   ctx.closePath();
   ctx.fill();
+
+  // Inner range arc guides for immediate cone readability
+  if (rad >= 20) {
+    ctx.strokeStyle = `rgba(${outline[0]}, ${outline[1]}, ${outline[2]}, ${outlineA * 0.35})`;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(effect.x, effect.y, rad * 0.55, facing - coneAngle / 2, facing + coneAngle / 2);
+    ctx.stroke();
+  }
+
   ctx.strokeStyle = `rgba(${outline[0]}, ${outline[1]}, ${outline[2]}, ${outlineA})`;
-  ctx.lineWidth = 1.5;
+  ctx.lineWidth = 1.6;
   ctx.beginPath();
   ctx.moveTo(effect.x, effect.y);
   ctx.arc(effect.x, effect.y, rad, facing - coneAngle / 2, facing + coneAngle / 2);

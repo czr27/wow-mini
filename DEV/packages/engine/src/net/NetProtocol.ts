@@ -7,6 +7,7 @@ import type {
   FloatingCombatText,
 } from '../types.js';
 import type { LobbyRoom, PlayerInfo } from '../room/RoomTypes.js';
+import type { DbmAlert } from '../engine/DbmManager.js';
 
 /** Compact unit state for host→guest combat sync (server does not tick). */
 export interface NetworkUnitSnapshot {
@@ -83,6 +84,9 @@ export interface NetworkGroundEffectSnapshot {
   remainingMs: number;
   facingRad?: number;
   coneAngleRad?: number;
+  /** Preserve heal/damage tick identity for remotes (do not zero out). */
+  tickIntervalMs?: number;
+  tickValue?: number;
 }
 
 /** Spell CD timeline for guest ActionBar overlay. */
@@ -137,6 +141,8 @@ export interface NetworkCombatSnapshot {
    */
   encounterReports?: import('../types.js').EncounterReport[];
   bossTargetId?: string | null;
+  /** Host-authoritative boss overhead skill label (covers instant skills + post-cast lingering) */
+  bossOverheadSkillName?: string | null;
   units: NetworkUnitSnapshot[];
   casts?: NetworkCastTimeline[];
   cooldowns?: NetworkCooldownTimeline[];
@@ -149,6 +155,8 @@ export interface NetworkCombatSnapshot {
    * Guests use these to trigger local FX tied to actor→target.
    */
   recentActions?: NetworkCombatAction[];
+  /** Host-authoritative DBM tactical alerts — guests display if enabled locally */
+  dbmAlerts?: DbmAlert[];
   /** Explicit interrupt events since last snapshot (also mirrored on casts[].interrupted) */
   interrupts?: Array<{ unitId: string; spellId?: string; atMs: number }>;
   /** Prim 迷宫：副本+关卡种子，客人本地同构重建 */
@@ -270,14 +278,24 @@ export type CombatEffectKind =
   | 'CAST_LAND'
   | 'AOE_PULSE'
   | 'GROUND_PLACE'
-  | 'DISPEL';
+  | 'DISPEL'
+  | 'TAUNT';
 
 export interface CombatEffectBuffPayload {
   spellId: string;
   name: string;
   kind?: 'BUFF' | 'DEBUFF';
   tags?: string[];
+  /**
+   * Absolute stack count after this effect (preferred).
+   * Remotes SET to this value — do not +1 per echo.
+   */
   stacks?: number;
+  /**
+   * Relative stack change when absolute stacks omitted.
+   * Positive = add layers; negative = peel layers (0 → remove aura).
+   */
+  stackDelta?: number;
   maxStacks?: number;
   durationMs?: number;
   remainingMs?: number;
@@ -314,6 +332,15 @@ export interface CombatEffect {
   totalMs?: number;
   isChannel?: boolean;
   interruptible?: boolean;
+  /** GROUND_PLACE: stable id so remotes share the same ring / snapshot row */
+  groundEffectId?: string;
+  groundKind?: 'TOTEM' | 'HEAL_ZONE' | 'DAMAGE_ZONE' | 'CONE_WARNING';
+  colorHex?: string;
+  remainingMs?: number;
+  tickIntervalMs?: number;
+  tickValue?: number;
+  facingRad?: number;
+  coneAngleRad?: number;
 }
 
 /** Authority owner's unit + pets/totems slice (~200ms). */
@@ -325,6 +352,8 @@ export interface OwnerSnapshot {
   cooldowns?: NetworkCooldownTimeline[];
   gcds?: NetworkGcdTimeline[];
   groundEffects?: NetworkGroundEffectSnapshot[];
+  /** Leave/AI takeover: peers must erase this ownerId's seat traces even if units is empty. */
+  purge?: boolean;
 }
 
 /**

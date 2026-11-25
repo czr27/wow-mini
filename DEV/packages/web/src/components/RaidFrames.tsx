@@ -43,11 +43,12 @@ export const CLASS_COLORS_CATA: Record<string, string> = {
 export function getPlayerDispelCapabilities(classId?: string, specId?: string): DispelType[] {
   if (!classId) return [];
   const sp = (specId || '').toUpperCase();
+  const isResto = sp === 'RESTORATION' || sp === 'RESTO' || sp === 'RESTO_HEAL';
   if (classId === 'DRUID') {
-    return sp === 'RESTORATION' ? ['MAGIC', 'CURSE', 'POISON'] : ['CURSE', 'POISON'];
+    return isResto ? ['MAGIC', 'CURSE', 'POISON'] : ['CURSE', 'POISON'];
   }
   if (classId === 'SHAMAN') {
-    return sp === 'RESTORATION' ? ['MAGIC', 'CURSE'] : ['CURSE'];
+    return isResto ? ['MAGIC', 'CURSE'] : ['CURSE'];
   }
   if (classId === 'PALADIN') {
     return sp === 'HOLY' ? ['MAGIC', 'POISON', 'DISEASE'] : ['POISON', 'DISEASE'];

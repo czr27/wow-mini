@@ -47,7 +47,24 @@ export class DpsAI implements RoleAI {
       }
     }
 
-    // 2. 通用规则决策（优先判断目标 >= 3 放 AOE，其次性价比与输出）
+    // 2. 法系 DPS 自回蓝大招判定（法师唤醒、暗牧消散、术士生命分流等）
+    // 当蓝量低于 35% 时，优先释放自回蓝技能回复法力，保障长战斗输出续航
+    const curMana = getUnitResourceAmount(unit, 'MANA');
+    const maxMana = (unit.maxMp && unit.maxMp > 0) ? unit.maxMp : 0;
+    if (maxMana > 0 && curMana / maxMana < 0.35) {
+      const manaRestoreSpell = ownedSpells.find(
+        s =>
+          (s.isResourceRestore && !s.isDamage && !s.isHeal) ||
+          s.id.includes('evocation') ||
+          s.id.includes('dispersion') ||
+          s.id.includes('life_tap')
+      );
+      if (manaRestoreSpell) {
+        actions.push(act(manaRestoreSpell.id, unit.id, Priority.DEFENSIVE, true));
+      }
+    }
+
+    // 3. 通用规则决策（优先判断目标 >= 3 放 AOE，其次性价比与输出）
     const personality = createAIPersonality(unit.name, unit.id);
     const candidates = buildUsableCandidatesForUnit(unit, specId, () => true, {
       roleFilter: 'DAMAGE',

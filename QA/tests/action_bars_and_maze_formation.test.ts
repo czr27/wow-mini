@@ -23,10 +23,10 @@ console.log('--- 运行 [T-13] 三栏技能条、队伍迷宫阵型、智能重�
 // ── 1. 三栏动作条 36 格默认键位与技能映射 ──────────────────────────────
 assert.strictEqual(Object.keys(DEFAULT_KEYBINDINGS).length, 36, '动作条必须支持三栏共36个独立槽位');
 assert.strictEqual(DEFAULT_KEYBINDINGS[0], '1', '第一栏起始键位应为 1');
-assert.strictEqual(DEFAULT_KEYBINDINGS[11], '=', '第一栏终止键位应为 =');
+assert.strictEqual(DEFAULT_KEYBINDINGS[11], 'X', '第一栏终止键位应为 X');
 assert.strictEqual(DEFAULT_KEYBINDINGS[12], 'SHIFT+1', '第二栏起始键位应为 SHIFT+1');
-assert.strictEqual(DEFAULT_KEYBINDINGS[23], 'SHIFT+=', '第二栏终止键位应为 SHIFT+=');
-assert.strictEqual(DEFAULT_KEYBINDINGS[24], 'F1', '第三栏起始键位应为 F1');
+assert.strictEqual(DEFAULT_KEYBINDINGS[23], 'SHIFT+X', '第二栏终止键位应为 SHIFT+X');
+assert.strictEqual(DEFAULT_KEYBINDINGS[24], '`', '第三栏起始键位应为 `');
 assert.strictEqual(DEFAULT_KEYBINDINGS[35], 'F12', '第三栏终止键位应为 F12');
 
 // 验证所有职业专精的36格配置

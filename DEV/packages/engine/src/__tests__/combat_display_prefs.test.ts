@@ -10,7 +10,7 @@ import { AccountManager } from '../auth/AccountManager.js';
 describe('CombatDisplayPrefs', () => {
   it('defaults keep prior self/boss/target plates on and all-names/SCT-ally off', () => {
     const d = DEFAULT_COMBAT_DISPLAY_PREFS;
-    assert.equal(d.canvasViewMode, 'TOPDOWN');
+    assert.equal(d.canvasViewMode, 'ISO');
     assert.equal(d.isoOrbitSensitivity, 1);
     assert.equal(d.isoPitchSensitivity, 1);
     assert.equal(d.moveSensitivity, 1);
@@ -42,7 +42,8 @@ describe('CombatDisplayPrefs', () => {
     assert.equal(resolved.showSctMyDamage, true);
     assert.equal(resolved.showSctAllyHeal, false);
     assert.equal(resolved.canvasViewMode, 'ISO');
-    assert.equal(resolveCombatDisplayPrefs({ canvasViewMode: 'nope' as any }).canvasViewMode, 'TOPDOWN');
+    assert.equal(resolveCombatDisplayPrefs({ canvasViewMode: 'nope' as any }).canvasViewMode, 'ISO');
+    assert.equal(resolveCombatDisplayPrefs({ canvasViewMode: 'TOPDOWN' }).canvasViewMode, 'TOPDOWN');
     assert.equal(resolveCombatDisplayPrefs({}).isoOrbitSensitivity, 1);
     assert.equal(
       resolveCombatDisplayPrefs({ isoOrbitSensitivity: 0.2 }).isoOrbitSensitivity,

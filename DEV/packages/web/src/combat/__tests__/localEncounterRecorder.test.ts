@@ -26,6 +26,7 @@ function makeFriend(id: string, damage: number): Unit {
     alive: true,
     hp: 100,
     maxHp: 100,
+    absorb: 0,
     mp: 100,
     maxMp: 100,
     position: { x: 0, y: 0 },

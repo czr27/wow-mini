@@ -46,6 +46,9 @@ export const SPELL_MANA_COSTS: Record<string, number> = {
   natures_cure: 2200,
   remove_curse: 2200,
   remove_corruption: 2200,
+  cleanse: 2200,
+  dispel_magic: 2200,
+  purify: 2200,
 };
 
 /** Rogue energy cost matrix. */

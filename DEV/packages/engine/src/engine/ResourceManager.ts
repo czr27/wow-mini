@@ -10,11 +10,28 @@ import { getUnitHaste } from './BuffEffects.js';
  * 符文（RUNE）：DK 6枚，每枚独立10s CD
  * 符文能量（RUNIC_POWER）：自然衰减，技能消耗/生成
  */
+/** Maze / TRAVEL_RECOVERY passive mana regen multiplier (host + guest local seats). */
+export const TRAVEL_MANA_REGEN_MULTIPLIER = 20;
+
 export class ResourceManager {
   private engine: CombatEngine;
 
   // Mana regen interval tracking per unit
   private manaRegenMs: Map<string, number> = new Map();
+
+  /**
+   * Passive MANA regen scale. Set to TRAVEL_MANA_REGEN_MULTIPLIER during maze;
+   * each authority ticks own seats → OWNER_SNAPSHOT carries mp.
+   */
+  manaRegenMultiplier = 1;
+
+  /**
+   * Base mana regen rate per second (ratio of maxMp).
+   * Unset or <= 0 defaults to raid/dungeon tier adaptivity:
+   *  - 20-man raid: 0.0115 /s (1.15%/s ~ 1100 mana/s with spirit & raid auras)
+   *  - 5-man dungeon: 0.0085 /s (0.85%/s ~ 765 mana/s)
+   */
+  baseManaRegenRate?: number;
 
   constructor(engine: CombatEngine) {
     this.engine = engine;
@@ -60,8 +77,20 @@ export class ResourceManager {
   // ── Mana regen (Spirit-based combat regen) ────────────────────
   private tickMana(unit: Unit, res: { current: number; max: number }, deltaMs: number): void {
     if (res.current >= res.max) return;
-    // Combat regen: ~2% max mana per 5 seconds = 0.4%/s
-    const regenPerMs = (res.max * 0.004) / 1_000;
+    const mult = Number.isFinite(this.manaRegenMultiplier)
+      ? Math.max(0, this.manaRegenMultiplier)
+      : 1;
+
+    let baseRate = this.baseManaRegenRate;
+    if (typeof baseRate !== 'number' || baseRate <= 0) {
+      const isRaid = this.engine.friendlyUnits.length > 5;
+      baseRate = isRaid ? 0.0115 : 0.0085;
+    }
+    if (unit.role === 'DPS') {
+      baseRate += 0.0025; // 法系 DPS 冥想/暴击回蓝支持
+    }
+
+    const regenPerMs = (res.max * baseRate * mult) / 1_000;
     const amount = regenPerMs * deltaMs;
     res.current = Math.min(res.max, res.current + amount);
     unit.mp = res.current;
@@ -215,9 +244,14 @@ export class ResourceManager {
   restore(unitId: string, kind: ResourceKind, amount: number): void {
     const unit = this.engine.getUnit(unitId);
     if (!unit) return;
+    const maxLimit = unit.resources?.find(r => r.kind === kind)?.max ?? (kind === 'MANA' ? (unit.maxMp ?? 100000) : 100);
+    const effectiveAmount = (kind === 'MANA' && amount > 0 && amount <= 1.0)
+      ? Math.round(amount * maxLimit)
+      : amount;
+
     const res = unit.resources?.find(r => r.kind === kind);
     if (res) {
-      res.current = Math.min(res.max, res.current + amount);
+      res.current = Math.min(res.max, res.current + effectiveAmount);
       this.syncUnitResourceProperty(unit, kind, res.current);
     } else {
       let max = 100;

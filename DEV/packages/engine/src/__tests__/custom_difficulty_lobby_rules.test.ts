@@ -114,7 +114,7 @@ describe('自定义难度大厅规则', () => {
     assert.ok(room.members.some((m) => m.id === tankAi!.id), '坦克 AI 应保留');
   });
 
-  it('4. pickHotJoinAiReplacement：同职责优先 → DPS → 奶 → 坦最后', () => {
+  it('4. pickHotJoinAiReplacement：踢 AI 优先 DPS → 奶 → 坦（同职业优先）', () => {
     const ais = [
       {
         id: 'h1',
@@ -166,11 +166,11 @@ describe('自定义难度大厅规则', () => {
       },
     ];
     const pickHealer = pickHotJoinAiReplacement(ais as any, 'PRIEST', 'HEALER');
-    assert.equal(pickHealer?.id, 'h1', '治疗加入应顶治疗 AI');
+    assert.equal(pickHealer?.id, 'd1', '无编制约束时仍先踢 DPS');
     const pickDps = pickHotJoinAiReplacement(ais as any, 'MAGE', 'DPS');
     assert.equal(pickDps?.id, 'd1', '输出加入应顶输出 AI');
     const pickNoPreferred = pickHotJoinAiReplacement(ais as any, 'DK');
-    assert.equal(pickNoPreferred?.id, 'd1', '无 preferredRole 时先 DPS，坦最后');
+    assert.equal(pickNoPreferred?.id, 'd1', '先 DPS，坦最后');
     const pickTankOnly = pickHotJoinAiReplacement(
       ais.filter((a) => a.role === 'TANK') as any,
       'DK',
@@ -179,35 +179,28 @@ describe('自定义难度大厅规则', () => {
     assert.equal(pickTankOnly?.id, 't2', '仅剩坦时同职业坦优先');
   });
 
-  it('5. hasJoinableSeat：自定义有任意 AI 即可进；英雄仍要同职责', () => {
+  it('5. hasJoinableSeat：真人职责未满且有可踢 AI（编制合法）', () => {
     const mgr = new RoomManager();
     const room = mgr.createRoom({
       name: '座位',
       dungeonId: 'shadowfang_keep',
-      difficulty: 'CUSTOM',
-      customDifficulty: { ...DEFAULT_CUSTOM_DIFFICULTY },
+      difficulty: 'HEROIC',
       host: { id: 'h1', name: '坦', classId: 'DK', spec: 'BLOOD', role: 'TANK' },
     });
     mgr.autoFillAi(room.id);
-    // 满员无空位时：自定义靠任意 AI；英雄要同职责 AI
     assert.equal(room.members.length, 5);
-    assert.equal(hasJoinableSeat(room, 'DPS'), true);
-    room.difficulty = 'HEROIC';
-    assert.equal(hasJoinableSeat(room, 'DPS'), true, '英雄满员仍有 DPS AI');
-    // 踢光 DPS AI 后英雄 DPS 不可进；自定义仍可（有坦/奶 AI）
+    assert.equal(hasJoinableSeat(room, 'DPS'), true, '有 DPS AI 可顶');
+    // 踢光 DPS AI 并封死空席后：踢奶/坦会破 1/1/3 → 不可进
     for (const m of [...room.members]) {
       if (m.isAi && m.role === 'DPS') mgr.kickMember(room.id, m.id);
     }
-    // kick 后出现空 DPS 席，英雄也有空同职责席 — 先占满空席再比
     for (const s of room.slots) {
       if (!s.occupied) {
         s.occupied = true;
         s.role = 'TANK';
       }
     }
-    assert.equal(hasJoinableSeat(room, 'DPS'), false, '英雄无 DPS 空位/AI');
-    room.difficulty = 'CUSTOM';
-    assert.equal(hasJoinableSeat(room, 'DPS'), true, '自定义仍可顶其它职责 AI');
+    assert.equal(hasJoinableSeat(room, 'DPS'), false, '无合法可踢 AI 时拒绝');
   });
 
   it('6. 自定义 startGame 不自动补齐（允许人少开打）', () => {

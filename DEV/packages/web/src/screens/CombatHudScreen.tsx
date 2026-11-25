@@ -7,10 +7,13 @@ import type {
   NetworkVoteState,
   Unit,
   UserAccount,
+  DbmAlert,
 } from '@cata-raid-sim/engine';
+import { resolveCombatDisplayPrefs } from '@cata-raid-sim/engine';
 import { CombatCanvas } from '../canvas/CombatCanvas.js';
 import { ActionBar, ActionSlot, PlayerCastState, PlayerCastBar } from '../components/ActionBar.js';
 import { BuffFrame } from '../components/BuffFrame.js';
+import { DbmAlertBanner } from '../components/DbmAlertBanner.js';
 import { FocusUnitFrame } from '../components/FocusUnitFrame.js';
 import { PlayerUnitFrame } from '../components/PlayerUnitFrame.js';
 import { RaidFrames, IncomingHealCast } from '../components/RaidFrames.js';
@@ -67,7 +70,18 @@ export type CombatHudScreenProps = {
   } | null;
   groundTargetState: GroundTargetState | null;
   playerCast: PlayerCastState | null;
-  companionCasts: Record<string, { spellName: string; progress: number; spellId?: string }>;
+  companionCasts: Record<
+    string,
+    {
+      spellName: string;
+      progress: number;
+      spellId?: string;
+      totalMs?: number;
+      interruptible?: boolean;
+      endFlash?: 'success' | 'interrupt';
+      flashUntilMs?: number;
+    }
+  >;
   bossCasting: BossCastingInfo | null;
   deadUnits: Unit[];
   totalDurationSec: number;
@@ -119,13 +133,25 @@ export type CombatHudScreenProps = {
   isNetworkGuest?: boolean;
   /** Guest reports local player position to host */
   onNetworkMoveReport?: (x: number, y: number) => void;
+  dbmAlerts?: DbmAlert[];
 };
 
 function resolveUnitCastState(
   unit: Unit,
   bossUnit: Unit | undefined,
   bossCasting: BossCastingInfo | null,
-  companionCasts: Record<string, { spellName: string; progress: number; spellId?: string }>
+  companionCasts: Record<
+    string,
+    {
+      spellName: string;
+      progress: number;
+      spellId?: string;
+      totalMs?: number;
+      interruptible?: boolean;
+      endFlash?: 'success' | 'interrupt';
+      flashUntilMs?: number;
+    }
+  >
 ): {
   spellName: string;
   spellId?: string;
@@ -134,7 +160,20 @@ function resolveUnitCastState(
   interruptible: boolean;
   description?: string;
   school?: string;
+  endFlash?: 'success' | 'interrupt';
 } | null {
+  const companion = companionCasts[unit.id];
+  // End-flash (land/interrupt) wins briefly even for boss
+  if (companion?.endFlash) {
+    return {
+      spellName: companion.spellName,
+      spellId: companion.spellId,
+      spellIcon: companion.spellId,
+      progress: 1,
+      interruptible: companion.interruptible !== false,
+      endFlash: companion.endFlash,
+    };
+  }
   if (unit.id === bossUnit?.id && bossCasting) {
     return {
       spellName: bossCasting.spellName,
@@ -149,14 +188,13 @@ function resolveUnitCastState(
       school: bossCasting.school,
     };
   }
-  if (companionCasts[unit.id]) {
-    const c = companionCasts[unit.id];
+  if (companion) {
     return {
-      spellName: c.spellName,
-      spellId: c.spellId,
-      spellIcon: c.spellId,
-      progress: c.progress,
-      interruptible: true,
+      spellName: companion.spellName,
+      spellId: companion.spellId,
+      spellIcon: companion.spellId,
+      progress: companion.progress,
+      interruptible: companion.interruptible !== false,
     };
   }
   return null;
@@ -239,7 +277,9 @@ export function CombatHudScreen(props: CombatHudScreenProps) {
     syncRemotePositions,
     isNetworkGuest,
     onNetworkMoveReport,
+    dbmAlerts = [],
   } = props;
+  const dbmEnabled = resolveCombatDisplayPrefs(currentChar?.uiLayout?.combatDisplay).enableDbm;
 
   const allUnits = [
     ...friendlyUnits,
@@ -267,6 +307,7 @@ export function CombatHudScreen(props: CombatHudScreenProps) {
       <div className="absolute inset-0 z-0">
         <CombatCanvas
           units={friendlyUnits}
+          enemyUnits={enemyUnits}
           bossUnit={bossUnit}
           bossTargetId={bossTargetId}
           groundEffects={groundEffects}
@@ -306,6 +347,7 @@ export function CombatHudScreen(props: CombatHudScreenProps) {
       </div>
 
       <div className="absolute inset-0 pointer-events-none z-10">
+        <DbmAlertBanner alerts={dbmAlerts} enabled={dbmEnabled} />
         {playerUnit ? (
           <BuffFrame player={playerUnit} allUnits={allUnits} />
         ) : null}

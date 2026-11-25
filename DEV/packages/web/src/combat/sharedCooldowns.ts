@@ -13,6 +13,11 @@ export const SHARED_COOLDOWN_GROUPS: Record<string, string[]> = {
   shaman_heroism: ['bloodlust', 'heroism', 'shaman_heroism', 'time_warp', 'mage_time_warp'],
   time_warp: ['bloodlust', 'heroism', 'shaman_heroism', 'time_warp', 'mage_time_warp'],
   mage_time_warp: ['bloodlust', 'heroism', 'shaman_heroism', 'time_warp', 'mage_time_warp'],
+  // 德鲁伊驱散（自然之愈 / 清除腐蚀 共享 8 秒冷却）
+  natures_cure: ['natures_cure', 'druid_natures_cure', 'remove_corruption', 'druid_remove_corruption'],
+  druid_natures_cure: ['natures_cure', 'druid_natures_cure', 'remove_corruption', 'druid_remove_corruption'],
+  remove_corruption: ['natures_cure', 'druid_natures_cure', 'remove_corruption', 'druid_remove_corruption'],
+  druid_remove_corruption: ['natures_cure', 'druid_natures_cure', 'remove_corruption', 'druid_remove_corruption'],
 };
 
 export type PlayerCooldownEntry = { cdRemainingMs: number; totalCdMs: number };

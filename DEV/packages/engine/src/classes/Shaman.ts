@@ -342,6 +342,12 @@ export const SHAMAN: ClassSpec = {
       isRaidBuff: true,
       effects: [
         {
+          type: 'BUFF',
+          auraId: 'windfury_totem',
+          durationMs: 120_000,
+          description: '风怒图腾光环：全团近战攻速提高16%，持续2分钟',
+        },
+        {
           type: 'GROUND_EFFECT',
           groundKind: 'TOTEM',
           groundColorHex: '#EAB308',
@@ -408,6 +414,7 @@ export const SHAMAN: ClassSpec = {
       effects: [
         {
           type: 'DISPEL',
+          dispelTypes: ['MAGIC', 'CURSE'],
           description: '驱散友方目标身上的诅咒与魔法效果（恢复天赋强化）',
         },
       ],
@@ -424,7 +431,6 @@ export const SHAMAN: ClassSpec = {
       resourceCostAmount: 2400,
       targetType: 'SINGLE_ALLY',
       school: 'NATURE',
-      spec: 'RESTO_HEAL',
       travelOnly: true,
       effects: [
         {
@@ -468,7 +474,6 @@ export const SHAMAN: ClassSpec = {
       resourceCostAmount: 1200,
       targetType: 'SINGLE_ENEMY',
       school: 'FIRE',
-      spec: 'ELEMENTAL_DPS',
       effects: [
         {
           type: 'SPELL_DAMAGE',

@@ -8,6 +8,7 @@ import {
 import { CombatEngine } from './CombatEngine.js';
 import { ReportManager } from './ReportManager.js';
 import { buildDungeonBossHpList } from './TierProfile.js';
+import { TRAVEL_MANA_REGEN_MULTIPLIER } from './ResourceManager.js';
 
 export interface DungeonConfig {
   id: string;
@@ -197,6 +198,9 @@ export class RunStateMachine {
     this.totalTravelMs = ms;
     this.isCorpseRunning = false;
     this.corpseRunTimerMs = 0;
+    if (this.combatEngine?.resourceManager) {
+      this.combatEngine.resourceManager.manaRegenMultiplier = TRAVEL_MANA_REGEN_MULTIPLIER;
+    }
   }
 
   public getCurrentBoss() {
@@ -235,23 +239,21 @@ export class RunStateMachine {
     return !this.isCorpseRunning && this.getDeadUnits().length === 0;
   }
 
+  /**
+   * 跑尸结束群体复活。
+   * 走 combatEngine.resurrectUnit(1.0)，便于联机 withNetworkVitals：
+   * 房主权威座位本地满血；客人座位只发 RESURRECT，由对方权威应用后 OWNER_SNAPSHOT 回传。
+   */
   public massResurrect() {
     for (const unit of this.combatEngine.friendlyUnits) {
-      unit.isAlive = true;
-      unit.alive = true;
-      unit.hp = unit.maxHp;
-      unit.mp = unit.maxMp;
-      unit.energy = unit.classId === 'ROGUE' ? 100 : (unit.energy ?? 0);
-      unit.focus = unit.classId === 'HUNTER' ? 100 : (unit.focus ?? 0);
-      unit.rage = unit.classId === 'WARRIOR' ? 25 : (unit.rage ?? 0);
-      unit.holyPower = 0;
-      unit.absorb = 0;
-      unit.buffs = unit.buffs.filter(b => b.kind === 'BUFF');
-      unit.threatTable = [];
-      if (unit.runes) {
-        for (const r of unit.runes) {
-          r.cooldownMs = 0;
-        }
+      const dead = (!(unit.isAlive ?? unit.alive) || unit.hp <= 0);
+      if (dead) {
+        this.combatEngine.resurrectUnit(unit.id, 1, 1);
+      }
+      // 仅对本地已活着的单位灌满状态（客人座位等权威回传，不在此乐观改血）
+      const u = this.combatEngine.getUnit(unit.id) || unit;
+      if ((u.isAlive ?? u.alive) && u.hp > 0) {
+        this.combatEngine.applyCorpseRunFullVitals(u.id);
       }
     }
     this.isCorpseRunning = false;
@@ -334,6 +336,9 @@ export class RunStateMachine {
   public enterBossCombat() {
     this.phase = 'BOSS_COMBAT';
     this.currentBossStartTime = this.combatEngine.nowMs;
+    if (this.combatEngine?.resourceManager) {
+      this.combatEngine.resourceManager.manaRegenMultiplier = 1;
+    }
     const boss = this.getCurrentBoss();
     if (boss) {
       this.combatEngine.spawnBoss(boss.id, boss.name, boss.hp);
@@ -357,6 +362,15 @@ export class RunStateMachine {
         unit.absorb = 0;
         unit.buffs = unit.buffs.filter(b => b.kind === 'BUFF'); // clear harmful debuffs
         unit.threatTable = [];
+        if (unit.resources) {
+          for (const res of unit.resources) {
+            if (res.kind === 'MANA') res.current = res.max;
+            else if (res.kind === 'ENERGY') res.current = 100;
+            else if (res.kind === 'FOCUS') res.current = 100;
+            else if (res.kind === 'RAGE') res.current = 25;
+            else if (res.kind === 'HOLY_POWER' || res.kind === 'COMBO_POINTS') res.current = 0;
+          }
+        }
         if (unit.runes) {
           for (const r of unit.runes) {
             r.cooldownMs = 0;

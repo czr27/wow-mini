@@ -20,6 +20,7 @@ import type { ActionSlot, PlayerCastState } from '../components/ActionBar.js';
 import { syncUnitResources } from './unitResources.js';
 import { emitLocalAoePulse } from './emitLocalAoePulse.js';
 import { applyRaidLustBuff } from './raidLustBuff.js';
+import { reportUnitSummon } from './summonReport.js';
 
 export type InstantEffectsCtx = {
   engine: CombatEngine;
@@ -34,7 +35,7 @@ export type InstantEffectsCtx = {
   bossAi: BossAI | null;
   triggerSlotCooldown: (overrideMs?: number) => void;
   startPlayerCast: (state: PlayerCastState) => void;
-  handleDispelUnit: (targetUnitId?: string | null) => void;
+  handleDispelUnit: (targetUnitId?: string | null, skipResourceCost?: boolean) => void;
   onScreenShake: (ms: number) => void;
   onFriendlyUnitsChanged: () => void;
 };
@@ -68,9 +69,11 @@ export function executePlayerInstantEffects(ctx: InstantEffectsCtx): boolean {
       slot.spellId === 'natures_cure' ||
       slot.spellId === 'cleanse_spirit' ||
       slot.spellId === 'remove_curse' ||
-      slot.spellId === 'remove_corruption'
+      slot.spellId === 'remove_corruption' ||
+      slot.spellId === 'cleanse' ||
+      slot.spellId === 'dispel_magic'
     ) {
-      handleDispelUnit(effectiveFriendly.id);
+      handleDispelUnit(effectiveFriendly.id, true);
       return true;
     }
 
@@ -120,39 +123,31 @@ export function executePlayerInstantEffects(ctx: InstantEffectsCtx): boolean {
           while (engine.auraManager.removeBuff(u, 'lifebloom', player.id)) {}
         }
       }
+      // Always go through applyBuff so withNetworkVitals publishes ABSOLUTE stacks
+      // (in-place mutate used to leave remotes stuck at 1 layer).
       const existing = target.buffs.find(b => b.spellId === 'lifebloom' && b.sourceUnitId === player.id);
-      if (existing) {
-        // 多层生命绽放共用同一个倒计时条，不是每层独立计时；层数只加每跳治疗量，不单独有各自的时间
-        // 基础持续 15 秒，每 2 秒一跳 HOT，最多叠 3 层；每次叠加或刷新时倒计时重置为 15 秒
-        if (existing.stacks < 3) {
-          existing.stacks += 1;
-        }
-        existing.remainingMs = 15000;
-        existing.durationMs = 15000;
-        delete existing.stackRemainingMs;
-        existing.name = `生命绽放 (${existing.stacks}层)`;
-      } else {
-        engine.applyBuff(target, {
-          id: `lb_${Date.now()}`,
-          spellId: 'lifebloom',
-          name: '生命绽放 (1层)',
-          kind: 'BUFF',
-          tags: ['HOT'],
-          sourceUnitId: player.id,
-          targetUnitId: target.id,
-          stacks: 1,
-          maxStacks: 3,
-          durationMs: 15000,
-          remainingMs: 15000,
-          school: 'NATURE',
-          tickIntervalMs: 2000,
-          tickValue: 2400,
-        });
-      }
+      const nextStacks = Math.min(3, (existing?.stacks || 0) + 1);
+      engine.applyBuff(target, {
+        id: `lb_${Date.now()}`,
+        spellId: 'lifebloom',
+        name: `生命绽放 (${nextStacks}层)`,
+        kind: 'BUFF',
+        tags: ['HOT'],
+        sourceUnitId: player.id,
+        targetUnitId: target.id,
+        stacks: nextStacks,
+        maxStacks: 3,
+        durationMs: 15000,
+        remainingMs: 15000,
+        school: 'NATURE',
+        tickIntervalMs: 2000,
+        tickValue: 2400,
+      });
+      const after = target.buffs.find(b => b.spellId === 'lifebloom' && b.sourceUnitId === player.id);
       onFriendlyUnitsChanged();
       engine.effectsManager?.addFloatingText({
         targetId: target.id,
-        text: `生命绽放 (${existing ? existing.stacks : 1}层)`,
+        text: `生命绽放 (${after?.stacks ?? nextStacks}层)`,
         category: 'HEAL',
         isCrit: false,
       });
@@ -335,10 +330,14 @@ export function executePlayerInstantEffects(ctx: InstantEffectsCtx): boolean {
       }
       return true;
     } else if (slot.spellId === 'dark_command') {
-      if (boss && boss.alive) {
-        engine.threatManager.applyTaunt(boss.id, player.id);
+      const tauntTarget =
+        effectiveTarget && effectiveTarget.role === 'ENEMY' && (effectiveTarget.alive ?? effectiveTarget.isAlive)
+          ? effectiveTarget
+          : boss;
+      if (tauntTarget && (tauntTarget.alive ?? tauntTarget.isAlive)) {
+        engine.threatManager.applyTaunt(tauntTarget.id, player.id);
         engine.effectsManager?.addFloatingText({
-          targetId: boss.id,
+          targetId: tauntTarget.id,
           text: '黑暗命令 (嘲讽！)',
           category: 'CRIT',
           isCrit: true,
@@ -361,12 +360,11 @@ export function executePlayerInstantEffects(ctx: InstantEffectsCtx): boolean {
         remainingMs: 300000,
         school: 'SHADOW',
       });
-      player.absorb = (player.absorb || 0) + 18000;
       engine.effectsManager?.addFloatingText({
         targetId: player.id,
-        text: '白骨之盾 +18,000吸收盾',
-        category: 'HEAL',
-        isCrit: true,
+        text: '💀 白骨之盾 (6层 20%减伤)',
+        category: 'STATUS',
+        isCrit: false,
       });
       triggerSlotCooldown();
       return true;
@@ -911,16 +909,22 @@ export function executePlayerInstantEffects(ctx: InstantEffectsCtx): boolean {
       }
 
       // Taunt
-      if (normSlotSpell.isTaunt && boss && boss.alive) {
-        engine.threatManager.applyTaunt(boss.id, player.id);
-        engine.effectsManager?.addFloatingText({
-          targetId: boss.id,
-          text: `🛡️ ${normSlotSpell.name} 嘲讽成功！`,
-          category: 'CRIT',
-          isCrit: true,
-        });
-        triggerSlotCooldown(normSlotSpell.cooldownMs);
-      return true;
+      if (normSlotSpell.isTaunt) {
+        const tauntTarget =
+          effectiveTarget && effectiveTarget.role === 'ENEMY' && (effectiveTarget.alive ?? effectiveTarget.isAlive)
+            ? effectiveTarget
+            : boss;
+        if (tauntTarget && (tauntTarget.alive ?? tauntTarget.isAlive)) {
+          engine.threatManager.applyTaunt(tauntTarget.id, player.id);
+          engine.effectsManager?.addFloatingText({
+            targetId: tauntTarget.id,
+            text: `🛡️ ${normSlotSpell.name} 嘲讽成功！`,
+            category: 'CRIT',
+            isCrit: true,
+          });
+          triggerSlotCooldown(normSlotSpell.cooldownMs);
+          return true;
+        }
       }
 
       // Dispel
@@ -1034,7 +1038,7 @@ export function executePlayerInstantEffects(ctx: InstantEffectsCtx): boolean {
           });
         }
 
-        // Timed summons (wolves / gargoyle): real PET units → canvas + host unit snapshots
+        // Timed summons (wolves / gargoyle): report as SUMMON_SPAWN + owner snapshot
         if (isTimedSummonSpellId(shortId) || isTimedSummonSpellId(normSlotSpell.id)) {
           const pets = spawnTimedSummons(engine, player, shortId || normSlotSpell.id);
           for (const pet of pets) {
@@ -1047,6 +1051,13 @@ export function executePlayerInstantEffects(ctx: InstantEffectsCtx): boolean {
               x: pet.position?.x,
               y: pet.position?.y,
               targetId: effectiveTarget?.id ?? null,
+            });
+            reportUnitSummon({
+              engine,
+              owner: player,
+              pet,
+              spellId: shortId || normSlotSpell.id,
+              spellName: normSlotSpell.name,
             });
           }
           if (pets.length > 0) onFriendlyUnitsChanged();
