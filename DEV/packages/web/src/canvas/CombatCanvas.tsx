@@ -4235,83 +4235,22 @@ export const CombatCanvas: React.FC<Props> = ({
           return orderA - orderB;
         });
 
-        const manualLeader =
-          !autoNavActiveRef.current && !hasDeadMembers
-            ? selectExitClosestHumanLeader(
-                units
-                  .filter((unit) => unit.isPlayer || unit.isHumanControlled)
-                  .map((unit) => ({
-                    id: unit.id,
-                    position: unit.isPlayer
-                      ? playerPosRef.current
-                      : (companionPositionsRef.current[unit.id] || unit.position || playerPosRef.current),
-                    isAlive: !!(unit.isAlive ?? unit.alive ?? true) && unit.hp > 0,
-                    isLocalPlayer: !!unit.isPlayer,
-                  })),
-                mazeWaypoints,
-                segLens
-              )
-            : null;
-
         sortedParty.forEach((u, rank) => {
           const isPlayer = u.isPlayer;
           let targetPos: { x: number; y: number };
-          let directStepped = false;
 
-          if (autoNavActiveRef.current && !hasDeadMembers) {
-            // March + encounter share the same path lead — fight at predicted stop, no teleport to mobs
-            const rankDist = Math.max(0, mazeLeadDistRef.current - rank * (is20Man ? 8 : 14));
-            targetPos = getPointAlongMaze(rankDist);
-            if (currentEncounterPack > 0) {
-              const isTank = u.role === 'TANK';
-              const isMelee = u.role === 'DPS' && (u.classId === 'ROGUE' || u.classId === 'DK' || u.classId === 'WARRIOR' || u.classId === 'PALADIN');
-              const isHealer = u.role === 'HEALER';
-              // Tiny lateral fidget only (keep on corridor; avoid yanking into walls)
-              if (isTank) targetPos = { x: targetPos.x + 4, y: targetPos.y - 3 };
-              else if (isMelee) targetPos = { x: targetPos.x - 2, y: targetPos.y + 5 };
-              else if (isHealer) targetPos = { x: targetPos.x - 6 - (rank % 3) * 3, y: targetPos.y + 4 };
-              else targetPos = { x: targetPos.x - 5 - (rank % 3) * 3, y: targetPos.y - 4 };
-            }
-          } else {
-            // Manual movement: mirror remote humans/host-authoritative units, or AI follows exit-closest human along corridor
-            const followHostPos =
-              !isPlayer &&
-              syncRemotePositions &&
-              !!u.position &&
-              (isNetworkGuestRef.current || !!u.isHumanControlled);
-
-            if (isPlayer) {
-              targetPos = playerPosRef.current;
-            } else if (followHostPos && u.position) {
-              targetPos = { x: u.position.x, y: u.position.y };
-            } else if (!hasDeadMembers && manualLeader) {
-              const cur = companionPositionsRef.current[u.id] || {
-                x: manualLeader.position.x,
-                y: manualLeader.position.y,
-              };
-              targetPos = stepManualMazeCompanion({
-                unitId: u.id,
-                role: u.role,
-                classId: u.classId,
-                rank,
-                is20Man,
-                leaderPos: manualLeader.position,
-                leaderDistAlongPath: manualLeader.distAlongPath,
-                currentPos: cur,
-                waypoints: mazeWaypoints,
-                geometry: mazeGeometry,
-                cellSize: mazeLayout.cellSize,
-                currentEncounterPack,
-                tickCount,
-                speedScale: MAZE_TRAVERSE_SPEED_SCALE,
-              });
-              directStepped = true;
-            } else {
-              targetPos = companionPositionsRef.current[u.id] || {
-                x: 60 + (rank % 5) * 18,
-                y: 80,
-              };
-            }
+          // Always auto-march along maze lead in maze phase
+          const rankDist = Math.max(0, mazeLeadDistRef.current - rank * (is20Man ? 8 : 14));
+          targetPos = getPointAlongMaze(rankDist);
+          if (currentEncounterPack > 0) {
+            const isTank = u.role === 'TANK';
+            const isMelee = u.role === 'DPS' && (u.classId === 'ROGUE' || u.classId === 'DK' || u.classId === 'WARRIOR' || u.classId === 'PALADIN');
+            const isHealer = u.role === 'HEALER';
+            // Tiny lateral fidget only (keep on corridor; avoid yanking into walls)
+            if (isTank) targetPos = { x: targetPos.x + 4, y: targetPos.y - 3 };
+            else if (isMelee) targetPos = { x: targetPos.x - 2, y: targetPos.y + 5 };
+            else if (isHealer) targetPos = { x: targetPos.x - 6 - (rank % 3) * 3, y: targetPos.y + 4 };
+            else targetPos = { x: targetPos.x - 5 - (rank % 3) * 3, y: targetPos.y - 4 };
           }
 
           // Smooth Vector Lerp: Absolutely NO instant snapping/teleportation!
@@ -4319,26 +4258,21 @@ export const CombatCanvas: React.FC<Props> = ({
             ? playerPosRef.current
             : (companionPositionsRef.current[u.id] || { x: targetPos.x, y: targetPos.y });
 
-          if (directStepped) {
+          const dx = targetPos.x - curPos.x;
+          const dy = targetPos.y - curPos.y;
+          const dist = Math.hypot(dx, dy);
+
+          if (dist > 0.5) {
+            // Cap step so encounter/timeline corrections never look like teleports
+            const step = Math.min(
+              dist,
+              Math.min(8.5 * MAZE_TRAVERSE_SPEED_SCALE, Math.max(3.6 * MAZE_TRAVERSE_SPEED_SCALE, dist * 0.22 * MAZE_TRAVERSE_SPEED_SCALE))
+            );
+            curPos.x += (dx / dist) * step;
+            curPos.y += (dy / dist) * step;
+          } else {
             curPos.x = targetPos.x;
             curPos.y = targetPos.y;
-          } else {
-            const dx = targetPos.x - curPos.x;
-            const dy = targetPos.y - curPos.y;
-            const dist = Math.hypot(dx, dy);
-
-            if (dist > 0.5) {
-              // Cap step so encounter/timeline corrections never look like teleports
-              const step = Math.min(
-                dist,
-                Math.min(8.5 * MAZE_TRAVERSE_SPEED_SCALE, Math.max(3.6 * MAZE_TRAVERSE_SPEED_SCALE, dist * 0.22 * MAZE_TRAVERSE_SPEED_SCALE))
-              );
-              curPos.x += (dx / dist) * step;
-              curPos.y += (dy / dist) * step;
-            } else {
-              curPos.x = targetPos.x;
-              curPos.y = targetPos.y;
-            }
           }
 
           if (isPlayer) {
@@ -5648,15 +5582,27 @@ export const CombatCanvas: React.FC<Props> = ({
       <div className="absolute top-2 left-3 flex items-center space-x-2 text-[10px] text-gray-300 bg-black/80 px-2.5 py-1 rounded-lg border border-[#3b3b5c] backdrop-blur pointer-events-none">
         <span className="text-amber-400 font-bold">🎮 操控：</span>
         <span>
-          单击地面跑动 · 单击选人 · 长按 <strong className="text-white bg-slate-800 px-1 rounded">W A S D</strong> 连续移动 ·
-          滚轮缩放（±50%）
-          {displayPrefs.canvasViewMode === 'ISO' ? (
+          {runPhase === 'TRAVEL_RECOVERY' ? (
             <>
-              {' '}
-              · 按住 <strong className="text-amber-300 bg-slate-800 px-1 rounded">右键</strong>{' '}
-              左右转视角/俯仰 · 按住右键按 <strong className="text-amber-300 bg-slate-800 px-1 rounded">左键</strong> 向前走
+              迷宫自动行军 ·
+              {displayPrefs.canvasViewMode === 'ISO' ? (
+                <> 按住 <strong className="text-amber-300 bg-slate-800 px-1 rounded">右键</strong> 旋转视角/俯仰 · </>
+              ) : null}
+              滚轮缩放（±50%）
             </>
-          ) : null}
+          ) : (
+            <>
+              单击地面跑动 · 单击选人 · 长按 <strong className="text-white bg-slate-800 px-1 rounded">W A S D</strong> 连续移动 ·
+              滚轮缩放（±50%）
+              {displayPrefs.canvasViewMode === 'ISO' ? (
+                <>
+                  {' '}
+                  · 按住 <strong className="text-amber-300 bg-slate-800 px-1 rounded">右键</strong>{' '}
+                  左右转视角/俯仰 · 按住右键按 <strong className="text-amber-300 bg-slate-800 px-1 rounded">左键</strong> 向前走
+                </>
+              ) : null}
+            </>
+          )}
           · 按 <strong className="text-amber-300 bg-slate-800 px-1 rounded">Alt+1~5</strong> 切换当前小队目标 · 施法距离不足自动跑向目标
         </span>
       </div>
