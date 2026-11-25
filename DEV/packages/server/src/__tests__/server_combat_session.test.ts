@@ -242,4 +242,43 @@ describe('服务端房间独立战斗会话（Server-Authoritative Room Session�
 
     hub.dispose();
   });
+
+  it('3. 服务端 AI 队友自主运行完整技能决策循环（Boss 掉血/产生读条或治疗效果）', () => {
+    const hub = new RoomWsHub();
+    const host = authClient(hub, {
+      playerId: 'p_ai_h',
+      username: 'u_ai_h',
+      playerName: 'HostDps',
+      classId: 'MAGE',
+      spec: 'FIRE',
+      role: 'DPS',
+    });
+
+    host.inject({
+      type: 'ROOM_CREATE',
+      timeMs: Date.now(),
+      payload: {
+        name: 'AI服务端运行测试房',
+        dungeonId: 'shadowfang_keep',
+        host: { id: 'p_ai_h', name: 'HostDps', classId: 'MAGE', spec: 'FIRE', role: 'DPS' },
+      },
+    });
+    const roomId = (host.lastOfType('ROOM_UPDATE')!.payload as LobbyRoom).id;
+    host.inject({ type: 'ROOM_ACTION', roomId, payload: { action: 'AUTO_FILL_AI' } });
+    host.inject({ type: 'ROOM_START', roomId });
+
+    const cs = hub.getCombatSession(roomId)!;
+    assert.ok(cs);
+    // 快进赶路进入 BOSS_COMBAT，推进 80 个服务端 tick（4 秒）确保坦克接怪建立仇恨且 AI 读条落地
+    cs.fastForwardTravel();
+    for (let i = 0; i < 80; i++) {
+      cs.tick(50);
+    }
+
+    const boss = cs.engine.bossUnit;
+    assert.ok(boss, '进入 BOSS_COMBAT 后服务端应生成 Boss');
+    assert.ok(boss.hp < boss.maxHp, `AI 队友应在服务端自主攻击 Boss 使血量下降 (${boss.hp}/${boss.maxHp})`);
+
+    hub.dispose();
+  });
 });

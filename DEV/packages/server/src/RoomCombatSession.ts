@@ -1,21 +1,28 @@
 import {
   BossAI,
   CombatEngine,
-  DpsAI,
-  HealerAI,
+  LEVEL_80_MAX_HASTE,
   LEVEL_80_STATS,
   ReportManager,
   RunStateMachine,
-  TankAI,
   createLevel80BaseStats,
+  ensureDkRunes,
   getDungeonConfig,
+  getOrCreateUnitAIPersonality,
   getRoleBySpec,
+  getUnitHaste,
+  inferAiSpecForUnit,
+  isAiCdReady,
+  markAiCdUsed,
+  notifyOom,
+  runFriendlyAiCombatTick,
+  syncUnitResources,
+  type AIPersonality,
+  type AiActiveCast,
   type ClassId,
   type CombatBatch,
   type CombatEffect,
-  type GameState,
   type LobbyRoom,
-  type RoomMember,
   type NetworkCastTimeline,
   type NetworkCombatSnapshot,
   type NetworkCooldownTimeline,
@@ -24,6 +31,7 @@ import {
   type NetworkUnitSnapshot,
   type OwnerSnapshot,
   type PlayerInputPayload,
+  type RoomMember,
   type RunPhase,
   type Unit,
 } from '@cata-raid-sim/engine';
@@ -49,9 +57,11 @@ export class RoomCombatSession {
 
   private bossAi: BossAI | null = null;
   private approachedBossId: string | null = null;
-  private tankAi = new TankAI();
-  private healerAi = new HealerAI();
-  private dpsAi = new DpsAI();
+  private aiCasts: Record<string, AiActiveCast> = {};
+  private aiCooldowns: Record<string, number> = {};
+  private aiPersonalities = new Map<string, AIPersonality>();
+  private lastOomWarningMs: Record<string, number> = {};
+  private srvEffectSeq = 0;
 
   private tickTimer: ReturnType<typeof setInterval> | null = null;
   private tickCount = 0;
@@ -79,6 +89,7 @@ export class RoomCombatSession {
   ) {
     this.roomId = room.id;
     this.engine = new CombatEngine();
+    this.installServerHumanEffectInterceptor();
     this.reportManager = new ReportManager();
     const cfg = getDungeonConfig(room.dungeonId, room.difficulty);
     this.rsm = new RunStateMachine(cfg, this.engine, this.reportManager);
@@ -93,6 +104,93 @@ export class RoomCombatSession {
         (this.tickTimer as any).unref();
       }
     }
+  }
+
+  /**
+   * 服务端 BossAI / AI 队友对真人权威单位产生伤害、治疗、复活或 Buff 时，
+   * 自动生成 COMBAT_EFFECT 推入 COMBAT_BATCH 下发给对应真人权威客户端结算。
+   */
+  private installServerHumanEffectInterceptor() {
+    const origDeal = this.engine.dealDamage.bind(this.engine);
+    this.engine.dealDamage = (attacker, defender, amount, school, isCrit, spellName, isDot) => {
+      if (defender && !this.isServerAuthorityUnit(defender.id) && amount > 0) {
+        this.pendingEffects.push({
+          effectId: `srv_eff_${++this.srvEffectSeq}`,
+          sourceId: attacker?.id || 'server',
+          targetId: defender.id,
+          spellId: spellName || 'boss_attack',
+          spellName: spellName || '攻击',
+          kind: 'DAMAGE',
+          amount: Math.round(amount),
+          isCrit: !!isCrit,
+          atMs: Date.now(),
+        });
+      }
+      return origDeal(attacker, defender, amount, school, isCrit, spellName, isDot);
+    };
+
+    const origHeal = this.engine.healUnit.bind(this.engine);
+    this.engine.healUnit = (healer, target, amount, isCrit, spellName, isHot) => {
+      if (target && !this.isServerAuthorityUnit(target.id) && amount > 0) {
+        this.pendingEffects.push({
+          effectId: `srv_eff_${++this.srvEffectSeq}`,
+          sourceId: healer?.id || 'server',
+          targetId: target.id,
+          spellId: spellName || 'ai_heal',
+          spellName: spellName || '治疗',
+          kind: 'HEAL',
+          amount: Math.round(amount),
+          isCrit: !!isCrit,
+          atMs: Date.now(),
+        });
+      }
+      return origHeal(healer, target, amount, isCrit, spellName, isHot);
+    };
+
+    const origRez = this.engine.resurrectUnit.bind(this.engine);
+    this.engine.resurrectUnit = (unitId, hpFrac, mpFrac) => {
+      const ok = origRez(unitId, hpFrac, mpFrac);
+      if (ok && !this.isServerAuthorityUnit(unitId)) {
+        this.pendingEffects.push({
+          effectId: `srv_eff_${++this.srvEffectSeq}`,
+          sourceId: 'server',
+          targetId: unitId,
+          spellId: 'ai_resurrect',
+          kind: 'RESURRECT',
+          atMs: Date.now(),
+        });
+      }
+      return ok;
+    };
+
+    const origApplyBuff = this.engine.applyBuff.bind(this.engine);
+    this.engine.applyBuff = (target, buff) => {
+      if (target && !this.isServerAuthorityUnit(target.id) && buff) {
+        this.pendingEffects.push({
+          effectId: `srv_eff_${++this.srvEffectSeq}`,
+          sourceId: buff.sourceUnitId || 'server',
+          targetId: target.id,
+          spellId: buff.spellId || buff.id,
+          spellName: buff.name,
+          kind: 'APPLY_BUFF',
+          buff: {
+            spellId: buff.spellId || buff.id,
+            name: buff.name,
+            kind: buff.kind,
+            tags: buff.tags as string[] | undefined,
+            stacks: buff.stacks,
+            maxStacks: buff.maxStacks,
+            durationMs: buff.durationMs,
+            remainingMs: buff.remainingMs,
+            school: buff.school,
+            tickIntervalMs: buff.tickIntervalMs,
+            tickValue: buff.tickValue,
+          },
+          atMs: Date.now(),
+        });
+      }
+      return origApplyBuff(target, buff);
+    };
   }
 
   dispose() {
@@ -157,14 +255,12 @@ export class RoomCombatSession {
     const maxHp = Math.round(baseHp * hpMult);
     const maxMp = Math.round(baseMp * mpMult);
 
-    const pos =
-      role === 'TANK'
-        ? { x: 260, y: 260 + (idx % 2) * 35 }
-        : role === 'HEALER'
-          ? { x: 140, y: 220 + idx * 28 }
-          : { x: 185, y: 200 + idx * 28 };
+    const pos = {
+      x: role === 'TANK' ? 440 : role === 'HEALER' ? 140 : 220,
+      y: 160 + (idx % 5) * 20,
+    };
 
-    return {
+    const unit = {
       id: m.id,
       name: m.name,
       classId: m.classId as ClassId,
@@ -180,12 +276,17 @@ export class RoomCombatSession {
       maxHp,
       mp: maxMp,
       maxMp,
+      energy: m.classId === 'ROGUE' ? 100 : undefined,
+      rage: m.classId === 'WARRIOR' || (m.classId === 'DRUID' && role === 'TANK') ? 40 : undefined,
+      focus: m.classId === 'HUNTER' ? 100 : undefined,
+      runicPower: m.classId === 'DK' ? 0 : undefined,
+      holyPower: m.classId === 'PALADIN' ? 1 : undefined,
       absorb: 0,
       position: pos,
       buffs: [],
       threatTable: {},
       resources: maxMp > 0 ? [{ kind: 'MANA', current: maxMp, max: maxMp }] : [],
-      stats: { ...base },
+      stats: { ...base, haste: LEVEL_80_MAX_HASTE },
       combatStats: {
         damageDealt: 0,
         healingDone: 0,
@@ -194,6 +295,9 @@ export class RoomCombatSession {
         interruptCount: 0,
       },
     } as unknown as Unit;
+    if (m.classId === 'DK') ensureDkRunes(unit);
+    syncUnitResources(unit);
+    return unit;
   }
 
   /** Server owns Boss, Enemies, AI teammates, and AI/Boss pets — never human players or their pets. */
@@ -545,53 +649,102 @@ export class RoomCombatSession {
   }
 
   private tickServerAiTeammates(boss: Unit) {
-    if (this.tickCount % 20 !== 0) return; // ~1s AI cadence
-    const bossCasting = this.bossAi?.currentCasting;
-    const gameState: GameState = {
-      phase: this.rsm.phase,
-      elapsedMs: this.engine.nowMs ?? 0,
-      units: [...this.engine.friendlyUnits, ...this.engine.enemyUnits],
-      bossId: boss.id,
-      bossChannelSpellId: bossCasting?.skill?.id ?? null,
-      bossChannelRemainingMs: bossCasting
-        ? Math.max(0, (bossCasting.skill.castTimeMs || 0) - bossCasting.elapsedMs)
-        : 0,
-      groundEffects: this.engine.effectsManager?.groundEffects,
-    };
-
+    const deltaMs = TICK_MS;
+    const stepPx = 7; // ~140px/s
+    // 1. 被动资源回复 & AI 走位（坦克/近战贴近 Boss，远程/治疗保持 320px 内）
     for (const u of this.engine.friendlyUnits) {
       if (!(u as any).isAi || !(u.isAlive ?? u.alive) || u.hp <= 0) continue;
-      if (u.role === 'TANK') {
-        this.tankAi.decide(u, gameState);
-        this.engine.dealDamage(u, boss, 1200, 'PHYSICAL', false, '盾牌猛击');
-        this.engine.threatManager?.addThreat?.(boss.id, u.id, 3000);
-      } else if (u.role === 'HEALER') {
-        this.healerAi.decide(u, gameState);
-        const lowest = [...this.engine.friendlyUnits]
-          .filter((f) => (f.isAlive ?? f.alive) && f.hp > 0 && f.hp < f.maxHp)
-          .sort((a, b) => a.hp / a.maxHp - b.hp / b.maxHp)[0];
-        if (lowest) {
-          const healAmt = 2200;
-          if (this.isServerAuthorityUnit(lowest.id)) {
-            this.engine.healUnit(u, lowest, healAmt, false, '治疗术');
-          } else {
-            this.pendingEffects.push({
-              effectId: `srv_heal_${this.tickCount}_${u.id}_${lowest.id}`,
-              sourceId: u.id,
-              targetId: lowest.id,
-              spellId: 'ai_heal',
-              spellName: '治疗术',
-              kind: 'HEAL',
-              amount: healAmt,
-              atMs: Date.now(),
-            });
-          }
-        }
-      } else {
-        this.dpsAi.decide(u, gameState);
-        this.engine.dealDamage(u, boss, 1800, 'FIRE', false, '奥术冲击');
+      const isMelee =
+        u.role === 'TANK' ||
+        u.classId === 'WARRIOR' ||
+        u.classId === 'ROGUE' ||
+        u.classId === 'DK' ||
+        (u.classId === 'PALADIN' && u.role !== 'HEALER') ||
+        u.classId === 'DRUID';
+      const desiredRange = isMelee ? 70 : 320;
+      const dx = boss.position.x - u.position.x;
+      const dy = boss.position.y - u.position.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist > desiredRange && dist > 0) {
+        const move = Math.min(stepPx, dist - desiredRange);
+        u.position.x += (dx / dist) * move;
+        u.position.y += (dy / dist) * move;
       }
+
+      const haste = getUnitHaste(u, LEVEL_80_MAX_HASTE);
+      if (u.maxMp && u.maxMp > 0) {
+        const regenAmt = (u.maxMp * 0.015 * deltaMs) / 1000;
+        u.mp = Math.min(u.maxMp, (u.mp ?? 0) + regenAmt);
+      }
+      if (u.classId === 'ROGUE') {
+        u.energy = Math.min(100, (u.energy ?? 100) + (10 * (1 + haste) * deltaMs) / 1000);
+      } else if (u.classId === 'WARRIOR' || (u.classId === 'DRUID' && u.role === 'TANK')) {
+        u.rage = Math.min(100, (u.rage ?? 30) + (7 * deltaMs) / 1000);
+      } else if (u.classId === 'HUNTER') {
+        u.focus = Math.min(100, (u.focus ?? 100) + (6.5 * (1 + haste) * deltaMs) / 1000);
+      }
+      syncUnitResources(u);
     }
+
+    // 2. 运行完整 10 职业 / 30 专精通用 AI 战斗决策循环
+    const livingEnemies = this.engine.enemyUnits.filter((e) => (e.isAlive ?? e.alive) && e.hp > 0);
+    const bossThreatTargetId = this.engine.getBossTargetId() || null;
+
+    runFriendlyAiCombatTick({
+      engine: this.engine,
+      boss,
+      livingEnemies,
+      bossThreatTargetId,
+      tickCount: this.tickCount,
+      deltaMs,
+      bossAi: this.bossAi,
+      aiCasts: this.aiCasts,
+      aiCooldowns: this.aiCooldowns,
+      currentCasts: {},
+      getUnitAIPersonality: (u) => getOrCreateUnitAIPersonality(this.aiPersonalities, u),
+      inferAiSpecForUnit,
+      isAiCdReady: (unitId, spellKey, cdMs) => isAiCdReady(this.aiCooldowns, unitId, spellKey, cdMs),
+      markAiCdUsed: (unitId, spellKey) => markAiCdUsed(this.aiCooldowns, unitId, spellKey),
+      notifyOom: (u, eng) => notifyOom(this.lastOomWarningMs, u, eng),
+      addIncomingCast: () => {},
+      hooks: {
+        onCastStart: (ev) => {
+          this.pendingEffects.push({
+            effectId: `srv_eff_${++this.srvEffectSeq}`,
+            sourceId: ev.unitId,
+            targetId: ev.targetId,
+            spellId: ev.spellId,
+            spellName: ev.spellName,
+            kind: 'CAST_START',
+            totalMs: ev.totalMs,
+            isChannel: ev.isChannel,
+            atMs: Date.now(),
+          });
+        },
+        onCastLand: (ev) => {
+          this.pendingEffects.push({
+            effectId: `srv_eff_${++this.srvEffectSeq}`,
+            sourceId: ev.unitId,
+            targetId: ev.targetId,
+            spellId: ev.spellId,
+            spellName: ev.spellName,
+            kind: 'CAST_LAND',
+            atMs: Date.now(),
+          });
+        },
+        onCastInterrupt: (ev) => {
+          this.pendingEffects.push({
+            effectId: `srv_eff_${++this.srvEffectSeq}`,
+            sourceId: ev.unitId,
+            targetId: ev.targetId,
+            spellId: ev.spellId,
+            spellName: ev.spellName,
+            kind: 'INTERRUPT',
+            atMs: Date.now(),
+          });
+        },
+      },
+    });
   }
 
   private tickEnginePreservingHumans(deltaMs: number) {
@@ -640,6 +793,20 @@ export class RoomCombatSession {
       targetId: c.targetId,
       interruptible: true,
     }));
+
+    for (const [unitId, aiCast] of Object.entries(this.aiCasts)) {
+      if (!aiCast || casts.some((c) => c.unitId === unitId)) continue;
+      casts.push({
+        unitId,
+        spellId: aiCast.spellId,
+        spellName: aiCast.spellName,
+        startedAtMs: now - (aiCast.elapsedMs || 0),
+        totalMs: aiCast.totalMs || 1500,
+        isChannel: !!aiCast.isChannel,
+        targetId: aiCast.targetId,
+        interruptible: !aiCast.isChannel,
+      });
+    }
 
     const bossCast = this.bossAi?.currentCasting;
     if (bossCast && this.engine.bossUnit) {

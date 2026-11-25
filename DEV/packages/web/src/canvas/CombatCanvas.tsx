@@ -2553,6 +2553,57 @@ export const CombatCanvas: React.FC<Props> = ({
   dungeonTierRef.current = dungeonTier;
   runPhaseLiveRef.current = runPhase;
 
+  /** High-frequency props kept in a ref so the 60fps RAF loop is never torn down per tick */
+  const livePropsRef = useRef({
+    units,
+    bossUnit,
+    bossTargetId,
+    groundEffects,
+    floatingTexts,
+    screenShake,
+    selectedUnitId,
+    focusTargetId,
+    onPlayerMove,
+    onCancelCast,
+    onApproachComplete,
+    onFastForwardTravel,
+    revivingUnitId,
+    reviveProgress,
+    autoApproachTarget,
+    onApproachTargetReached,
+    isCorpseRunning,
+    corpseRunRemainingMs,
+    groundTargetState,
+    syncRemotePositions,
+    onNetworkMoveReport,
+  });
+  livePropsRef.current = {
+    units,
+    bossUnit,
+    bossTargetId,
+    groundEffects,
+    floatingTexts,
+    screenShake,
+    selectedUnitId,
+    focusTargetId,
+    onPlayerMove,
+    onCancelCast,
+    onApproachComplete,
+    onFastForwardTravel,
+    revivingUnitId,
+    reviveProgress,
+    autoApproachTarget,
+    onApproachTargetReached,
+    isCorpseRunning,
+    corpseRunRemainingMs,
+    groundTargetState,
+    syncRemotePositions,
+    onNetworkMoveReport,
+  };
+
+  /** Sub-tick interpolation state for travelRemainingMs so maze march is 60fps smooth */
+  const lastRemSnapshotRef = useRef<{ rem: number; atPerfMs: number }>({ rem: -1, atPerfMs: 0 });
+
   /** Accumulators for maze trash DPS (stable cadence, not re-rolled every frame). */
   const mazeDpsAccMsRef = useRef(0);
   const mazeDpsNextMsRef = useRef(50);
@@ -3077,6 +3128,29 @@ export const CombatCanvas: React.FC<Props> = ({
 
     const render = () => {
       tickCount++;
+      const {
+        units,
+        bossUnit,
+        bossTargetId,
+        groundEffects,
+        floatingTexts,
+        screenShake,
+        selectedUnitId,
+        focusTargetId,
+        onPlayerMove,
+        onCancelCast,
+        onApproachComplete,
+        onFastForwardTravel,
+        revivingUnitId,
+        reviveProgress,
+        autoApproachTarget,
+        onApproachTargetReached,
+        isCorpseRunning,
+        corpseRunRemainingMs,
+        groundTargetState,
+        syncRemotePositions,
+        onNetworkMoveReport,
+      } = livePropsRef.current;
       const width = canvas.width;
       const height = canvas.height;
       const prefs = displayPrefsRef.current;
@@ -3172,11 +3246,21 @@ export const CombatCanvas: React.FC<Props> = ({
       const mazeGeometry = computePathGeometry(mazeWaypoints);
       const { segLens, totalLen: totalMazeLen, getPoint: getPointAlongMaze } = mazeGeometry;
 
-      // ── Synchronized Timeline Calculation (always read live refs) ──
+      // ── Synchronized Timeline Calculation (with 60fps sub-tick interpolation) ──
       const totalTProp = totalTravelMsRef.current;
       const totalT = totalTProp && totalTProp > 0 ? totalTProp : (is20Man ? 14000 : 7000);
       const remProp = travelRemainingMsRef.current;
-      const rem = remProp !== undefined ? remProp : totalT;
+      const rawRem = remProp !== undefined ? remProp : totalT;
+      const nowPerf = performance.now();
+      if (lastRemSnapshotRef.current.rem !== rawRem) {
+        lastRemSnapshotRef.current = { rem: rawRem, atPerfMs: nowPerf };
+      }
+      // Smoothly interpolate remaining time between discrete engine ticks (up to 250ms span)
+      const subTickDelta =
+        runPhase === 'TRAVEL_RECOVERY' && rawRem > 0 && rawRem < totalT
+          ? Math.min(250, Math.max(0, nowPerf - lastRemSnapshotRef.current.atPerfMs))
+          : 0;
+      const rem = Math.max(0, rawRem - subTickDelta);
       const elapsed = Math.max(0, Math.min(totalT, totalT - rem));
 
       // New dungeon / wipe-retry: travel clock rewound → hard-reset trash (drop prior tombstones)
@@ -5573,7 +5657,7 @@ export const CombatCanvas: React.FC<Props> = ({
 
     animId = requestAnimationFrame(render);
     return () => cancelAnimationFrame(animId);
-  }, [units, bossUnit, bossTargetId, groundEffects, floatingTexts, runPhase, screenShake, selectedUnitId, focusTargetId, onPlayerMove, onCancelCast, onApproachComplete, onFastForwardTravel, revivingUnitId, reviveProgress, autoApproachTarget, onApproachTargetReached, isCorpseRunning, corpseRunRemainingMs, groundTargetState, syncRemotePositions, onNetworkMoveReport]);
+  }, [runPhase, dungeonTier, targetBossName, initTrashMobs, refreshMazeLayout]);
 
   return (
     <div className="relative w-full h-full min-h-[500px] overflow-hidden bg-[#070710] cursor-crosshair select-none">

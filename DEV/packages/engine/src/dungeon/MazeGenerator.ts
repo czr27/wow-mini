@@ -73,8 +73,9 @@ export const MAZE_VIEWPORT_FRACTION = 1;
  * Rev 9: non-encounter packs spawn only off the mandatory path (≥3 cells away).
  * Rev 10: 迷宫宽度 +30% (scale 2.08) 且严格保持长宽比例，小怪按死胡同/阵型合理重布，烛台依内壁智能排布。
  * Rev 11: 迷宫有效范围居中铺满屏幕 70% 区域，移除非遭遇怪卡顿源并统一人物比例与Boss房一致。
+ * Rev 12: 迷宫小怪（遭遇堆与氛围堆）改为四散分布，增大堆间与堆内间距避免模型重叠堆叠。
  */
-export const MAZE_LAYOUT_REVISION = 11;
+export const MAZE_LAYOUT_REVISION = 12;
 
 /** Non-encounter packs must sit at least this many PATH cells off the main route. */
 export const MAZE_AMBIENT_MIN_PATH_DIST = 3;
@@ -625,20 +626,19 @@ function placeTrashSpawns(
   });
   scoredSites.sort((a, b) => b.score - a.score);
 
-  // Pick ambient sites ensuring at least 3.8 cells of distance between any two packs
+  // Pick ambient sites ensuring wide pixel-space dispersion so packs spread across the whole maze
   const ambientSites: Array<{ c: number; r: number }> = [];
   const neededAmbient = totalPacks - encounterSet.size;
-  for (const cand of scoredSites) {
-    if (ambientSites.length >= neededAmbient) break;
-    const ok = ambientSites.every((s) => Math.hypot(s.c - cand.c, s.r - cand.r) >= 3.8);
-    if (ok) ambientSites.push({ c: cand.c, r: cand.r });
-  }
-  // Fallback distance >= 2 if needed
-  for (const cand of scoredSites) {
-    if (ambientSites.length >= neededAmbient) break;
-    if (ambientSites.some((s) => s.c === cand.c && s.r === cand.r)) continue;
-    const ok = ambientSites.every((s) => Math.hypot(s.c - cand.c, s.r - cand.r) >= 2);
-    if (ok) ambientSites.push({ c: cand.c, r: cand.r });
+  const minPxTargets = [Math.max(cellSize * 5.5, 52), Math.max(cellSize * 4, 38), Math.max(cellSize * 2.8, 24)];
+  for (const minPx of minPxTargets) {
+    for (const cand of scoredSites) {
+      if (ambientSites.length >= neededAmbient) break;
+      if (ambientSites.some((s) => s.c === cand.c && s.r === cand.r)) continue;
+      const ok = ambientSites.every(
+        (s) => Math.hypot((s.c - cand.c) * cellSize, (s.r - cand.r) * cellSize) >= minPx
+      );
+      if (ok) ambientSites.push({ c: cand.c, r: cand.r });
+    }
   }
   for (const cand of scoredSites) {
     if (ambientSites.length >= neededAmbient) break;
@@ -648,6 +648,7 @@ function placeTrashSpawns(
 
   let ambientCursor = 0;
   let encounterIndex = 0;
+  const placedAmbientPositions: Array<{ x: number; y: number }> = [];
 
   for (let p = 1; p <= totalPacks; p++) {
     const isEncounter = encounterSet.has(p);
@@ -659,13 +660,14 @@ function placeTrashSpawns(
       const pathT = (encounterIndex / (encounters + 1)) * 0.72 + 0.14;
       const base = getPoint(totalLen * pathT);
 
-      // Compact squad spread along path corridor (within cell boundaries, no wall clipping)
-      const spread = Math.min(cellSize * 0.35, 2.4);
+      // Spread encounter squad naturally (~14–18px) so full-scale models never stack on top of each other
+      const spreadX = is20 ? 14 : 18;
+      const spreadY = is20 ? 11 : 14;
       for (let m = 0; m < mobsInPack; m++) {
         const nameIdx = (stageIndex * 7 + p * 3 + m) % names.length;
         const modelIdx = (stageIndex * 5 + p * 2 + m) % models.length;
-        const ox = m === 0 ? spread : m === 1 ? -spread : 0;
-        const oy = m === 0 ? -spread * 0.4 : m === 1 ? spread * 0.4 : spread * 0.7;
+        const ox = m === 0 ? spreadX : m === 1 ? -spreadX : 0;
+        const oy = m === 0 ? -spreadY * 0.55 : m === 1 ? spreadY * 0.55 : spreadY * 0.9;
         spawns.push({
           id: `${profile.dungeonId}_s${stageIndex}_p${p}_m${m}`,
           name: names[nameIdx],
@@ -684,33 +686,61 @@ function placeTrashSpawns(
       continue;
     }
 
-    // Ambient pack: placed in chosen dead-end / side alcove
+    // Ambient pack: placed in chosen dead-end / side alcove, and individual mobs spread to nearby off-path cells
     const site = ambientSites[ambientCursor++] || scoredSites[Math.floor(rand() * scoredSites.length)];
     const anchor = site
       ? cellToPixel(site.c, site.r, cellSize, originX, originY)
       : getPoint(totalLen * 0.5);
     const pathT = nearestPathT(pathPixels, totalLen, segLens, anchor.x, anchor.y);
 
-    const spread = Math.min(cellSize * 0.32, 2.0);
+    // Find distinct off-path cells near this anchor so mobs inside the pack don't stack
+    const localCells = site
+      ? offPathCells
+          .filter((oc) => Math.hypot(oc.c - site.c, oc.r - site.r) <= 4.5)
+          .sort((a, b) => Math.hypot(a.c - site.c, a.r - site.r) - Math.hypot(b.c - site.c, b.r - site.r))
+      : [];
+
     for (let m = 0; m < mobsInPack; m++) {
       const nameIdx = (stageIndex * 7 + p * 3 + m) % names.length;
       const modelIdx = (stageIndex * 5 + p * 2 + m) % models.length;
-      const ox = m === 0 ? spread : m === 1 ? -spread : 0;
-      const oy = m === 0 ? -spread * 0.35 : m === 1 ? spread * 0.35 : spread * 0.65;
+
+      let mx = anchor.x;
+      let my = anchor.y;
+      if (m === 0) {
+        mx = anchor.x;
+        my = anchor.y;
+      } else {
+        // Pick a nearby off-path cell that keeps >= 18px from already placed ambient mobs
+        const minMobDist = is20 ? 15 : 19;
+        const altCell = localCells.find((lc) => {
+          const lp = cellToPixel(lc.c, lc.r, cellSize, originX, originY);
+          return placedAmbientPositions.every((pp) => Math.hypot(pp.x - lp.x, pp.y - lp.y) >= minMobDist);
+        });
+        if (altCell) {
+          const lp = cellToPixel(altCell.c, altCell.r, cellSize, originX, originY);
+          mx = lp.x;
+          my = lp.y;
+        } else {
+          // If isolated single-cell dead-end, skip extra stacked mobs so it cleanly guards alone
+          continue;
+        }
+      }
+
+      placedAmbientPositions.push({ x: mx, y: my });
       spawns.push({
         id: `${profile.dungeonId}_s${stageIndex}_p${p}_m${m}`,
         name: names[nameIdx],
         mobModel: models[modelIdx],
         packIndex: p,
         pathT,
-        offsetX: ox,
-        offsetY: oy,
+        offsetX: mx - anchor.x,
+        offsetY: my - anchor.y,
         maxHp: is20
           ? Math.round(48000 + rand() * 16000 + p * 2000)
           : Math.round(20000 + rand() * 8000 + p * 1500),
         isEncounter: false,
-        worldX: anchor.x + ox,
-        worldY: anchor.y + oy,
+        worldX: mx,
+        worldY: my,
       });
     }
   }
