@@ -13,3 +13,5 @@ DEV/packages/server/data/accounts.json
 *.d.ts.map
 DEV/packages/web/src/utils/hudLayout.js
 DEV/packages/web/src/utils/hudLayout.d.ts
+*.rar
+*.zip
