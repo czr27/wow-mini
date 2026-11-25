@@ -17,11 +17,61 @@ function mergeSkillMap(raw: Record<string, number> | undefined): Record<string, 
   return out;
 }
 
+function subtractSkillMap(
+  raw: Record<string, number> | undefined,
+  base: Record<string, number> | undefined
+): Record<string, number> | undefined {
+  if (!raw) return undefined;
+  const merged = mergeSkillMap(raw);
+  if (!base) return merged;
+  const out: Record<string, number> = {};
+  for (const [k, v] of Object.entries(merged)) {
+    const diff = v - (base[k] || 0);
+    if (diff > 0) out[k] = diff;
+  }
+  return out;
+}
+
+interface UnitStatsBaseline {
+  damageDealt: number;
+  healingDone: number;
+  overhealDone: number;
+  interruptCount: number;
+  damageTaken: number;
+  skillDamage: Record<string, number>;
+  skillHealing: Record<string, number>;
+  skillDamageTaken: Record<string, number>;
+}
+
+interface StatsBaseline {
+  durationSec: number;
+  units: Record<string, UnitStatsBaseline>;
+}
+
+function captureStatsBaseline(units: Unit[], durationSec: number): StatsBaseline {
+  const map: Record<string, UnitStatsBaseline> = {};
+  for (const u of units) {
+    map[u.id] = {
+      damageDealt: Math.max(0, u.combatStats?.damageDealt || 0),
+      healingDone: Math.max(0, u.combatStats?.healingDone || 0),
+      overhealDone: Math.max(0, u.combatStats?.overhealDone || 0),
+      interruptCount: Math.max(0, u.combatStats?.interruptCount || 0),
+      damageTaken: Math.max(0, u.combatStats?.damageTaken || 0),
+      skillDamage: mergeSkillMap(u.combatStats?.skillDamage),
+      skillHealing: mergeSkillMap(u.combatStats?.skillHealing),
+      skillDamageTaken: mergeSkillMap(u.combatStats?.skillDamageTaken),
+    };
+  }
+  return { durationSec: Math.max(0, durationSec), units: map };
+}
+
 interface Props {
   units: Unit[];
   durationSec: number;
   initialPos?: { x: number; y: number } | null;
   onSavePos?: (pos: { x: number; y: number }) => void;
+  resetPerBossRoom?: boolean;
+  bossRoomKey?: string;
 }
 
 const STORAGE_KEY_POS = 'cata_stats_panel_pos';
@@ -88,10 +138,42 @@ function loadSavedLocked(): boolean {
   return false;
 }
 
-export const StatsPanel: React.FC<Props> = ({ units, durationSec, initialPos = null, onSavePos }) => {
+export const StatsPanel: React.FC<Props> = ({
+  units,
+  durationSec,
+  initialPos = null,
+  onSavePos,
+  resetPerBossRoom = false,
+  bossRoomKey,
+}) => {
   const [metric, setMetric] = useState<'DPS' | 'EFFECTIVE_HPS' | 'DAMAGE_TAKEN' | 'INTERRUPTS'>('DPS');
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [hoveredUnitId, setHoveredUnitId] = useState<string | null>(null);
+  const [baseline, setBaseline] = useState<StatsBaseline | null>(null);
+  const lastBossRoomKeyRef = useRef<string | undefined>(bossRoomKey);
+
+  // Auto-clear baseline if a brand-new run starts (durationSec drops below baseline)
+  useEffect(() => {
+    if (baseline && durationSec < baseline.durationSec) {
+      setBaseline(null);
+    }
+  }, [durationSec, baseline]);
+
+  // Auto-clear per boss room when enabled
+  useEffect(() => {
+    if (bossRoomKey === undefined) return;
+    if (lastBossRoomKeyRef.current !== bossRoomKey) {
+      lastBossRoomKeyRef.current = bossRoomKey;
+      if (resetPerBossRoom) {
+        setBaseline(captureStatsBaseline(units, durationSec));
+      }
+    }
+  }, [bossRoomKey, resetPerBossRoom, units, durationSec]);
+
+  const handleManualClear = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setBaseline(captureStatsBaseline(units, durationSec));
+  };
 
   // Position and Size states
   const [size, setSize] = useState<{ width: number; height: number }>(loadSavedSize);
@@ -285,14 +367,17 @@ export const StatsPanel: React.FC<Props> = ({ units, durationSec, initialPos = n
     } catch {}
   };
 
-  const dur = Math.max(1, durationSec);
+  const effectiveDurationSec = baseline ? Math.max(0, durationSec - baseline.durationSec) : durationSec;
+  const dur = Math.max(1, effectiveDurationSec);
 
   const stats = units.map(u => {
-    const rawDamage = Math.max(0, u.combatStats?.damageDealt || 0);
-    const rawHeal = Math.max(0, u.combatStats?.healingDone || 0);
-    const overheal = Math.max(0, u.combatStats?.overhealDone || 0);
-    const interrupts = Math.max(0, u.combatStats?.interruptCount || 0);
-    const damageTaken = Math.max(0, u.combatStats?.damageTaken || (u.maxHp - u.hp));
+    const base = baseline?.units[u.id];
+    const rawDamage = Math.max(0, (u.combatStats?.damageDealt || 0) - (base?.damageDealt || 0));
+    const rawHeal = Math.max(0, (u.combatStats?.healingDone || 0) - (base?.healingDone || 0));
+    const overheal = Math.max(0, (u.combatStats?.overhealDone || 0) - (base?.overhealDone || 0));
+    const interrupts = Math.max(0, (u.combatStats?.interruptCount || 0) - (base?.interruptCount || 0));
+    const rawTaken = u.combatStats?.damageTaken ?? (u.maxHp - u.hp);
+    const damageTaken = Math.max(0, rawTaken - (base?.damageTaken || 0));
 
     return {
       id: u.id,
@@ -305,9 +390,9 @@ export const StatsPanel: React.FC<Props> = ({ units, durationSec, initialPos = n
       totalHeal: rawHeal,
       damageTaken: Math.max(0, damageTaken),
       interrupts,
-      skillDamage: u.combatStats?.skillDamage,
-      skillHealing: u.combatStats?.skillHealing,
-      skillDamageTaken: u.combatStats?.skillDamageTaken,
+      skillDamage: subtractSkillMap(u.combatStats?.skillDamage, base?.skillDamage),
+      skillHealing: subtractSkillMap(u.combatStats?.skillHealing, base?.skillHealing),
+      skillDamageTaken: subtractSkillMap(u.combatStats?.skillDamageTaken, base?.skillDamageTaken),
     };
   });
 
@@ -382,7 +467,16 @@ export const StatsPanel: React.FC<Props> = ({ units, durationSec, initialPos = n
 
         {/* Header Action Controls */}
         <div className="flex items-center space-x-1 flex-shrink-0 ml-1">
-          <span className="text-[10px] text-gray-400 font-mono mr-1">{dur}s</span>
+          <span className="text-[10px] text-gray-400 font-mono mr-1">{Math.round(effectiveDurationSec)}s</span>
+
+          {/* Manual clear stats button */}
+          <button
+            onClick={handleManualClear}
+            className="text-[11px] text-gray-400 hover:text-red-300 px-1 py-0.5 rounded transition hover:bg-[#252545]"
+            title="清空当前战斗统计"
+          >
+            🗑️
+          </button>
 
           {/* Reset position & size button */}
           <button

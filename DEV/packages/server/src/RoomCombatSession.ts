@@ -1,0 +1,716 @@
+import {
+  BossAI,
+  CombatEngine,
+  DpsAI,
+  HealerAI,
+  LEVEL_80_STATS,
+  ReportManager,
+  RunStateMachine,
+  TankAI,
+  createLevel80BaseStats,
+  getDungeonConfig,
+  getRoleBySpec,
+  type ClassId,
+  type CombatBatch,
+  type CombatEffect,
+  type LobbyRoom,
+  type RoomMember,
+  type NetworkCastTimeline,
+  type NetworkCombatSnapshot,
+  type NetworkCooldownTimeline,
+  type NetworkGcdTimeline,
+  type NetworkGroundEffectSnapshot,
+  type NetworkUnitSnapshot,
+  type OwnerSnapshot,
+  type PlayerInputPayload,
+  type RunPhase,
+  type Unit,
+} from '@cata-raid-sim/engine';
+
+const TICK_MS = 50;
+const BROADCAST_EVERY_TICKS = 4; // ~200ms
+const ACK_RING_MAX = 64;
+const EFFECT_RING_MAX = 256;
+
+export interface RoomCombatCallbacks {
+  broadcastCombatState: (roomId: string, snap: NetworkCombatSnapshot) => void;
+  broadcastCombatBatch: (roomId: string, batch: CombatBatch) => void;
+  onEnterWipeVote: (roomId: string) => void;
+  onEnterSummary: (roomId: string) => void;
+  onRoomMetaUpdate: (roomId: string, snap: NetworkCombatSnapshot) => void;
+}
+
+export class RoomCombatSession {
+  readonly roomId: string;
+  readonly engine: CombatEngine;
+  readonly reportManager: ReportManager;
+  readonly rsm: RunStateMachine;
+
+  private bossAi: BossAI | null = null;
+  private approachedBossId: string | null = null;
+  private tankAi = new TankAI();
+  private healerAi = new HealerAI();
+  private dpsAi = new DpsAI();
+
+  private tickTimer: ReturnType<typeof setInterval> | null = null;
+  private tickCount = 0;
+  private seq = 0;
+  private lastBossAttackTick = 0;
+  private prevPhase: RunPhase = 'LOBBY';
+  private disposed = false;
+
+  // Idempotent input & effect tracking
+  private processedInputIds = new Set<string>();
+  private processedInputOrder: string[] = [];
+  private ackedInputRing: string[] = [];
+
+  private appliedEffectIds = new Set<string>();
+  private appliedEffectOrder: string[] = [];
+
+  // Gather queues for COMBAT_BATCH (~200ms)
+  private pendingEffects: CombatEffect[] = [];
+  private pendingSnapshots = new Map<string, OwnerSnapshot>();
+
+  constructor(
+    room: LobbyRoom,
+    private readonly callbacks: RoomCombatCallbacks,
+    autoStartTimer = true
+  ) {
+    this.roomId = room.id;
+    this.engine = new CombatEngine();
+    this.reportManager = new ReportManager();
+    const cfg = getDungeonConfig(room.dungeonId, room.difficulty);
+    this.rsm = new RunStateMachine(cfg, this.engine, this.reportManager);
+
+    this.setupUnits(room);
+    this.rsm.startRun();
+    this.prevPhase = this.rsm.phase;
+
+    if (autoStartTimer) {
+      this.tickTimer = setInterval(() => this.tick(TICK_MS), TICK_MS);
+      if (typeof (this.tickTimer as any).unref === 'function') {
+        (this.tickTimer as any).unref();
+      }
+    }
+  }
+
+  dispose() {
+    if (this.disposed) return;
+    this.disposed = true;
+    if (this.tickTimer) {
+      clearInterval(this.tickTimer);
+      this.tickTimer = null;
+    }
+    this.pendingEffects = [];
+    this.pendingSnapshots.clear();
+  }
+
+  private setupUnits(room: LobbyRoom) {
+    this.engine.reset();
+    this.engine.difficulty = room.difficulty;
+    if (room.customDifficulty) {
+      this.engine.customDifficulty = room.customDifficulty;
+    }
+    const isCustom = room.difficulty === 'CUSTOM';
+    const playerHpMult = isCustom ? Math.max(0.1, room.customDifficulty?.playerHpCoeff ?? 1) : 1;
+    const playerMpMult = isCustom ? Math.max(0.1, room.customDifficulty?.playerMpCoeff ?? 1) : 1;
+    const aiHpMult = isCustom ? Math.max(0.1, room.customDifficulty?.aiHpCoeff ?? 1) : 1;
+    const aiMpMult = isCustom ? Math.max(0.1, room.customDifficulty?.aiMpCoeff ?? 1) : 1;
+
+    room.members.forEach((m, idx) => {
+      const unit = this.buildUnitFromMember(m, idx, {
+        playerHpMult,
+        playerMpMult,
+        aiHpMult,
+        aiMpMult,
+      });
+      this.engine.addUnit(unit);
+    });
+  }
+
+  private buildUnitFromMember(
+    m: RoomMember,
+    idx: number,
+    mults?: { playerHpMult: number; playerMpMult: number; aiHpMult: number; aiMpMult: number }
+  ): Unit {
+    const role = (m.role || getRoleBySpec(m.classId, m.spec)) as 'TANK' | 'HEALER' | 'DPS';
+    const base = createLevel80BaseStats(role);
+    const hasMana =
+      role === 'HEALER' ||
+      m.classId === 'MAGE' ||
+      m.classId === 'SHAMAN' ||
+      m.classId === 'PRIEST' ||
+      m.classId === 'WARLOCK' ||
+      m.classId === 'PALADIN' ||
+      (m.classId === 'DRUID' && role === 'DPS');
+    const baseMp = hasMana
+      ? role === 'HEALER'
+        ? LEVEL_80_STATS.healerBaseMp
+        : LEVEL_80_STATS.casterBaseMp
+      : 0;
+
+    const baseHp =
+      role === 'TANK' ? LEVEL_80_STATS.tankBaseHp : LEVEL_80_STATS.dpsHealerBaseHp;
+    const hpMult = m.isAi ? (mults?.aiHpMult ?? 1) : (mults?.playerHpMult ?? 1);
+    const mpMult = m.isAi ? (mults?.aiMpMult ?? 1) : (mults?.playerMpMult ?? 1);
+    const maxHp = Math.round(baseHp * hpMult);
+    const maxMp = Math.round(baseMp * mpMult);
+
+    const pos =
+      role === 'TANK'
+        ? { x: 260, y: 260 + (idx % 2) * 35 }
+        : role === 'HEALER'
+          ? { x: 140, y: 220 + idx * 28 }
+          : { x: 185, y: 200 + idx * 28 };
+
+    return {
+      id: m.id,
+      name: m.name,
+      classId: m.classId as ClassId,
+      spec: m.spec,
+      role,
+      isPlayer: !m.isAi,
+      isHumanControlled: !m.isAi,
+      isAi: !!m.isAi,
+      unitKind: m.isAi ? 'AI' : 'PLAYER',
+      isAlive: true,
+      alive: true,
+      hp: maxHp,
+      maxHp,
+      mp: maxMp,
+      maxMp,
+      absorb: 0,
+      position: pos,
+      buffs: [],
+      threatTable: {},
+      resources: maxMp > 0 ? [{ kind: 'MANA', current: maxMp, max: maxMp }] : [],
+      stats: { ...base },
+      combatStats: {
+        damageDealt: 0,
+        healingDone: 0,
+        overhealDone: 0,
+        damageTaken: 0,
+        interruptCount: 0,
+      },
+    } as unknown as Unit;
+  }
+
+  /** Server owns Boss, Enemies, AI teammates, and AI/Boss pets — never human players or their pets. */
+  isServerAuthorityUnit(unitId: string): boolean {
+    if (!unitId) return true;
+    const u = this.engine.getUnit(unitId);
+    if (!u) return true;
+    if (u.isHumanControlled && !(u as any).isAi) return false;
+    if (u.ownerId) {
+      const owner = this.engine.getUnit(u.ownerId);
+      if (owner && owner.isHumanControlled && !(owner as any).isAi) return false;
+    }
+    return true;
+  }
+
+  /** Idempotent player input dedupe + immediate ACK info (Host & Guest treated identically). */
+  handlePlayerInput(
+    _playerId: string,
+    input: PlayerInputPayload
+  ): { shouldApply: boolean; ack?: { clientInputId: string; attempt: number } } {
+    const cid = input.clientInputId;
+    if (!cid) return { shouldApply: true };
+
+    const ack = {
+      clientInputId: cid,
+      attempt: Math.max(1, input.clientInputAttempt || 1),
+    };
+
+    if (this.processedInputIds.has(cid)) {
+      this.noteAck(cid);
+      return { shouldApply: false, ack };
+    }
+    this.processedInputIds.add(cid);
+    this.processedInputOrder.push(cid);
+    while (this.processedInputOrder.length > ACK_RING_MAX) {
+      const old = this.processedInputOrder.shift();
+      if (old) this.processedInputIds.delete(old);
+    }
+    this.noteAck(cid);
+    return { shouldApply: true, ack };
+  }
+
+  private noteAck(clientInputId: string) {
+    this.ackedInputRing.push(clientInputId);
+    while (this.ackedInputRing.length > ACK_RING_MAX) {
+      this.ackedInputRing.shift();
+    }
+  }
+
+  /** Gather player CombatEffect for COMBAT_BATCH and apply to server-authority targets (Boss/AI/Enemies). */
+  handleCombatEffect(effect: CombatEffect): { ack?: { clientInputId: string; attempt: number } } {
+    if (!effect?.effectId) return {};
+    this.pendingEffects.push(effect);
+
+    if (this.isServerAuthorityUnit(effect.targetId) && !this.appliedEffectIds.has(effect.effectId)) {
+      this.appliedEffectIds.add(effect.effectId);
+      this.appliedEffectOrder.push(effect.effectId);
+      while (this.appliedEffectOrder.length > EFFECT_RING_MAX) {
+        const old = this.appliedEffectOrder.shift();
+        if (old) this.appliedEffectIds.delete(old);
+      }
+      this.applyEffectToServerEngine(effect);
+    }
+
+    if (effect.clientInputId) {
+      return {
+        ack: {
+          clientInputId: effect.clientInputId,
+          attempt: Math.max(1, effect.clientInputAttempt || 1),
+        },
+      };
+    }
+    return {};
+  }
+
+  private applyEffectToServerEngine(effect: CombatEffect) {
+    const src = this.engine.getUnit(effect.sourceId);
+    const tgt = this.engine.getUnit(effect.targetId);
+    if (!tgt) return;
+
+    switch (effect.kind) {
+      case 'DAMAGE':
+        if (typeof effect.amount === 'number' && effect.amount > 0) {
+          this.engine.dealDamage(
+            src || tgt,
+            tgt,
+            effect.amount,
+            'PHYSICAL',
+            !!effect.isCrit,
+            effect.spellName || effect.spellId
+          );
+        }
+        break;
+      case 'HEAL':
+        if (typeof effect.amount === 'number' && effect.amount > 0) {
+          this.engine.healUnit(
+            src || tgt,
+            tgt,
+            effect.amount,
+            !!effect.isCrit,
+            effect.spellName || effect.spellId
+          );
+        }
+        break;
+      case 'RESURRECT':
+        this.engine.resurrectUnit(tgt.id, 0.35, 0.35);
+        break;
+      case 'APPLY_BUFF':
+        if (effect.buff) {
+          this.engine.auraManager.applyAura(tgt.id, {
+            id: effect.buff.spellId,
+            spellId: effect.buff.spellId,
+            name: effect.buff.name,
+            kind: effect.buff.kind || 'BUFF',
+            sourceUnitId: effect.sourceId,
+            durationMs: effect.buff.durationMs ?? 10000,
+            remainingMs: effect.buff.remainingMs ?? effect.buff.durationMs ?? 10000,
+            stacks: effect.buff.stacks ?? 1,
+            maxStacks: effect.buff.maxStacks ?? 1,
+            tags: effect.buff.tags,
+          } as any);
+        }
+        break;
+      case 'REMOVE_BUFF':
+        if (effect.removeSpellId || effect.spellId) {
+          this.engine.auraManager.removeBuff(tgt, effect.removeSpellId || effect.spellId);
+        }
+        break;
+      case 'GROUND_PLACE':
+        if (effect.groundEffectId && this.engine.effectsManager) {
+          this.engine.effectsManager.addGroundEffect({
+            id: effect.groundEffectId,
+            kind: effect.groundKind || 'HEAL_ZONE',
+            spellId: effect.spellId,
+            ownerId: effect.sourceId,
+            x: effect.x ?? tgt.position.x,
+            y: effect.y ?? tgt.position.y,
+            radius: effect.radius ?? 80,
+            colorHex: effect.colorHex || '#4ade80',
+            remainingMs: effect.remainingMs ?? 8000,
+            tickIntervalMs: effect.tickIntervalMs ?? 1000,
+            tickValue: effect.tickValue ?? 0,
+            facingRad: effect.facingRad,
+            coneAngleRad: effect.coneAngleRad,
+          } as any);
+        }
+        break;
+      default:
+        break;
+    }
+  }
+
+  /** Merge human OwnerSnapshot into server engine & enqueue for COMBAT_BATCH fan-out. */
+  handleOwnerSnapshot(snap: OwnerSnapshot) {
+    if (!snap?.ownerId) return;
+    if (snap.purge) {
+      this.pendingSnapshots.set(snap.ownerId, snap);
+      return;
+    }
+
+    this.pendingSnapshots.set(snap.ownerId, snap);
+
+    if (snap.units?.length) {
+      const existing = this.engine.buildNetworkUnitSnapshots();
+      const preserved = existing.filter(
+        (u) => u.id !== snap.ownerId && u.ownerId !== snap.ownerId
+      );
+      const owned = snap.units.map((u) =>
+        u.id === snap.ownerId
+          ? { ...u, isHumanControlled: true, isAi: false }
+          : u
+      );
+      this.engine.applyNetworkUnitSnapshots([...preserved, ...owned]);
+      for (const u of this.engine.friendlyUnits) {
+        if (u.id === snap.ownerId) {
+          u.isHumanControlled = true;
+          (u as any).isAi = false;
+        }
+      }
+    }
+
+    if (snap.groundEffects && this.engine.effectsManager) {
+      const kept = (this.engine.effectsManager.groundEffects || []).filter(
+        (g: any) => g.ownerId !== snap.ownerId
+      );
+      this.engine.effectsManager.groundEffects = [
+        ...kept,
+        ...snap.groundEffects.map((g) => ({
+          ...g,
+          tickIntervalMs: g.tickIntervalMs ?? 1000,
+          tickElapsedMs: 0,
+          tickValue: g.tickValue ?? 0,
+        })),
+      ] as any;
+    }
+  }
+
+  hotSwapHuman(replacedAiId: string, member: RoomMember): NetworkUnitSnapshot | undefined {
+    const existingAi = this.engine.getUnit(replacedAiId);
+    const newUnit = this.buildUnitFromMember(member, 0);
+    if (existingAi) {
+      newUnit.hp = Math.min(newUnit.maxHp, Math.max(1, existingAi.hp));
+      newUnit.position = { ...existingAi.position };
+      newUnit.isAlive = existingAi.isAlive ?? true;
+      newUnit.alive = existingAi.alive ?? true;
+      this.engine.removeUnit(replacedAiId);
+    }
+    this.engine.addUnit(newUnit);
+    return this.engine.buildNetworkUnitSnapshots().find((u) => u.id === member.id);
+  }
+
+  replaceHumanWithAi(playerId: string, aiMemberId: string, room: LobbyRoom) {
+    const member = room.members.find((m) => m.id === aiMemberId);
+    const prevUnit = this.engine.getUnit(playerId);
+    this.engine.removeUnit(playerId);
+    this.pendingSnapshots.delete(playerId);
+    this.pendingEffects = this.pendingEffects.filter((e) => e.sourceId !== playerId);
+
+    if (member) {
+      const aiUnit = this.buildUnitFromMember(member, 0);
+      if (prevUnit) {
+        aiUnit.hp = Math.min(aiUnit.maxHp, Math.max(0, prevUnit.hp));
+        aiUnit.isAlive = prevUnit.isAlive ?? prevUnit.hp > 0;
+        aiUnit.alive = aiUnit.isAlive;
+        aiUnit.position = { ...prevUnit.position };
+      }
+      this.engine.addUnit(aiUnit);
+    }
+
+    // Queue purge snapshot so all clients erase leaver traces
+    this.pendingSnapshots.set(playerId, {
+      ownerId: playerId,
+      timeMs: Date.now(),
+      units: [],
+      purge: true,
+    });
+  }
+
+  applyWipeVoteResult(result: 'RETRY' | 'FINISH') {
+    if (result === 'RETRY') {
+      this.rsm.handleWipeVoteChoice('RETRY');
+      this.engine.resetCooldowns();
+      this.engine.threatManager.resetAll();
+      this.engine.effectsManager.clearAll();
+      this.bossAi = null;
+      this.approachedBossId = null;
+      // Broadcast RESURRECT effects for human players so their local authority revives cleanly
+      for (const u of this.engine.friendlyUnits) {
+        if (u.isHumanControlled && !(u as any).isAi) {
+          this.pendingEffects.push({
+            effectId: `srv_rez_${u.id}_${Date.now()}`,
+            sourceId: 'server',
+            targetId: u.id,
+            spellId: 'wipe_retry_resurrect',
+            kind: 'RESURRECT',
+            atMs: Date.now(),
+          });
+        }
+      }
+      this.broadcastSnapshotAndBatch();
+    } else {
+      this.rsm.handleWipeVoteChoice('FINISH');
+      this.broadcastSnapshotAndBatch();
+      this.callbacks.onEnterSummary(this.roomId);
+    }
+  }
+
+  fastForwardTravel() {
+    this.rsm.fastForwardTravel();
+    this.broadcastSnapshotAndBatch();
+  }
+
+  /** Advance one 50ms simulation tick on the server. */
+  tick(deltaMs = TICK_MS) {
+    if (this.disposed) return;
+    this.tickCount++;
+
+    // Keep RSM wipeVoteTimer held while server vote tracker is authoritative
+    if (this.rsm.phase === 'WIPE_VOTE') {
+      this.rsm.wipeVoteTimerMs = Math.max(this.rsm.wipeVoteTimerMs, 1000);
+    }
+
+    this.rsm.tick(deltaMs);
+
+    if (this.rsm.phase === 'BOSS_COMBAT') {
+      const bossCfg = this.rsm.getCurrentBoss();
+      const expectedBossId = bossCfg?.id || 'ashbury';
+      if (!this.engine.bossUnit && bossCfg) {
+        this.engine.spawnBoss(bossCfg.id, bossCfg.name, bossCfg.hp);
+      }
+      if (this.approachedBossId !== expectedBossId) {
+        this.approachedBossId = expectedBossId;
+        this.bossAi = new BossAI(expectedBossId, this.rsm.dungeon.id);
+        this.lastBossAttackTick = this.tickCount;
+      }
+
+      const boss = this.engine.bossUnit;
+      if (boss && (boss.isAlive || boss.alive) && boss.hp > 0) {
+        this.bossAi?.tick(deltaMs, boss, this.engine);
+
+        // Boss auto-attack (~2s) on top threat target
+        if (!this.engine.isBossHealingGraceActive() && this.tickCount - this.lastBossAttackTick >= 40) {
+          this.lastBossAttackTick = this.tickCount;
+          const targetId = this.engine.getBossTargetId();
+          const target = targetId ? this.engine.getUnit(targetId) : undefined;
+          if (target && (target.isAlive || target.alive) && target.hp > 0) {
+            const dmg = 3500;
+            this.engine.dealDamage(boss, target, dmg, 'PHYSICAL', false, '近战攻击');
+            if (!this.isServerAuthorityUnit(target.id)) {
+              this.pendingEffects.push({
+                effectId: `srv_aa_${this.tickCount}_${target.id}`,
+                sourceId: boss.id,
+                targetId: target.id,
+                spellId: 'boss_melee',
+                spellName: '近战攻击',
+                kind: 'DAMAGE',
+                amount: dmg,
+                atMs: Date.now(),
+              });
+            }
+          }
+        }
+
+        // Tick server-owned AI teammates (lightweight role AI)
+        this.tickServerAiTeammates(boss);
+      }
+    } else {
+      this.approachedBossId = null;
+      this.bossAi = null;
+    }
+
+    // Tick engine while preserving human-authority units' vitals/positions
+    this.tickEnginePreservingHumans(deltaMs);
+
+    const phaseChanged = this.rsm.phase !== this.prevPhase;
+    this.prevPhase = this.rsm.phase;
+
+    if (phaseChanged && this.rsm.phase === 'WIPE_VOTE') {
+      this.callbacks.onEnterWipeVote(this.roomId);
+    }
+
+    if (phaseChanged || this.tickCount % BROADCAST_EVERY_TICKS === 0) {
+      this.broadcastSnapshotAndBatch();
+    }
+
+    if (phaseChanged && this.rsm.phase === 'SUMMARY') {
+      this.callbacks.onEnterSummary(this.roomId);
+    }
+  }
+
+  private tickServerAiTeammates(boss: Unit) {
+    if (this.tickCount % 20 !== 0) return; // ~1s AI cadence
+    const gameState = {
+      boss,
+      friendlyUnits: this.engine.friendlyUnits,
+      enemyUnits: this.engine.enemyUnits,
+      nowMs: this.engine.nowMs,
+    } as any;
+
+    for (const u of this.engine.friendlyUnits) {
+      if (!(u as any).isAi || !(u.isAlive ?? u.alive) || u.hp <= 0) continue;
+      if (u.role === 'TANK') {
+        this.tankAi.decide(u, gameState);
+        this.engine.dealDamage(u, boss, 1200, 'PHYSICAL', false, '盾牌猛击');
+        this.engine.threatManager?.addThreat?.(boss.id, u.id, 3000);
+      } else if (u.role === 'HEALER') {
+        this.healerAi.decide(u, gameState);
+        const lowest = [...this.engine.friendlyUnits]
+          .filter((f) => (f.isAlive ?? f.alive) && f.hp > 0 && f.hp < f.maxHp)
+          .sort((a, b) => a.hp / a.maxHp - b.hp / b.maxHp)[0];
+        if (lowest) {
+          const healAmt = 2200;
+          if (this.isServerAuthorityUnit(lowest.id)) {
+            this.engine.healUnit(u, lowest, healAmt, false, '治疗术');
+          } else {
+            this.pendingEffects.push({
+              effectId: `srv_heal_${this.tickCount}_${u.id}_${lowest.id}`,
+              sourceId: u.id,
+              targetId: lowest.id,
+              spellId: 'ai_heal',
+              spellName: '治疗术',
+              kind: 'HEAL',
+              amount: healAmt,
+              atMs: Date.now(),
+            });
+          }
+        }
+      } else {
+        this.dpsAi.decide(u, gameState);
+        this.engine.dealDamage(u, boss, 1800, 'FIRE', false, '奥术冲击');
+      }
+    }
+  }
+
+  private tickEnginePreservingHumans(deltaMs: number) {
+    const humanSaved = new Map<
+      string,
+      { hp: number; mp?: number; isAlive: boolean; position: { x: number; y: number } }
+    >();
+    for (const u of this.engine.friendlyUnits) {
+      if (!this.isServerAuthorityUnit(u.id)) {
+        humanSaved.set(u.id, {
+          hp: u.hp,
+          mp: u.mp,
+          isAlive: !!(u.isAlive ?? u.alive),
+          position: { ...u.position },
+        });
+      }
+    }
+
+    this.engine.tick(deltaMs);
+
+    for (const u of this.engine.friendlyUnits) {
+      const saved = humanSaved.get(u.id);
+      if (saved) {
+        u.hp = saved.hp;
+        if (saved.mp !== undefined) u.mp = saved.mp;
+        u.isAlive = saved.isAlive;
+        u.alive = saved.isAlive;
+        u.position = saved.position;
+      }
+    }
+  }
+
+  private broadcastSnapshotAndBatch() {
+    const now = Date.now();
+    const seq = ++this.seq;
+    const allUnits = this.engine.buildNetworkUnitSnapshots();
+    const serverAuthUnits = allUnits.filter((u) => this.isServerAuthorityUnit(u.id));
+
+    const casts: NetworkCastTimeline[] = this.engine.getPendingCasts().map((c) => ({
+      unitId: c.casterId,
+      spellId: c.spellId,
+      spellName: c.spellName,
+      startedAtMs: now - (c.totalMs - c.remainingMs),
+      totalMs: c.totalMs,
+      isChannel: c.mode === 'CHANNELED',
+      targetId: c.targetId,
+      interruptible: true,
+    }));
+
+    const bossCast = this.bossAi?.currentCasting;
+    if (bossCast && this.engine.bossUnit) {
+      casts.push({
+        unitId: this.engine.bossUnit.id,
+        spellId: bossCast.skill.id || bossCast.skill.name,
+        spellName: bossCast.skill.name,
+        startedAtMs: now - (bossCast.elapsedMs || 0),
+        totalMs: bossCast.skill.castTimeMs || 1,
+        interruptible: !!bossCast.skill.interruptible,
+      });
+    }
+
+    const cooldowns: NetworkCooldownTimeline[] = this.engine.cooldownManager
+      .getAllActiveCooldowns()
+      .map((e) => ({
+        unitId: e.unitId,
+        spellId: e.spellId,
+        startedAtMs: now - (e.totalMs - e.remainingMs),
+        totalMs: e.totalMs,
+      }));
+
+    const gcds: NetworkGcdTimeline[] = [];
+    const groundEffects: NetworkGroundEffectSnapshot[] = (
+      this.engine.effectsManager?.groundEffects || []
+    ).map((g: any) => ({
+      id: g.id,
+      kind: g.kind,
+      spellId: g.spellId,
+      ownerId: g.ownerId,
+      x: g.x,
+      y: g.y,
+      radius: g.radius,
+      colorHex: g.colorHex,
+      remainingMs: g.remainingMs,
+      facingRad: g.facingRad,
+      coneAngleRad: g.coneAngleRad,
+      tickIntervalMs: g.tickIntervalMs,
+      tickValue: g.tickValue,
+    }));
+
+    const worldSnap: NetworkCombatSnapshot = {
+      roomId: this.roomId,
+      seq,
+      timeMs: now,
+      runPhase: this.rsm.phase,
+      travelRemainingMs: this.rsm.travelRemainingMs,
+      totalTravelMs: this.rsm.totalTravelMs,
+      currentBossIndex: this.rsm.currentBossIndex,
+      isCleared: this.rsm.isCleared,
+      totalDurationSec: Math.round(this.rsm.totalRunDurationSec),
+      encounterReports: this.rsm.encounterReports,
+      bossTargetId: this.engine.bossUnit
+        ? this.engine.threatManager.getCurrentTarget?.(this.engine.bossUnit.id) ?? null
+        : null,
+      units: serverAuthUnits,
+      casts,
+      cooldowns,
+      gcds,
+      groundEffects,
+      floatingTexts: this.engine.effectsManager?.floatingTexts || [],
+      recentActions: this.engine.drainRecentActions(),
+      ...(this.ackedInputRing.length ? { ackedInputIds: this.ackedInputRing.slice() } : {}),
+    };
+
+    this.callbacks.broadcastCombatState(this.roomId, worldSnap);
+    this.callbacks.onRoomMetaUpdate(this.roomId, worldSnap);
+
+    if (this.pendingEffects.length > 0 || this.pendingSnapshots.size > 0) {
+      const batch: CombatBatch = {
+        roomId: this.roomId,
+        seq: ++this.seq,
+        timeMs: now,
+        effects: this.pendingEffects.splice(0, this.pendingEffects.length),
+        snapshots: Array.from(this.pendingSnapshots.values()),
+      };
+      this.pendingSnapshots.clear();
+      this.callbacks.broadcastCombatBatch(this.roomId, batch);
+    }
+  }
+}

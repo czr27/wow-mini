@@ -115,7 +115,8 @@ export const MorchokEncounter: BossEncounterModule = {
         targetKind: 'AOE',
         description: '近距分摊物理践踏；最近目标承受双份伤害',
         dbm: {
-          advice: '近距分摊，最近目标双倍伤害，注意治疗',
+          advice: '近距分摊，最近目标双倍伤害',
+          voiceText: '近距分摊',
           severity: 'WARN',
           roleHint: 'ALL',
           preWarnMs: 3000,
@@ -255,7 +256,8 @@ export const MorchokEncounter: BossEncounterModule = {
         targetKind: 'AOE',
         description: '间歇阶段：生成碎石柱，黑血期间须躲柱后，否则持续重伤',
         dbm: {
-          advice: '黑血阶段来临！立刻躲到碎石柱安全区后方',
+          advice: '黑血阶段，躲到碎石柱后方',
+          voiceText: '躲柱子后',
           severity: 'CRITICAL',
           roleHint: 'ALL',
           preWarnMs: 3500,

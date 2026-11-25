@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { speakDbmVoice } from './utils/dbmVoice.js';
 import {
   CombatEngine,
   RunStateMachine,
+  resolveCombatDisplayPrefs,
   RunPhase,
   AccountManager,
   LeaderboardManager,
@@ -245,9 +247,11 @@ export function App() {
   const [corpseRunTimerMs, setCorpseRunTimerMs] = useState(0);
   const [groundTargetState, setGroundTargetState] = useState<GroundTargetState | null>(null);
   const [dbmAlerts, setDbmAlerts] = useState<DbmAlert[]>([]);
+  const dbmVoiceEnabledRef = useRef<boolean>(true);
   const pushDbmAlerts = useCallback((incoming: DbmAlert[]) => {
     if (!incoming || incoming.length === 0) return;
     const now = Date.now();
+    let voicePhrase: string | null = null;
     setDbmAlerts((prev) => {
       const alive = prev.filter((a) => now - a.atMs < (a.ttlMs || 3500));
       const seen = new Set(alive.map((a) => a.id));
@@ -255,10 +259,23 @@ export function App() {
       for (const item of incoming) {
         if (seen.has(item.id)) continue;
         seen.add(item.id);
-        next.push({ ...item, atMs: now });
+        const stamped: DbmAlert = { ...item, atMs: now };
+        if (item.replaceKey) {
+          const replaceIdx = next.findIndex((a) => a.replaceKey === item.replaceKey);
+          if (replaceIdx >= 0) {
+            next[replaceIdx] = stamped;
+            voicePhrase = item.voiceText || item.advice;
+            continue;
+          }
+        }
+        next.push(stamped);
+        voicePhrase = item.voiceText || item.advice;
       }
       return next.slice(-12);
     });
+    if (dbmVoiceEnabledRef.current && voicePhrase) {
+      speakDbmVoice(voicePhrase);
+    }
   }, []);
   const [customSlotLayout, setCustomSlotLayout] = useState<ActionSlot[] | null>(null);
   /** Which char+spec `customSlotLayout` belongs to — prevents stale skills after character switch. */
@@ -342,6 +359,7 @@ export function App() {
   }, []);
 
   const currentChar = account?.characters.find(c => c.id === selectedCharId) || account?.characters[0] || null;
+  dbmVoiceEnabledRef.current = resolveCombatDisplayPrefs(currentChar?.uiLayout?.combatDisplay).enableDbmVoice;
 
   // Persisted Raid Target Marks per account character (新开本对同名称玩家的标记保存在账号角色中)
   const [savedRaidMarks, setSavedRaidMarks] = useState<Record<string, string>>(() => {
@@ -2263,7 +2281,7 @@ export function App() {
       <LeaderboardModal
         isOpen={isLeaderboardOpen}
         onClose={() => setIsLeaderboardOpen(false)}
-        entries={leaderboardMgrRef.current.getLeaderboard('FAST_KILL')}
+        entries={leaderboardMgrRef.current.getAllEntries()}
       />
 
       {/* Header: delete account confirm */}

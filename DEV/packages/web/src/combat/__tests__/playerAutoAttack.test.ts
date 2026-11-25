@@ -212,4 +212,60 @@ describe('playerAutoAttack', () => {
     assert.equal(actions.length, 1, '命中时上报一次');
     assert.equal(actions[0].spellId, 'auto_attack');
   });
+
+  it('多宠物共存时（如常驻食尸鬼 + 黑锋石像鬼，或双幽魂之狼），每只存活宠物均独立攻击', () => {
+    const actions: any[] = [];
+    const engine: any = {
+      friendlyUnits: [],
+      resolveAttackHit: (_a: any, _d: any, dmg: number) => ({
+        outcome: 'HIT',
+        damage: dmg,
+      }),
+      logCombatAction: (ev: any) => actions.push(ev),
+    };
+
+    const player = makeMockUnit({ id: 'dk_1', classId: 'DK', position: { x: 520, y: 190 } });
+    const ghoul = makeMockUnit({
+      id: 'player_pet',
+      isPlayer: false,
+      isPet: true,
+      ownerId: 'dk_1',
+      position: { x: 520, y: 190 },
+    });
+    const gargoyle = makeMockUnit({
+      id: 'summon_gargoyle_1',
+      isPlayer: false,
+      isPet: true,
+      ownerId: 'dk_1',
+      summonSpellId: 'summon_gargoyle',
+      position: { x: 420, y: 190 },
+    });
+    const boss = makeMockUnit({
+      id: 'boss_1',
+      role: 'ENEMY',
+      isPlayer: false,
+      position: { x: 540, y: 190 },
+    });
+    engine.friendlyUnits = [player, ghoul, gargoyle];
+
+    const lastPlayerAttackTickRef = { current: 0 };
+    const lastPetAttackTickRef = { current: 0 };
+
+    tickPlayerAndPetAutoAttacks({
+      engine,
+      playerUnit: player,
+      boss,
+      tickCount: 48,
+      isAsphyxiateChannel: false,
+      isPlayerCasting: false,
+      lastPlayerAttackTickRef,
+      lastPetAttackTickRef,
+    });
+
+    assert.ok(actions.some((a) => a.actorId === 'player_pet'), '常驻宠物应攻击');
+    assert.ok(
+      actions.some((a) => a.actorId === 'summon_gargoyle_1' && a.spellId === 'gargoyle_strike'),
+      '限时石像鬼应远程攻击'
+    );
+  });
 });

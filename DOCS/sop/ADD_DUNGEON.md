@@ -23,7 +23,7 @@
    - 在 `DUNGEON_ROLE_QUOTAS` 中添加新 `dungeonId`（含中文名、人数上限、职责配额与默认难度；现已支持影牙城堡、死亡矿井、血色修道院、斯坦索姆、祖尔格拉布、巨龙之魂）。
 2. **定义首领序列与模块化注册** — `DEV/packages/engine/src/bosses/<new_dungeon>/` + `DEV/packages/engine/src/engine/RunStateMachine.ts`
    - 新建 `DEV/packages/engine/src/bosses/<new_dungeon>/` 目录，编写各 Boss 技能档案与派生自 `BaseBossAI` 的 AI 类。
-   - **对照攻略补全 DBM 战术建议**：通用打断/AOE/小怪/危险区由引擎自动推导，特殊机制（分摊、分散、躲柱子、转阶段、安全治疗窗等）按 `DOCS/sop/DESIGN_BOSS.md` 第 3 步补充 `skill.dbm` 与 `engine.emitDbmAlert(...)`。
+   - **对照攻略控制 DBM 密集度并补全战术建议**：仅对玩家光看血条无法判断的核心机制（分散、分摊、躲柱子、转火、安全治疗窗等）按 `DOCS/sop/DESIGN_BOSS.md` 第 3 步补充 `skill.dbm`（含 4 字 `voiceText`）与 `engine.emitDbmAlert(...)`，避免常规掉血/治疗刷屏。
    - 在该目录 `index.ts` 导出 `register<Dungeon>Bosses()` 并注册进 `BossRegistry`，并在 `src/bosses/index.ts` 引入初始化。
    - 在 `RunStateMachine.ts` 中配置 `DungeonConfig`，使用 `buildDungeonBossHpList(tier, bossCount)` 计算英雄本血量梯度，并指定 `travelMs`。
 3. **配置缩放基线** — `DEV/packages/engine/src/engine/TierProfile.ts`

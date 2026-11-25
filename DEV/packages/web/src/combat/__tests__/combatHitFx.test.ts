@@ -341,7 +341,7 @@ describe('combatHitFx', () => {
     assert.equal(cleaveSlashes[0].mode, 'sweep');
     assert.ok((cleaveSlashes[0].sweepArcRad ?? 0) < (wwSlashes[0].sweepArcRad ?? 0));
 
-    // 4. Ranged caster AoE (Blizzard) -> no melee sweep
+    // 4. Ranged caster AoE (Blizzard) -> no melee sweep, spawns class/spell-colored area explosion
     const beforeMage = state.slashes.length;
     ingestCombatActionsAsHitFx(state, {
       actions: [
@@ -352,8 +352,8 @@ describe('combatHitFx', () => {
           spellId: 'blizzard',
           spellName: '暴风雪',
           kind: 'INSTANT',
-          x: 130,
-          y: 100,
+          x: 210,
+          y: 140,
           radius: 200,
           aoePulse: true,
         },
@@ -363,8 +363,13 @@ describe('combatHitFx', () => {
       now: now + 30,
     });
     assert.equal(state.slashes.length, beforeMage);
+    const mageBursts = state.aoeBursts.filter((b) => b.id.startsWith('aoe_blizzard'));
+    assert.equal(mageBursts.length, 1);
+    assert.equal(mageBursts[0].x, 210);
+    assert.equal(mageBursts[0].y, 140);
+    assert.equal(mageBursts[0].color, '#69CCF0');
 
-    // 5. Boss melee AoE -> sweep at boss scale; Boss magic AoE -> no melee sweep
+    // 5. Boss melee AoE -> sweep at boss scale; Boss magic AoE -> red explosion burst, no melee sweep
     ingestCombatActionsAsHitFx(state, {
       actions: [
         {
@@ -402,9 +407,55 @@ describe('combatHitFx', () => {
     });
     const bossCleave = state.slashes.filter((s) => s.id.startsWith('boss_aoe_cleave'));
     const bossNova = state.slashes.filter((s) => s.id.startsWith('boss_aoe_nova'));
+    const bossNovaBurst = state.aoeBursts.filter((b) => b.id.startsWith('boss_aoe_nova'));
     assert.equal(bossCleave.length, 2);
     assert.equal(bossCleave[0].mode, 'sweep');
     assert.equal(bossCleave[0].scale, HIT_FX_BOSS_SIZE_MULT);
     assert.equal(bossNova.length, 0);
+    assert.equal(bossNovaBurst.length, 1);
+    assert.equal(bossNovaBurst[0].color, '#EF4444');
+  });
+
+  it('pruneHitFx 跟随施法者移动并在死亡时立即清空未结束的雪花光环', () => {
+    const healer = unit({
+      id: 'h1',
+      name: '奶',
+      classId: 'PRIEST',
+      role: 'HEALER',
+      position: { x: 50, y: 50 },
+    });
+    const map = new Map<string, Unit>([[healer.id, healer]]);
+    const state = createHitFxState();
+    const seen = new Set<string>();
+    const now = 5000;
+    ingestCombatActionsAsHitFx(state, {
+      actions: [
+        {
+          id: 'hs_move',
+          atMs: now,
+          actorId: healer.id,
+          spellId: 'flash_heal',
+          spellName: '快速治疗',
+          kind: 'CAST_START',
+          targetId: healer.id,
+          visualTone: 'HEAL',
+        },
+      ],
+      unitsById: map,
+      seenIds: seen,
+      now,
+    });
+    assert.equal(state.snowBursts.length, 1);
+    pruneHitFx(state, now + 100, {
+      resolvePos: () => ({ x: 95, y: 75 }),
+      isActorAlive: () => true,
+    });
+    assert.equal(state.snowBursts[0].cx, 95);
+    assert.equal(state.snowBursts[0].cy, 75);
+
+    pruneHitFx(state, now + 200, {
+      isActorAlive: () => false,
+    });
+    assert.equal(state.snowBursts.length, 0);
   });
 });

@@ -240,6 +240,13 @@ export class LeaderboardManager {
   }
 
   /**
+   * Return all leaderboard entries (for client-side multi-metric / multi-dungeon filtering)
+   */
+  public getAllEntries(): LeaderboardEntry[] {
+    return [...this.entries];
+  }
+
+  /**
    * Get sorted leaderboard entries for a given metric
    */
   public getLeaderboard(

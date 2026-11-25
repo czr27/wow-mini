@@ -10,6 +10,10 @@ export interface DbmAlert {
   atMs: number;
   title: string;
   advice: string;
+  /** 4字短语音播报词（如 "注意分散"、"注意打断"、"先杀小怪"） */
+  voiceText?: string;
+  /** 同 replaceKey 的新警报会直接顶替旧警报（如 即将施放 -> 正在施放） */
+  replaceKey?: string;
   severity: DbmSeverity;
   ttlMs: number;
   roleHint?: DbmRoleHint;
@@ -22,6 +26,7 @@ export interface BossSkillDbmRule {
   spellId: string;
   spellName: string;
   advice: string;
+  voiceText: string;
   severity: DbmSeverity;
   roleHint: DbmRoleHint;
   preWarnMs: number;
@@ -57,6 +62,8 @@ export class DbmAlertLog {
       atMs: now,
       title: partial.title,
       advice: partial.advice,
+      voiceText: partial.voiceText || toShortVoiceText(partial.advice),
+      replaceKey: partial.replaceKey,
       severity: partial.severity,
       ttlMs: partial.ttlMs ?? (partial.severity === 'CRITICAL' ? 4500 : 3500),
       roleHint: partial.roleHint ?? 'ALL',
@@ -64,6 +71,14 @@ export class DbmAlertLog {
       bossId: partial.bossId,
       source: partial.source ?? 'AUTO',
     };
+
+    if (alert.replaceKey) {
+      const idx = this.alerts.findIndex((a) => a.replaceKey === alert.replaceKey);
+      if (idx >= 0) {
+        this.alerts[idx] = alert;
+        return alert;
+      }
+    }
 
     this.alerts.push(alert);
     if (this.alerts.length > MAX_DBM_ALERTS) {
@@ -88,15 +103,23 @@ export class DbmAlertLog {
   }
 }
 
+/** 从建议文本提取简短 4 字左右语音词 */
+export function toShortVoiceText(advice: string): string {
+  const cleaned = advice.replace(/[!！。，,\s]+/g, '');
+  if (!cleaned) return '';
+  return cleaned.length <= 5 ? cleaned : cleaned.slice(0, 4);
+}
+
 /**
- * 引擎加载/编译首领技能时自动推导 DBM 播报规则：
- * - 优先采用副本设计期显式声明的 `skill.dbm`
- * - 未声明时，根据 `interruptible`、`targetKind`、`SkillMetrics`（AOE/DPS/HPS/CD）自动推算高威胁时期与短建议
+ * 引擎加载/编译首领技能时生成 DBM 播报规则：
+ * - 优先采用副本设计期显式声明的 `skill.dbm`（分散、分摊、躲柱子、转火等攻略核心机制）
+ * - 未显式声明时，仅对 `interruptible === true` 自动生成「注意打断」提醒
+ * - 常规掉血 / 减伤 / 治疗等玩家凭血条即可判断的技能不再自动刷屏报警
  */
 export function deriveBossSkillDbmRule(
   skill: BossSkill,
-  metrics?: SkillMetrics
-): BossSkillDbmRule {
+  _metrics?: SkillMetrics
+): BossSkillDbmRule | null {
   const explicit: BossSkillDbmMeta | undefined = skill.dbm;
   if (explicit) {
     const sev: DbmSeverity = explicit.severity ?? 'WARN';
@@ -104,6 +127,7 @@ export function deriveBossSkillDbmRule(
       spellId: skill.id,
       spellName: skill.name,
       advice: explicit.advice,
+      voiceText: explicit.voiceText || toShortVoiceText(explicit.advice),
       severity: sev,
       roleHint: explicit.roleHint ?? 'ALL',
       preWarnMs: explicit.preWarnMs ?? (skill.cooldownMs >= 12000 ? 3000 : 0),
@@ -117,81 +141,16 @@ export function deriveBossSkillDbmRule(
     return {
       spellId: skill.id,
       spellName: skill.name,
-      advice: '可打断读条，注意打断！',
+      advice: '注意打断',
+      voiceText: '注意打断',
       severity: 'CRITICAL',
       roleHint: 'DPS',
       preWarnMs: 0,
-      ttlMs: 4200,
-      announceOnCast: true,
-      source: 'AUTO',
-    };
-  }
-
-  const isHeal = metrics?.roleType === 'HEAL';
-  if (isHeal) {
-    return {
-      spellId: skill.id,
-      spellName: skill.name,
-      advice: '首领准备治疗，注意压制或转火',
-      severity: 'WARN',
-      roleHint: 'DPS',
-      preWarnMs: skill.cooldownMs >= 15000 ? 2500 : 0,
-      ttlMs: 3500,
-      announceOnCast: true,
-      source: 'AUTO',
-    };
-  }
-
-  const isAoe =
-    skill.targetKind === 'AOE' ||
-    Boolean(metrics?.isAOE) ||
-    skill.name.includes('全场') ||
-    skill.name.includes('弹幕') ||
-    skill.name.includes('灾厄') ||
-    skill.name.includes('践踏');
-
-  if (isAoe) {
-    return {
-      spellId: skill.id,
-      spellName: skill.name,
-      advice: '全团高威胁 AOE，注意治疗与分散减伤',
-      severity: 'WARN',
-      roleHint: 'HEALER',
-      preWarnMs: skill.cooldownMs >= 10000 ? 3000 : 0,
       ttlMs: 3800,
       announceOnCast: true,
       source: 'AUTO',
     };
   }
 
-  const isHighThreatCast =
-    skill.castTimeMs > 0 ||
-    skill.cooldownMs >= 12000 ||
-    (metrics?.dps ?? 0) >= 4000;
-
-  if (isHighThreatCast) {
-    return {
-      spellId: skill.id,
-      spellName: skill.name,
-      advice: '高威胁技能，坦克开减伤，注意治疗',
-      severity: 'WARN',
-      roleHint: 'TANK',
-      preWarnMs: skill.cooldownMs >= 14000 ? 2500 : 0,
-      ttlMs: 3500,
-      announceOnCast: true,
-      source: 'AUTO',
-    };
-  }
-
-  return {
-    spellId: skill.id,
-    spellName: skill.name,
-    advice: '注意站位与治疗',
-    severity: 'INFO',
-    roleHint: 'ALL',
-    preWarnMs: 0,
-    ttlMs: 3000,
-    announceOnCast: false,
-    source: 'AUTO',
-  };
+  return null;
 }

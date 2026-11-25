@@ -4,9 +4,12 @@ import {
   decodeNetMessage,
   encodeNetMessage,
   type AuthPayload,
+  type CombatEffect,
   type LobbyRoom,
   type NetEnvelope,
+  type NetworkCombatSnapshot,
   type NetworkVoteKind,
+  type OwnerSnapshot,
   type PlayerInfo,
   type PlayerInputPayload,
   type RoomActionPayload,
@@ -14,6 +17,7 @@ import {
   type VoteCastPayload,
   type VoteStartPayload,
 } from '@cata-raid-sim/engine';
+import { RoomCombatSession } from './RoomCombatSession.js';
 import { RoomVoteTracker } from './roomVotes.js';
 
 /** WebSocket 断开后短暂等待重连，再踢出/改 AI */
@@ -42,6 +46,7 @@ export class RoomWsHub {
   readonly votes = new RoomVoteTracker();
   private sessionsByPlayer = new Map<string, ClientSession>();
   private sessionsByWs = new Map<WebSocket, ClientSession>();
+  private combatSessions = new Map<string, RoomCombatSession>();
   /** Per-room throttle for host combat → lobby list sync (rooms stay isolated). */
   private lastCombatMetaPush = new Map<string, { phase?: string; atMs: number }>();
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
@@ -54,11 +59,81 @@ export class RoomWsHub {
     }
   }
 
-  /** 测试 / 关服时停掉心跳扫描 */
+  /** 测试 / 关服时停掉心跳扫描与所有房间战斗会话 */
   dispose() {
     if (this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);
       this.heartbeatTimer = null;
+    }
+    for (const cs of this.combatSessions.values()) {
+      cs.dispose();
+    }
+    this.combatSessions.clear();
+  }
+
+  getCombatSession(roomId: string): RoomCombatSession | undefined {
+    return this.combatSessions.get(roomId);
+  }
+
+  private createCombatSession(room: LobbyRoom): RoomCombatSession {
+    this.combatSessions.get(room.id)?.dispose();
+    const cs = new RoomCombatSession(room, {
+      broadcastCombatState: (rid, snap) => {
+        this.broadcastRoom(rid, {
+          type: 'COMBAT_STATE',
+          roomId: rid,
+          seq: snap.seq,
+          timeMs: snap.timeMs,
+          payload: snap,
+        });
+      },
+      broadcastCombatBatch: (rid, batch) => {
+        this.broadcastRoom(rid, {
+          type: 'COMBAT_BATCH',
+          roomId: rid,
+          seq: batch.seq,
+          timeMs: batch.timeMs,
+          payload: batch,
+        });
+      },
+      onEnterWipeVote: (rid) => {
+        if (!this.votes.get(rid, 'WIPE')) {
+          this.startVote(rid, 'WIPE');
+        }
+      },
+      onEnterSummary: (rid) => {
+        // 团灭并不重试 / 通关结算：销毁房间战斗会话并在无重试时销毁房间
+        this.destroyRoomAndNotify(rid, 'wipe_finish', true);
+      },
+      onRoomMetaUpdate: (rid, snap) => {
+        this.applyCombatSnapMeta(rid, snap);
+      },
+    });
+    this.combatSessions.set(room.id, cs);
+    return cs;
+  }
+
+  private applyCombatSnapMeta(roomId: string, snap: NetworkCombatSnapshot) {
+    const rm = this.roomManager as RoomManager & {
+      applyHostCombatSnapshot?: RoomManager['applyHostCombatSnapshot'];
+      getRoom?: RoomManager['getRoom'];
+    };
+    const updated = rm.applyHostCombatSnapshot?.(roomId, {
+      runPhase: snap.runPhase,
+      travelRemainingMs: snap.travelRemainingMs,
+      currentBossIndex: snap.currentBossIndex,
+      isCleared: snap.isCleared,
+      units: snap.units,
+    });
+    if (updated) {
+      const prev = this.lastCombatMetaPush.get(roomId);
+      const now = Date.now();
+      const phaseChanged = !!snap.runPhase && snap.runPhase !== prev?.phase;
+      const dueHp = !prev || now - prev.atMs >= 1000;
+      if (phaseChanged || dueHp || snap.runPhase === 'SUMMARY') {
+        this.lastCombatMetaPush.set(roomId, { phase: snap.runPhase, atMs: now });
+        this.pushRoomUpdate(updated);
+      }
     }
   }
 
@@ -115,6 +190,9 @@ export class RoomWsHub {
 
   /** Destroy room and notify all clients. Mid-run host leave sets forceSummary for guests. */
   private destroyRoomAndNotify(roomId: string, reason: string, forceSummary: boolean) {
+    this.combatSessions.get(roomId)?.dispose();
+    this.combatSessions.delete(roomId);
+    this.votes.clearRoom(roomId);
     this.lastCombatMetaPush.delete(roomId);
     this.roomManager.destroyRoom(roomId);
     for (const s of this.sessionsByPlayer.values()) {
@@ -127,6 +205,16 @@ export class RoomWsHub {
       payload: { roomId, reason, forceSummary },
     });
     this.pushRoomList();
+  }
+
+  private handleVoteResolved(roomId: string, kind: NetworkVoteKind, result: string) {
+    const cs = this.combatSessions.get(roomId);
+    if (!cs) return;
+    if (kind === 'WIPE' && (result === 'RETRY' || result === 'FINISH')) {
+      cs.applyWipeVoteResult(result);
+    } else if (kind === 'SKIP_TRAVEL' && result === 'YES') {
+      cs.fastForwardTravel();
+    }
   }
 
   private startVote(
@@ -169,6 +257,7 @@ export class RoomWsHub {
         timeMs: Date.now(),
         payload: { kind, result, vote: finalState },
       });
+      this.handleVoteResolved(roomId, kind, result);
     });
 
     // 迷宫过场等：发起者默认先投一票，写进首包 VOTE_STATE，避免票数先闪 0
@@ -200,6 +289,7 @@ export class RoomWsHub {
             timeMs: Date.now(),
             payload: { kind, result: outcome.earlyResult, vote: broadcastState },
           });
+          this.handleVoteResolved(roomId, kind, outcome.earlyResult);
         }
         return broadcastState;
       }
@@ -251,6 +341,7 @@ export class RoomWsHub {
         timeMs: Date.now(),
         payload: { kind, result: outcome.earlyResult, vote: outcome.state },
       });
+      this.handleVoteResolved(roomId, kind, outcome.earlyResult);
     }
   }
 
@@ -306,55 +397,95 @@ export class RoomWsHub {
   }
 
   /**
-   * 进新房 / 建房前清掉旧房席位，避免残留「未准备」真人幽灵。
-   * 房主离开旧房则销毁；普通成员则离席（战斗中改 AI 接管）。
+   * 统一处理玩家离房 / 断线 / 心跳超时：
+   * - 战斗中：AI 接管其席位；若为房主，移交给最早入房的剩余玩家；无人则销毁房间与战斗会话
+   * - 大厅中：退座（可选自动补 AI）；若为房主，移交给最早入房的剩余玩家；无人则销毁房间
    */
-  private detachSessionFromCurrentRoom(session: ClientSession) {
-    const leftRoomId = session.roomId;
-    if (!leftRoomId) return;
-    const room = this.roomManager.getRoom(leftRoomId);
-    session.roomId = null;
-    if (!room) return;
-
-    const isHost = room.hostId === session.playerId;
-    const inRun = room.status === 'IN_COMBAT' || room.status === 'OUT_OF_COMBAT';
-
-    if (isHost) {
-      this.destroyRoomAndNotify(leftRoomId, 'host_left', inRun);
+  private removeOrReplacePlayerFromRoom(
+    roomId: string,
+    playerId: string,
+    reason: string,
+    opts?: { autoFillInLobby?: boolean }
+  ) {
+    const room = this.roomManager.getRoom(roomId);
+    if (!room) {
+      this.votes.clearRoom(roomId);
       return;
     }
+    const inRun = room.status === 'IN_COMBAT' || room.status === 'OUT_OF_COMBAT';
 
     if (inRun) {
-      const replaced = this.roomManager.replaceHumanWithAi(leftRoomId, session.playerId);
+      const replaced = this.roomManager.replaceHumanWithAi(roomId, playerId);
       if (replaced.roomDeleted) {
-        this.destroyRoomAndNotify(leftRoomId, 'empty', false);
+        this.destroyRoomAndNotify(roomId, reason || 'empty', true);
         return;
       }
       if (replaced.ok && replaced.room) {
-        this.broadcastRoom(leftRoomId, {
+        if (replaced.aiMemberId) {
+          this.combatSessions
+            .get(roomId)
+            ?.replaceHumanWithAi(playerId, replaced.aiMemberId, replaced.room);
+        }
+        this.broadcastRoom(roomId, {
           type: 'MEMBER_REPLACE_AI',
-          roomId: leftRoomId,
+          roomId,
           timeMs: Date.now(),
           payload: {
-            roomId: leftRoomId,
-            playerId: session.playerId,
+            roomId,
+            playerId,
             aiMemberId: replaced.aiMemberId,
             room: replaced.room,
           },
         });
+        if (replaced.newHostId) {
+          this.broadcastRoom(roomId, {
+            type: 'HOST_TRANSFER',
+            roomId,
+            timeMs: Date.now(),
+            payload: { newHostId: replaced.newHostId, room: replaced.room },
+          });
+        }
         this.pushRoomUpdate(replaced.room);
       }
       return;
     }
 
-    const result = this.roomManager.leaveRoom(leftRoomId, session.playerId);
+    const result = this.roomManager.leaveRoom(roomId, playerId);
     if (result.roomDeleted) {
-      this.destroyRoomAndNotify(leftRoomId, result.destroyedByHost ? 'host_left' : 'empty', false);
-    } else {
-      const updated = this.roomManager.getRoom(leftRoomId);
-      if (updated) this.pushRoomUpdate(updated);
-      else this.pushRoomList();
+      this.destroyRoomAndNotify(roomId, reason || 'empty', false);
+      return;
     }
+    if (opts?.autoFillInLobby) {
+      const cur = this.roomManager.getRoom(roomId);
+      if (cur && cur.difficulty !== 'CUSTOM') {
+        this.roomManager.autoFillAi(roomId);
+      }
+    }
+    const updated = this.roomManager.getRoom(roomId);
+    if (updated) {
+      if (result.newHostId) {
+        this.broadcastRoom(roomId, {
+          type: 'HOST_TRANSFER',
+          roomId,
+          timeMs: Date.now(),
+          payload: { newHostId: result.newHostId, room: updated },
+        });
+      }
+      this.pushRoomUpdate(updated);
+    } else {
+      this.pushRoomList();
+    }
+  }
+
+  /**
+   * 进新房 / 建房前清掉旧房席位，避免残留「未准备」真人幽灵。
+   * 房主离开若仍有其他真人玩家则移交房主，无人则销毁房间。
+   */
+  private detachSessionFromCurrentRoom(session: ClientSession) {
+    const leftRoomId = session.roomId;
+    if (!leftRoomId) return;
+    session.roomId = null;
+    this.removeOrReplacePlayerFromRoom(leftRoomId, session.playerId, 'empty');
   }
 
   private pushRoomList() {
@@ -382,8 +513,7 @@ export class RoomWsHub {
   }
 
   /**
-   * 心跳超时 / 断线宽限期结束：从会话表移除，并按角色清理房间。
-   * 房主 → 销毁房间；大厅成员 → 退座；战斗中非房主 → AI 接管。
+   * 心跳超时 / 断线宽限期结束：从会话表移除，并按规则移交房主或 AI 接管；无人则销毁房间。
    */
   private finalizeGoneSession(session: ClientSession, reason: string) {
     if (session.disconnectTimer) {
@@ -401,51 +531,8 @@ export class RoomWsHub {
 
     const roomId = session.roomId;
     if (!roomId) return;
-    const room = this.roomManager.getRoom(roomId);
-    if (!room) {
-      this.votes.clearRoom(roomId);
-      return;
-    }
-
-    const inRun = room.status === 'IN_COMBAT' || room.status === 'OUT_OF_COMBAT';
-
-    if (room.hostId === session.playerId) {
-      this.votes.clearRoom(roomId);
-      this.destroyRoomAndNotify(roomId, reason === 'heartbeat_timeout' ? 'host_timeout' : 'host_left', inRun);
-      return;
-    }
-
-    if (room.status === 'LOBBY') {
-      const result = this.roomManager.leaveRoom(roomId, session.playerId);
-      if (result.roomDeleted) {
-        this.destroyRoomAndNotify(roomId, 'empty', false);
-      } else {
-        const updated = this.roomManager.getRoom(roomId);
-        if (updated) this.pushRoomUpdate(updated);
-        else this.pushRoomList();
-      }
-      return;
-    }
-
-    const replaced = this.roomManager.replaceHumanWithAi(roomId, session.playerId);
-    if (replaced.roomDeleted) {
-      this.destroyRoomAndNotify(roomId, 'empty', false);
-      return;
-    }
-    if (replaced.ok && replaced.room) {
-      this.broadcastRoom(roomId, {
-        type: 'MEMBER_REPLACE_AI',
-        roomId,
-        timeMs: Date.now(),
-        payload: {
-          roomId,
-          playerId: session.playerId,
-          aiMemberId: replaced.aiMemberId,
-          room: replaced.room,
-        },
-      });
-      this.pushRoomUpdate(replaced.room);
-    }
+    session.roomId = null;
+    this.removeOrReplacePlayerFromRoom(roomId, session.playerId, reason);
   }
 
   /** 扫无 PING 的僵死连接，并清掉房主已不在线的幽灵房间 */
@@ -617,6 +704,7 @@ export class RoomWsHub {
           this.send(ws, { type: 'ROOM_UPDATE', roomId: room.id, payload: started });
           this.pushRoomList();
           if (start.success) {
+            this.createCombatSession(started);
             this.broadcastRoom(room.id, {
               type: 'ROOM_START',
               roomId: room.id,
@@ -643,6 +731,10 @@ export class RoomWsHub {
           player?: PlayerInfo;
         };
         const roomId = msg.roomId || joinPayload.roomId;
+        if (!roomId) {
+          this.send(ws, { type: 'ERROR', error: 'Room not found' });
+          break;
+        }
         const room = this.roomManager.getRoom(roomId);
         if (!room) {
           this.send(ws, { type: 'ERROR', error: 'Room not found' });
@@ -694,7 +786,11 @@ export class RoomWsHub {
         this.roomManager.normalizeAiReady(room.id);
         this.pushRoomUpdate(this.roomManager.getRoom(room.id) || join.room);
         if (join.replacedAiId) {
-          // Mid-combat / AI-filled: notify host to inherit combat unit; AI disappears after swap
+          const member = join.room.members.find((m) => m.id === session.playerId);
+          const unitSnapshot = member
+            ? this.combatSessions.get(room.id)?.hotSwapHuman(join.replacedAiId, member)
+            : undefined;
+          // Mid-combat / AI-filled: server swaps combat unit & broadcasts snapshot
           this.broadcastRoom(room.id, {
             type: 'MEMBER_HOT_SWAP',
             roomId: room.id,
@@ -708,6 +804,7 @@ export class RoomWsHub {
               classId: session.classId,
               spec: session.spec,
               role: session.role,
+              ...(unitSnapshot ? { unitSnapshot } : {}),
             },
           });
         }
@@ -717,60 +814,10 @@ export class RoomWsHub {
       case 'ROOM_LEAVE': {
         if (!session.roomId) break;
         const leftRoomId = session.roomId;
-        const room = this.roomManager.getRoom(leftRoomId);
-        if (!room) {
-          session.roomId = null;
-          break;
-        }
-        const isHost = room.hostId === session.playerId;
-        const inRun = room.status === 'IN_COMBAT' || room.status === 'OUT_OF_COMBAT';
         session.roomId = null;
-
-        // Host leave / return lobby mid-run → destroy room; remaining players settle
-        if (isHost) {
-          this.destroyRoomAndNotify(leftRoomId, 'host_left', inRun);
-          break;
-        }
-
-        // Non-host mid-run: AI takes over their slot so the dungeon continues
-        if (inRun) {
-          const replaced = this.roomManager.replaceHumanWithAi(leftRoomId, session.playerId);
-          if (replaced.roomDeleted) {
-            this.destroyRoomAndNotify(leftRoomId, 'empty', false);
-            break;
-          }
-          if (replaced.ok && replaced.room) {
-            this.broadcastRoom(leftRoomId, {
-              type: 'MEMBER_REPLACE_AI',
-              roomId: leftRoomId,
-              timeMs: Date.now(),
-              payload: {
-                roomId: leftRoomId,
-                playerId: session.playerId,
-                aiMemberId: replaced.aiMemberId,
-                room: replaced.room,
-              },
-            });
-            this.pushRoomUpdate(replaced.room);
-          }
-          break;
-        }
-
-        // Lobby leave: remove seat; 普通/英雄自动补 AI，避免回来后少一人坑
-        const result = this.roomManager.leaveRoom(leftRoomId, session.playerId);
-        if (result.roomDeleted) {
-          this.destroyRoomAndNotify(leftRoomId, result.destroyedByHost ? 'host_left' : 'empty', false);
-        } else {
-          const updated = this.roomManager.getRoom(leftRoomId);
-          if (updated) {
-            if (updated.difficulty !== 'CUSTOM') {
-              this.roomManager.autoFillAi(leftRoomId);
-            }
-            const afterFill = this.roomManager.getRoom(leftRoomId);
-            if (afterFill) this.pushRoomUpdate(afterFill);
-            else this.pushRoomList();
-          } else this.pushRoomList();
-        }
+        this.removeOrReplacePlayerFromRoom(leftRoomId, session.playerId, 'empty', {
+          autoFillInLobby: true,
+        });
         break;
       }
 
@@ -893,7 +940,10 @@ export class RoomWsHub {
           });
           break;
         }
-        if (room) this.pushRoomUpdate(room);
+        if (room) {
+          this.createCombatSession(room);
+          this.pushRoomUpdate(room);
+        }
         this.broadcastRoom(roomId, {
           type: 'ROOM_START',
           roomId,
@@ -984,17 +1034,54 @@ export class RoomWsHub {
           this.applyVoteCast(msg.roomId, 'WIPE', session.playerId, input.wipeVote);
           break;
         }
-        // Relay cast/move/etc to host and peers
+        // Server idempotent input dedupe + immediate INPUT_ACK (RTT/RTO between player & server)
+        const cs = this.combatSessions.get(msg.roomId);
+        if (cs && input) {
+          const { shouldApply, ack } = cs.handlePlayerInput(session.playerId, input);
+          if (ack) {
+            this.send(ws, {
+              type: 'INPUT_ACK',
+              roomId: msg.roomId,
+              timeMs: Date.now(),
+              payload: { acks: [ack], ackedInputIds: [ack.clientInputId] },
+            });
+          }
+          if (!shouldApply) break;
+        }
+        // Relay cast/move/etc to peers
         this.broadcastRoom(msg.roomId, msg, session.playerId);
         break;
       }
 
-      case 'COMBAT_EFFECT':
-      case 'OWNER_SNAPSHOT': {
-        // Guests/host authors → relay to room (host gathers; peers may ignore)
+      case 'COMBAT_EFFECT': {
         if (!msg.roomId && session.roomId) msg.roomId = session.roomId;
         if (!msg.roomId) break;
         if (session.roomId !== msg.roomId) break;
+        const effect = msg.payload as CombatEffect;
+        const cs = this.combatSessions.get(msg.roomId);
+        if (cs && effect) {
+          const { ack } = cs.handleCombatEffect(effect);
+          if (ack) {
+            this.send(ws, {
+              type: 'INPUT_ACK',
+              roomId: msg.roomId,
+              timeMs: Date.now(),
+              payload: { acks: [ack], ackedInputIds: [ack.clientInputId] },
+            });
+          }
+        }
+        this.broadcastRoom(msg.roomId, msg, session.playerId);
+        break;
+      }
+
+      case 'OWNER_SNAPSHOT': {
+        if (!msg.roomId && session.roomId) msg.roomId = session.roomId;
+        if (!msg.roomId) break;
+        if (session.roomId !== msg.roomId) break;
+        const snap = msg.payload as OwnerSnapshot;
+        if (snap) {
+          this.combatSessions.get(msg.roomId)?.handleOwnerSnapshot(snap);
+        }
         this.broadcastRoom(msg.roomId, msg, session.playerId);
         break;
       }

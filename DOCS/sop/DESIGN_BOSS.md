@@ -21,9 +21,10 @@
    - 在 `bosses/<dungeon>/index.ts` 中通过 `BossRegistry.registerBoss(...)` 或 `register<Dungeon>Bosses()` 注册到总线，并在 `bosses/index.ts` 统一调用初始化。
    - **禁止**直接向 `DEV/packages/engine/src/ai/BossAI.ts` 追加首领代码（该文件已降级为仅 6 行的兼容重导出）。
    - 若技能生成地面区域（毒圈/扇形弹幕），调用 `engine.effectsManager.addGroundZone(...)` 写入坐标、半径/角度、持续时间与跳伤。
-3. **根据副本攻略补充 DBM 播报信息** — `BossTypes.ts` (`BossSkill.dbm`) & `DEV/packages/engine/src/engine/DbmManager.ts`
-   - **自动推导兜底**：`BaseBossAI.initBossSkills()` 会自动为可打断读条、AOE 技能、高威胁冷却生成默认 DBM 规则；召唤敌方 `ADD` 小怪与敌方地面危险区也会自动触发「先杀小怪」「注意躲避」提示。
-   - **攻略特殊机制显式标注**：对照副本攻略，凡涉及「分散 / 近距分摊」「躲柱子 / 安全区」「安全治疗窗」「转阶段 / 狂暴」等引擎无法从数值反推的机制，**必须**在 `BossSkill.dbm` 中填写简短建议（`advice`、`severity`、`roleHint`、`preWarnMs`），并在 `onTick` / `execute` 阶段切换处调用 `engine.emitDbmAlert(...)`（由房主权威同步给全团客机）。
+3. **根据副本攻略补充 DBM 播报信息（严控密集度）** — `BossTypes.ts` (`BossSkill.dbm`) & `DEV/packages/engine/src/engine/DbmManager.ts`
+   - **克制原则（防刷屏）**：**禁止**为常规掉血、普通 AOE 治疗或坦克常规减伤配置报警（玩家看血条即可反应）。引擎仅自动为 `interruptible: true` 读条生成「注意打断」及敌方 `ADD` 增援生成「先杀小怪」。
+   - **只报“必须知道的机制”**：对照副本攻略，仅针对「注意分散」「近距分摊」「躲柱子后」「安全抬血」「转阶段」等光看血条无法判断的机制，在 `BossSkill.dbm` 显式填写简短建议（`advice`）、4 字短语音（`voiceText`，如 `"注意分散"`）、`severity` 与 `preWarnMs`。
+   - **同技能顶替与密集度控制**：同一技能的 `即将施放` 预告与 `正在施放` 提示共用 `replaceKey`（自动原地顶替，不新起条目）；阶段切换调用 `engine.emitDbmAlert(...)` 时也应控制冷却与条数，避免同一时间点连续弹出多条干扰判断。
 4. **仇恨与坦伤校验** — `DEV/packages/engine/src/engine/ThreatManager.ts`
    - 确保首领普攻与顺劈优先锁定第一仇恨目标（近战 110% / 远程 130% OT 阈值），坦克阵亡时平滑转火第二仇恨。
 4. **Canvas 像素形象与预警渲染** — `DEV/packages/web/src/canvas/CombatCanvas.tsx`

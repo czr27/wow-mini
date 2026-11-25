@@ -170,6 +170,11 @@ describe('巨龙之魂：奥卓克希昂迭代 C', () => {
   it('5. 6 分钟硬狂暴开始暮光爆发读条', () => {
     const { engine, boss, ai } = setupRaid(5);
     ai.tick(50, boss, engine);
+    assert.notEqual(
+      ai.currentCasting?.skill.id,
+      'twilight_eruption',
+      '开战初期不应提前释放暮光爆发',
+    );
     (ai as UltraxionAiState).ultraxFightMs = TWILIGHT_ERUPTION_MS - 50;
     ai.currentCasting = null;
     ai.tick(100, boss, engine);

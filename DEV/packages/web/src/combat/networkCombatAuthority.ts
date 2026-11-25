@@ -76,11 +76,7 @@ function networkingActive(): boolean {
 
 function enqueueOrSend(effect: CombatEffect) {
   if (!networkingActive() || !ctx.activeRoomId) return;
-  if (ctx.isNetworkHost) {
-    gather.enqueueEffect(effect);
-  } else {
-    netClient.sendCombatEffect(ctx.activeRoomId, effect);
-  }
+  netClient.sendCombatEffect(ctx.activeRoomId, effect);
 }
 
 /**
@@ -213,11 +209,7 @@ export function ingestCombatEffect(
   const isHudVisual = CAST_HUD_KINDS.has(effect.kind);
   const isLocalTarget = ctx.isUnitLocalAuthority(effect.targetId);
 
-  // Host is a relay for others’ seats: receive → splice (owner snap) → forward. No foreign vitals math.
-  if (ctx.isNetworkHost && isVital && !isLocalTarget) {
-    opts?.onHudEffect?.(effect);
-    return;
-  }
+  // Server owns Boss/AI; all players (host & guest) apply local-authority vitals & stack remote FX/deltas
 
   if (isLocalTarget || isVital || isHudVisual) {
     const appliedNow = consumeRemoteEffect(effect, applied, (e) => {
@@ -260,11 +252,7 @@ export function dropGatherOwnerTraces(ownerId: string) {
 
 export function publishOwnerSnapshot(snap: OwnerSnapshot) {
   if (!networkingActive() || !ctx.activeRoomId) return;
-  if (ctx.isNetworkHost) {
-    gather.enqueueSnapshot(snap);
-  } else {
-    netClient.sendOwnerSnapshot(ctx.activeRoomId, snap);
-  }
+  netClient.sendOwnerSnapshot(ctx.activeRoomId, snap);
 }
 
 /** Host tick: flush gather → COMBAT_BATCH when due. */

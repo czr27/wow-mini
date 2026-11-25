@@ -322,11 +322,19 @@ export function syncPersistentRingsFromGround(
       existing.baseAlpha = baseAlpha;
       existing.spellId = g.spellId;
       existing.ownerClassId = owner?.classId;
-      // Keep fadeAt in sync with remaining lifetime (don't restart fade early)
-      const wantFade = now + Math.max(0, g.remainingMs);
-      if (Math.abs(wantFade - existing.fadeAt) > 40) {
-        existing.fadeAt = wantFade;
-        existing.expireAt = wantFade + AOE_FADE_MS;
+      // Keep fadeAt in sync with remaining lifetime (don't restart fade early,
+      // and don't keep pushing expireAt forward once remainingMs <= 0)
+      if (g.remainingMs <= 0) {
+        if (existing.fadeAt > now) {
+          existing.fadeAt = now;
+          existing.expireAt = now + AOE_FADE_MS;
+        }
+      } else {
+        const wantFade = now + g.remainingMs;
+        if (Math.abs(wantFade - existing.fadeAt) > 40) {
+          existing.fadeAt = wantFade;
+          existing.expireAt = wantFade + AOE_FADE_MS;
+        }
       }
       // After throw+grow, snap logical x/y/radius to ground for consumers
       const pose = resolveAoeRingPose(existing, now);

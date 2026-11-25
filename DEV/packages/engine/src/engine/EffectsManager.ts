@@ -42,21 +42,6 @@ export class EffectsManager {
       );
     }
     this.groundEffects.push(newEffect);
-    if (
-      (newEffect.kind === 'DAMAGE_ZONE' || newEffect.kind === 'CONE_WARNING') &&
-      typeof this.engine?.emitDbmAlert === 'function'
-    ) {
-      this.engine.emitDbmAlert({
-        title: newEffect.kind === 'CONE_WARNING' ? '正面/扇形预警' : '地面危险区',
-        advice: '注意分散与躲避脚下预警区',
-        severity: 'WARN',
-        roleHint: 'ALL',
-        spellId: newEffect.spellId,
-        source: 'RUNTIME',
-        dedupeKey: `ground_${newEffect.spellId || newEffect.kind}`,
-        cooldownMs: 5000,
-      });
-    }
     return newEffect;
   }
 

@@ -8,6 +8,9 @@ const STATIONARY_CONSTRUCT_SUMMON_IDS = new Set([
   'hagara_conductive_crystal',
   'madness_limb',
   'madness_elementium_bolt',
+  'zonozz_void_tentacle',
+  'venoxis_bloodvenom',
+  'ripsnarl_vapor',
 ]);
 
 export const ADD_MOVE_SPEED_PX_PER_SEC = 100;
@@ -17,7 +20,9 @@ export const ADD_ATTACK_INTERVAL_MS = 2000;
 
 export function isStationaryConstructAdd(unit: { summonSpellId?: string } | null | undefined): boolean {
   if (!unit?.summonSpellId) return false;
-  return STATIONARY_CONSTRUCT_SUMMON_IDS.has(unit.summonSpellId);
+  if (STATIONARY_CONSTRUCT_SUMMON_IDS.has(unit.summonSpellId)) return true;
+  if (unit.summonSpellId.startsWith('yorsahj_blood_')) return true;
+  return false;
 }
 
 /**

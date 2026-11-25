@@ -1,10 +1,18 @@
 import React, { useRef, useEffect, useState, useCallback } from 'react';
 import {
+  playCombatSfx,
+  inferSpellSchool,
+  type SfxActorRole,
+  type SfxEventKind,
+} from '../utils/combatSfx.js';
+import { useGameStore } from '../store/gameStore.js';
+import {
   Unit,
   GroundEffect,
   FloatingCombatText,
   RunPhase,
   evaluateGroundFormationPosition,
+  computeDungeonPriorityZone,
   findLooseAddForTank,
   orderTanksByThreatPriority,
   clampPosWithinTankRange,
@@ -1015,12 +1023,19 @@ function drawBossModel(
     }
   }, bossOpts);
 
+  ctx.restore();
+
+  // Overhead UI in unscaled upright space (aligned with drawBossHpBar at y = -84..-72,
+  // so cast bar / skill hints / chasing text at y = -66..-54 never overlap the HP bar or boss head)
+  ctx.save();
+  ctx.translate(pos.x, pos.y);
+
   // Name-only overhead (when HP also on, name is drawn inside drawBossHpBar)
   if (showName) {
     const barH = 12;
     const fontPx = Math.max(7, Math.round(barH * 0.85));
     const label = `💀 ${bossUnit.name}`;
-    const y = -78;
+    const y = -84;
     ctx.fillStyle = '#FFE08A';
     ctx.font = `bold ${fontPx}px sans-serif`;
     ctx.textAlign = 'center';
@@ -1039,11 +1054,11 @@ function drawBossModel(
   const castProgress = (bossUnit as any)?.castProgress || 0;
 
   // Cast bar: skill name centered on the bar (classic nameplate). Non-cast
-  // overhead announces (e.g. 践踏) still float above when not casting.
+  // overhead announces (e.g. 践踏) still float below HP bar when not casting.
   if (isCasting && castingSpellName) {
     const barW = 86;
     const barH = 12;
-    const barY = -52;
+    const barY = -66;
     ctx.fillStyle = 'rgba(0, 0, 0, 0.78)';
     ctx.fillRect(-barW / 2 - 1, barY - 1, barW + 2, barH + 2);
     ctx.fillStyle = '#EAB308';
@@ -1064,12 +1079,12 @@ function drawBossModel(
     ctx.fillStyle = '#FDE68A';
     ctx.font = 'bold 9px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText(overheadSkillName, 0, -56);
+    ctx.fillText(overheadSkillName, 0, -58);
   } else if (isMoving) {
     ctx.fillStyle = '#F87171';
     ctx.font = 'bold 9px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('🏃 追击目标中...', 0, -56);
+    ctx.fillText('🏃 追击目标中...', 0, -58);
   }
 
   ctx.restore();
@@ -1330,7 +1345,7 @@ function drawBossHpBar(
   const hasName = !!(opts?.name && opts.name.trim());
   const barW = hasName ? 110 : 88;
   const barH = hasName ? 12 : 7;
-  const y = -78;
+  const y = -84;
   ctx.save();
   ctx.translate(pos.x, pos.y);
   ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
@@ -2140,8 +2155,8 @@ function drawArenaVignetteScreen(
 
 /**
  * Maze / Cavern floor in *world* space — drawn after applyCanvasViewTransform.
- * Expands beyond screen bounds to world AABB, so canvas is always filled with
- * dark cavern cobblestone or volcanic rock that rotates seamlessly with camera in 2.5D.
+ * Expands beyond screen bounds to world AABB covering canvas under all yaw / pitch / zoom,
+ * with extra margin so no boundary can ever be seen in 2.5D.
  */
 function drawMazeCavernFloorWorld(
   ctx: CanvasRenderingContext2D,
@@ -2151,7 +2166,8 @@ function drawMazeCavernFloorWorld(
   theme: { ambienceColor?: string; wallColor?: string } | null | undefined,
   is20Man: boolean
 ) {
-  const aabb = worldAabbCoveringCanvas(cam, canvasW, canvasH, 120);
+  // Pad px 350 ensures full bleed even at extreme pitch (20°) and low zoom (0.5)
+  const aabb = worldAabbCoveringCanvas(cam, canvasW, canvasH, 350);
   const { minX, minY, maxX, maxY } = aabb;
   const w = maxX - minX;
   const h = maxY - minY;
@@ -2160,7 +2176,7 @@ function drawMazeCavernFloorWorld(
   ctx.fillStyle = theme?.ambienceColor || (is20Man ? '#110508' : '#080814');
   ctx.fillRect(minX, minY, w, h);
 
-  // World-space cavern grid texture (moves and turns with world, no fixed island boundary)
+  // World-space cavern grid texture (moves and turns with world, infinite bleed)
   const gridSize = 35;
   const x0 = Math.floor(minX / gridSize) * gridSize;
   const y0 = Math.floor(minY / gridSize) * gridSize;
@@ -2453,6 +2469,13 @@ export const CombatCanvas: React.FC<Props> = ({
   }, [dungeonId, dungeonTier]);
 
   const mazeLayoutRef = useRef<MazeLayout | null>(null);
+  /** Offscreen pre-rendered canvas cache for maze cloud walls & floor path */
+  const mazeWallCanvasCacheRef = useRef<{
+    seed: number;
+    width: number;
+    height: number;
+    canvas: HTMLCanvasElement;
+  } | null>(null);
 
   // Live props for the RAF loop — travelRemainingMs was previously closed over stale
   // values (not in effect deps), so elapsed froze until a restart then jumped:
@@ -2529,6 +2552,48 @@ export const CombatCanvas: React.FC<Props> = ({
       const actions = detail?.actions;
       if (!Array.isArray(actions) || actions.length === 0) return;
       pendingAoeActionsRef.current.push(...actions);
+
+      const storeState = useGameStore.getState();
+      const liveUnits = storeState.units;
+      const selfUnitId = storeState.playerUnitId;
+      const selfUnit = selfUnitId ? liveUnits.find((u) => u.id === selfUnitId) : undefined;
+      const listenerPos = selfUnit?.position ?? null;
+      const bossPos = bossPosRef?.current ?? null;
+
+      for (const act of actions) {
+        const actorId: string = act.actorId ?? '';
+        const isSelf = !!selfUnitId && actorId === selfUnitId;
+        const isBoss = actorId === 'boss' || actorId.startsWith('boss') || act.visualTone === 'ENEMY';
+        const role: SfxActorRole = isSelf ? 'self' : isBoss ? 'boss' : 'other';
+
+        let actorPos = act.x != null && act.y != null ? { x: act.x, y: act.y } : null;
+        if (!actorPos) {
+          if (isBoss && bossPos) {
+            actorPos = bossPos;
+          } else {
+            const u = liveUnits.find((unit) => unit.id === actorId);
+            if (u?.position) actorPos = u.position;
+          }
+        }
+
+        let kind: SfxEventKind = 'spell_hit';
+        if (act.kind === 'CAST_START') {
+          kind = isBoss ? 'boss_cast' : 'cast_start';
+        } else if (act.kind === 'MELEE' || act.spellId === 'auto_attack') {
+          kind = 'melee';
+        } else if (act.visualTone === 'HEAL') {
+          kind = 'heal';
+        }
+
+        playCombatSfx({
+          kind,
+          school: inferSpellSchool(act.spellId, act.spellName),
+          role,
+          actorPos,
+          listenerPos,
+          actorId,
+        });
+      }
     };
     window.addEventListener('cata_combat_actions', onActions as EventListener);
     return () => window.removeEventListener('cata_combat_actions', onActions as EventListener);
@@ -2557,10 +2622,12 @@ export const CombatCanvas: React.FC<Props> = ({
       const key = e.key.toLowerCase();
       if (['w', 'a', 's', 'd', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(key)) {
         keysPressedRef.current.add(key);
-        // Pressing WASD turns off auto-pathfinding and click-to-move
-        setAutoNav(false);
-        clickTargetRef.current = null;
-        if (onPlayerMove) onPlayerMove();
+        // Pressing WASD turns off auto-pathfinding and click-to-move in combat (maze is always auto-nav)
+        if (runPhaseRef.current !== 'TRAVEL_RECOVERY') {
+          setAutoNav(false);
+          clickTargetRef.current = null;
+          if (onPlayerMove) onPlayerMove();
+        }
       }
     };
 
@@ -2716,12 +2783,14 @@ export const CombatCanvas: React.FC<Props> = ({
 
       // If LMB is already down when RMB is pressed (or buttons has LMB):
       if (isIsoViewAllowed() && (isLmbHeldRef.current || (e.buttons & 1) !== 0)) {
-        isMouseChordMovingRef.current = true;
+        if (runPhaseRef.current !== 'TRAVEL_RECOVERY') {
+          isMouseChordMovingRef.current = true;
+          setAutoNav(false);
+          clickTargetRef.current = null;
+          if (onPlayerMove) onPlayerMove();
+        }
         suppressNextClickRef.current = true;
         orbitDragRef.current.movedPx = 999;
-        setAutoNav(false);
-        clickTargetRef.current = null;
-        if (onPlayerMove) onPlayerMove();
       }
       return;
     }
@@ -2730,14 +2799,16 @@ export const CombatCanvas: React.FC<Props> = ({
       isLmbHeldRef.current = true;
       const rmbHeld = isRmbHeldRef.current || orbitDragRef.current?.active || (e.buttons & 2) !== 0;
       if (isIsoViewAllowed() && rmbHeld) {
-        isMouseChordMovingRef.current = true;
+        if (runPhaseRef.current !== 'TRAVEL_RECOVERY') {
+          isMouseChordMovingRef.current = true;
+          setAutoNav(false);
+          clickTargetRef.current = null;
+          if (onPlayerMove) onPlayerMove();
+        }
         suppressNextClickRef.current = true;
         if (orbitDragRef.current) {
           orbitDragRef.current.movedPx = Math.max(orbitDragRef.current.movedPx, 999);
         }
-        setAutoNav(false);
-        clickTargetRef.current = null;
-        if (onPlayerMove) onPlayerMove();
         e.preventDefault();
         return;
       }
@@ -2848,8 +2919,8 @@ export const CombatCanvas: React.FC<Props> = ({
       }
     }
 
-    // 4. Click on empty ground: Navigate/walk player to clicked position (only if alive!)
-    if (pUnit && (pUnit.isAlive ?? pUnit.alive) && pUnit.hp > 0) {
+    // 4. Click on empty ground: Navigate/walk player to clicked position in combat (maze is always auto-nav)
+    if (pUnit && (pUnit.isAlive ?? pUnit.alive) && pUnit.hp > 0 && runPhase !== 'TRAVEL_RECOVERY') {
       clickTargetRef.current = { x: clickX, y: clickY, time: Date.now() };
       setAutoNav(false);
     }
@@ -2938,6 +3009,10 @@ export const CombatCanvas: React.FC<Props> = ({
       playerPosRef.current = { x: startWp.x, y: startWp.y };
       companionPositionsRef.current = {};
       companionFidgetRef.current = {};
+      aoeRingsRef.current = [];
+      classAoePulsesRef.current = createClassAoePulseState();
+      hitFxRef.current = createHitFxState();
+      pendingAoeActionsRef.current = [];
     }
 
     const render = () => {
@@ -3008,11 +3083,14 @@ export const CombatCanvas: React.FC<Props> = ({
       const keys = keysPressedRef.current;
       let moveX = 0;
       let moveY = 0;
-      const isChordMove = isIsoViewAllowed() && isMouseChordMovingRef.current;
-      if (keys.has('w') || keys.has('arrowup') || isChordMove) moveY -= 1;
-      if (keys.has('s') || keys.has('arrowdown')) moveY += 1;
-      if (keys.has('a') || keys.has('arrowleft')) moveX -= 1;
-      if (keys.has('d') || keys.has('arrowright')) moveX += 1;
+      const isChordMove =
+        runPhase !== 'TRAVEL_RECOVERY' && isIsoViewAllowed() && isMouseChordMovingRef.current;
+      if (runPhase !== 'TRAVEL_RECOVERY') {
+        if (keys.has('w') || keys.has('arrowup') || isChordMove) moveY -= 1;
+        if (keys.has('s') || keys.has('arrowdown')) moveY += 1;
+        if (keys.has('a') || keys.has('arrowleft')) moveX -= 1;
+        if (keys.has('d') || keys.has('arrowright')) moveX += 1;
+      }
 
       // Lock movement if dead or if in travel phase with dead members waiting for resurrection
       const pUnit = units.find(u => u.isPlayer);
@@ -3310,13 +3388,13 @@ export const CombatCanvas: React.FC<Props> = ({
                   x: targetMob.x - 20,
                   y: targetMob.y,
                 };
-            const hand = meleeHandPose(mPos, { x: targetMob.x, y: targetMob.y }, 0.5);
+            const hand = meleeHandPose(mPos, { x: targetMob.x, y: targetMob.y }, combatSpriteScale);
             spawnHitSlash(hitFxRef.current, {
               x: hand.x,
               y: hand.y,
               angle: hand.angle,
               color: CLASS_COLORS[meleeCaster.classId as keyof typeof CLASS_COLORS] || '#EF4444',
-              scale: 0.5,
+              scale: combatSpriteScale,
             });
           } else if (rangedCaster) {
             const cPos = rangedCaster.isPlayer
@@ -3328,17 +3406,17 @@ export const CombatCanvas: React.FC<Props> = ({
               toX: targetMob.x,
               toY: targetMob.y,
               classId: rangedCaster.classId,
-              scale: 0.5,
+              scale: combatSpriteScale,
             });
           } else {
             const fallbackFrom = playerPosRef.current;
-            const hand = meleeHandPose(fallbackFrom, { x: targetMob.x, y: targetMob.y }, 0.5);
+            const hand = meleeHandPose(fallbackFrom, { x: targetMob.x, y: targetMob.y }, combatSpriteScale);
             spawnHitSlash(hitFxRef.current, {
               x: hand.x,
               y: hand.y,
               angle: hand.angle,
               color: isCrit ? '#FACC15' : '#EF4444',
-              scale: 0.5,
+              scale: combatSpriteScale,
             });
           }
 
@@ -3408,20 +3486,20 @@ export const CombatCanvas: React.FC<Props> = ({
                 toY: vPos.y,
                 color: BOSS_HIT_FX_COLOR,
                 shape: 'bolt',
-                scale: 0.5,
+                scale: combatSpriteScale,
               });
             } else {
               const hand = meleeHandPose(
                 { x: attacker.x, y: attacker.y },
                 vPos,
-                0.5
+                combatSpriteScale
               );
               spawnHitSlash(hitFxRef.current, {
                 x: hand.x,
                 y: hand.y,
                 angle: hand.angle,
                 color: BOSS_HIT_FX_COLOR,
-                scale: 0.5,
+                scale: combatSpriteScale,
               });
             }
 
@@ -3462,7 +3540,7 @@ export const CombatCanvas: React.FC<Props> = ({
                 actorId: healer.id,
                 x: hPos.x,
                 y: hPos.y,
-                scale: 0.5,
+                scale: combatSpriteScale,
               });
               encounterSCTRef.current.push({
                 id: `pheal_${Date.now()}_${Math.random()}`,
@@ -3590,7 +3668,6 @@ export const CombatCanvas: React.FC<Props> = ({
         }
       } else if (
         runPhase === 'TRAVEL_RECOVERY' &&
-        autoNavActiveRef.current &&
         canMove &&
         !isNetworkGuestLive
       ) {
@@ -3631,10 +3708,21 @@ export const CombatCanvas: React.FC<Props> = ({
       if (runPhase === 'TRAVEL_RECOVERY') {
       /**
        * Prim topology unchanged. Visual = cloud-like cavities squeezed along the graph.
-       * When a squeeze needs room, floor blobs are allowed to eat into neighboring walls.
-       * Shapes are irregular / rounded (云朵), not neat ellipses.
+       * Pre-rendered to an offscreen canvas and cached by seed to eliminate per-frame lag.
        */
       const drawPrimWalls = (layout: MazeLayout, theme: MazeLayout['theme']) => {
+        const cache = mazeWallCanvasCacheRef.current;
+        if (cache && cache.seed === layout.seed && cache.width === width && cache.height === height) {
+          ctx.drawImage(cache.canvas, 0, 0);
+          return;
+        }
+
+        const offCanvas = document.createElement('canvas');
+        offCanvas.width = width;
+        offCanvas.height = height;
+        const offCtx = offCanvas.getContext('2d');
+        if (!offCtx) return;
+
         const { originX, originY } = getMazeDrawOrigin(layout, width, height);
         const { cols, rows, grid, cellSize: cs, seed } = layout;
         const isPath = (c: number, r: number) =>
@@ -3652,10 +3740,6 @@ export const CombatCanvas: React.FC<Props> = ({
           return ((s ^ (s >>> 16)) >>> 0) / 4294967296;
         };
 
-        /**
-         * Cloud blob: several overlapping lobed outlines with strong radial jitter
-         * + light quadratic smoothing feel (dense samples, rounded corners).
-         */
         const fillCloud = (
           cx: number,
           cy: number,
@@ -3676,21 +3760,20 @@ export const CombatCanvas: React.FC<Props> = ({
             const oy = (u01(c, r, salt + p * 3 + 1) - 0.5) * baseR * 0.55;
             const pr = baseR * (0.55 + 0.55 * u01(c, r, salt + p * 3 + 2));
             const lobes = 12 + Math.floor(u01(c, r, salt + 40 + p) * 6);
-            ctx.beginPath();
+            offCtx.beginPath();
             for (let i = 0; i <= lobes; i++) {
               const t = (i / lobes) * Math.PI * 2;
-              // 云朵起伏：大幅径向抖动，边角仍因采样密而圆润
               const jig = 0.55 + 0.7 * u01(c, r, salt + 80 + p * 20 + i);
               const bump = 1 + 0.22 * Math.sin(t * (2 + (p % 3)) + u01(c, r, salt + 5) * 6);
               const px = Math.cos(t) * pr * jig * bump * stretchX;
               const py = Math.sin(t) * pr * jig * bump * stretchY;
               const x = cx + ox + px * cos - py * sin;
               const y = cy + oy + px * sin + py * cos;
-              if (i === 0) ctx.moveTo(x, y);
-              else ctx.lineTo(x, y);
+              if (i === 0) offCtx.moveTo(x, y);
+              else offCtx.lineTo(x, y);
             }
-            ctx.closePath();
-            ctx.fill();
+            offCtx.closePath();
+            offCtx.fill();
           }
         };
 
@@ -3699,7 +3782,6 @@ export const CombatCanvas: React.FC<Props> = ({
           y: originY + r * cs + cs / 2,
         });
 
-        // Entrance / exit stay stable; silhouette noise only elsewhere
         const entC = layout.entrance?.col ?? 1;
         const entR = layout.entrance?.row ?? 1;
         const exC = layout.exit?.col ?? cols - 2;
@@ -3710,8 +3792,8 @@ export const CombatCanvas: React.FC<Props> = ({
         const onOuterBand = (c: number, r: number) =>
           c <= 1 || r <= 1 || c >= cols - 2 || r >= rows - 2;
 
-        // ── 1) Lumpy rock hull near path (no square AABB) ──
-        ctx.fillStyle = theme.wallColor;
+        // 1) Lumpy rock hull near path
+        offCtx.fillStyle = theme.wallColor;
         for (let r = 0; r < rows; r++) {
           for (let c = 0; c < cols; c++) {
             if (!isPath(c, r)) {
@@ -3725,12 +3807,10 @@ export const CombatCanvas: React.FC<Props> = ({
                 isPath(c + 1, r - 1) ||
                 isPath(c - 1, r - 1);
               if (!touch) continue;
-              // 吃：外沿远离出入口的岩体随机抽薄，打破长方形外轮廓
               if (onOuterBand(c, r) && !nearPortal(c, r) && u01(c, r, 200) < 0.42) continue;
             }
             const { x, y } = cellCenter(c, r);
             const path = isPath(c, r);
-            // 外沿岩体半径也抖动，避免齐平边
             const edgeScale =
               onOuterBand(c, r) && !nearPortal(c, r) ? 0.75 + 0.55 * u01(c, r, 201) : 1;
             fillCloud(
@@ -3750,8 +3830,8 @@ export const CombatCanvas: React.FC<Props> = ({
           }
         }
 
-        // ── 1b) 补：外轮廓向外鼓出的岩云（出入口附近不补）──
-        ctx.fillStyle = theme.wallColor;
+        // 1b) Outer edge rocky clouds
+        offCtx.fillStyle = theme.wallColor;
         for (let r = 0; r < rows; r++) {
           for (let c = 0; c < cols; c++) {
             if (!onOuterBand(c, r) || nearPortal(c, r)) continue;
@@ -3763,9 +3843,8 @@ export const CombatCanvas: React.FC<Props> = ({
                 isPath(c, r - 1);
               if (!touch && u01(c, r, 210) > 0.35) continue;
             }
-            if (u01(c, r, 211) > 0.62) continue; // 稀疏补凸
+            if (u01(c, r, 211) > 0.62) continue;
             const { x, y } = cellCenter(c, r);
-            // 沿外法线往外推一点，打破 AABB 齐边
             const nx = c <= 1 ? -1 : c >= cols - 2 ? 1 : 0;
             const ny = r <= 1 ? -1 : r >= rows - 2 ? 1 : 0;
             const push = cs * (0.55 + 0.9 * u01(c, r, 212));
@@ -3786,8 +3865,8 @@ export const CombatCanvas: React.FC<Props> = ({
           }
         }
 
-        // ── 2) Carve cloud cavities on path (+ optional bite into walls) ──
-        ctx.fillStyle = theme.floorColor;
+        // 2) Carve cloud cavities on path
+        offCtx.fillStyle = theme.floorColor;
         for (let r = 0; r < rows; r++) {
           for (let c = 0; c < cols; c++) {
             if (!isPath(c, r)) continue;
@@ -3806,7 +3885,6 @@ export const CombatCanvas: React.FC<Props> = ({
               puffs: 3 + (u01(c, r, 10) > 0.55 ? 1 : 0),
             });
 
-            // Squeeze needs room → punch cloud bites into adjacent wall cells
             const dirs = [
               [1, 0],
               [-1, 0],
@@ -3823,12 +3901,10 @@ export const CombatCanvas: React.FC<Props> = ({
               const nr = r + dr;
               if (isPath(nc, nr)) continue;
               if (nc < 0 || nr < 0 || nc >= cols || nr >= rows) continue;
-              // Not every wall — only when RNG says the cavity is cramped / needs a bite
               const biteChance = deg <= 2 ? 0.55 : 0.28;
               if (u01(c, r, 50 + di) > biteChance) continue;
               const wall = cellCenter(nc, nr);
               const biteR = cs * (0.35 + 0.35 * u01(c, r, 60 + di));
-              // Pull bite center toward the path so it "breaks" the wall from the corridor
               const bx = x * 0.35 + wall.x * 0.65;
               const by = y * 0.35 + wall.y * 0.65;
               fillCloud(bx, by, biteR, nc, nr, 70 + di, {
@@ -3839,7 +3915,7 @@ export const CombatCanvas: React.FC<Props> = ({
               });
             }
 
-            // ── 3) Edge connectors: squeezed clouds between path neighbors ──
+            // 3) Edge connectors
             if (isPath(c + 1, r)) {
               const b = cellCenter(c + 1, r);
               const mx = (x + b.x) / 2 + (u01(c, r, 12) - 0.5) * cs * 0.22;
@@ -3867,8 +3943,8 @@ export const CombatCanvas: React.FC<Props> = ({
           }
         }
 
-        // ── 4) 吃外轮廓：用氛围色挖凹，打破长方形齐边（出入口保护）──
-        ctx.fillStyle = theme.ambienceColor || '#080814';
+        // 4) Ambience carve outer
+        offCtx.fillStyle = theme.ambienceColor || '#080814';
         for (let r = 0; r < rows; r++) {
           for (let c = 0; c < cols; c++) {
             if (!onOuterBand(c, r) || nearPortal(c, r)) continue;
@@ -3893,6 +3969,14 @@ export const CombatCanvas: React.FC<Props> = ({
             );
           }
         }
+
+        mazeWallCanvasCacheRef.current = {
+          seed: layout.seed,
+          width,
+          height,
+          canvas: offCanvas,
+        };
+        ctx.drawImage(offCanvas, 0, 0);
       };
 
       const drawBlueExitPortal = (ex: number, ey: number) => {
@@ -4106,7 +4190,7 @@ export const CombatCanvas: React.FC<Props> = ({
           drawBlueExitPortal(ex.x, ex.y);
         }
 
-        // Draw Trash Mobs (maze: 50% size, no names) — ISO upright billboard
+        // Draw Trash Mobs (scale matches Boss room combatSpriteScale) — ISO upright billboard
         trashMobsRef.current.forEach(mob => {
           withUprightAt(ctx, viewCam, { x: mob.x, y: mob.y }, (sp) => {
             const ox = mob.x;
@@ -4114,7 +4198,7 @@ export const CombatCanvas: React.FC<Props> = ({
             mob.x = sp.x;
             mob.y = sp.y;
             drawTrashMob(ctx, mob, tickCount, is20Man, {
-              scale: 0.5,
+              scale: combatSpriteScale,
               showName: false,
               isSelected: mob.id === selectedUnitId,
             });
@@ -4270,12 +4354,12 @@ export const CombatCanvas: React.FC<Props> = ({
             u.position.y = curPos.y;
           }
 
-          // Maze: 50% size; ISO billboard upright at projected feet
+          // Maze: Scale matches Boss room (combatSpriteScale); ISO billboard upright at projected feet
           const showNm = shouldShowCombatName(u, selectedUnitId, focusTargetId, prefs, localPlayerId);
           const showHp = shouldShowUnitHpBar(u, selectedUnitId, focusTargetId, prefs, localPlayerId);
           withUprightAt(ctx, viewCam, curPos, (sp) => {
             drawClassCharacter(ctx, u, sp, !!isPlayer, u.id === selectedUnitId, tickCount, rank, {
-              scale: 0.5,
+              scale: combatSpriteScale,
               showName: showNm && !showHp,
             });
           });
@@ -4318,7 +4402,7 @@ export const CombatCanvas: React.FC<Props> = ({
             : (companionPositionsRef.current[u.id] || { x: 160 + idx * 25, y: 150 + idx * 30 });
           withUprightAt(ctx, viewCam, pos, (sp) => {
             drawUnitHpBar(ctx, u, sp, {
-              scale: 0.5,
+              scale: combatSpriteScale,
               name: shouldShowCombatName(u, selectedUnitId, focusTargetId, prefs, localPlayerId)
                 ? u.name
                 : null,
@@ -4748,7 +4832,21 @@ export const CombatCanvas: React.FC<Props> = ({
           burst.form = Math.min(1, burst.form + 0.016 / 1.2);
         }
       }
-      pruneHitFx(hitFxRef.current, nowFx);
+      pruneHitFx(hitFxRef.current, nowFx, {
+        resolvePos: (unitId) => {
+          const u = unitsById.get(unitId);
+          if (!u) return null;
+          if (u.isPlayer) return { ...playerPosRef.current };
+          const c = companionPositionsRef.current[unitId];
+          if (c) return { ...c };
+          if (bossUnit && unitId === bossUnit.id) return { ...bossPosRef.current };
+          return u.position ? { x: u.position.x, y: u.position.y } : null;
+        },
+        isActorAlive: (unitId) => {
+          const u = unitsById.get(unitId);
+          return !!u && (u.isAlive ?? u.alive) && u.hp > 0;
+        },
+      });
 
       for (const effect of groundEffects) {
         ctx.save();
@@ -4922,6 +5020,24 @@ export const CombatCanvas: React.FC<Props> = ({
             ? { x: looseAddForTank.position.x, y: looseAddForTank.position.y }
             : bossPos;
 
+        const allyPositions = units
+          .filter((a) => (a.isAlive ?? a.alive) && a.hp > 0 && !isTotemUnit(a))
+          .map((a) => {
+            const ap = a.isPlayer
+              ? playerPosRef.current
+              : companionPositionsRef.current[a.id] || a.position;
+            return ap ? { id: a.id, x: ap.x, y: ap.y, unit: a } : null;
+          })
+          .filter((x): x is { id: string; x: number; y: number; unit: Unit } => x !== null);
+        const dungeonPriorityZone = computeDungeonPriorityZone({
+          unit: u,
+          boss: bossUnit,
+          bossPos,
+          allies: allyPositions,
+          groundEffects,
+          bossCastingSpellName: (bossUnit as { castingSpellName?: string } | undefined)?.castingSpellName,
+        });
+
         const formationResult = evaluateGroundFormationPosition({
           currentPos: pos,
           unit: u,
@@ -4935,6 +5051,7 @@ export const CombatCanvas: React.FC<Props> = ({
           aggroIsNonTank,
           nearestHealerPos,
           isPrimaryTank: !!primaryTank && primaryTank.id === u.id,
+          dungeonPriorityZone,
         });
 
         targetX = formationResult.targetPos.x;

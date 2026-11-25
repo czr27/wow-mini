@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import type { LeaderboardEntry, LeaderboardMetric, ClassId } from '@cata-raid-sim/engine';
+import React, { useState, useMemo } from 'react';
+import { listDungeonConfigs, type LeaderboardEntry, type LeaderboardMetric, type ClassId } from '@cata-raid-sim/engine';
 import { CLASS_COLORS, CLASS_NAMES } from './AuthAndCharacterModal.js';
 import { DismissibleModal } from './DismissibleModal.js';
 
@@ -10,23 +10,39 @@ interface Props {
 }
 
 export const LeaderboardModal: React.FC<Props> = ({ isOpen, onClose, entries }) => {
+  const dungeons = useMemo(() => listDungeonConfigs(), []);
   const [activeMetric, setActiveMetric] = useState<LeaderboardMetric>('FAST_KILL');
-  const [selectedBossId, setSelectedBossId] = useState<string>('ashbury');
+  const [selectedDungeonId, setSelectedDungeonId] = useState<string>(() => dungeons[0]?.id || 'shadowfang_keep');
+  const [selectedBossId, setSelectedBossId] = useState<string>(() => dungeons[0]?.bosses[0]?.id || 'ashbury');
   const [filterClass, setFilterClass] = useState<ClassId | 'ALL'>('ALL');
 
   if (!isOpen) return null;
 
-  const bosses = [
-    { id: 'ashbury', name: '1号 亚什布里' },
-    { id: 'silverlaine', name: '2号 席瓦莱恩' },
-    { id: 'springvale', name: '3号 斯普林瓦尔' },
-    { id: 'walden', name: '4号 沃登勋爵' },
-    { id: 'godfrey', name: '5号 高弗雷勋爵（尾王）' },
-  ];
+  const activeDungeon =
+    dungeons.find(d => d.id === selectedDungeonId) || dungeons[0];
+  const bosses = activeDungeon?.bosses || [];
+
+  const handleSelectDungeon = (dungeonId: string) => {
+    setSelectedDungeonId(dungeonId);
+    if (dungeonId !== 'ALL') {
+      const target = dungeons.find(d => d.id === dungeonId);
+      if (target && target.bosses.length > 0) {
+        setSelectedBossId(target.bosses[0].id);
+      }
+    }
+  };
 
   let filtered = entries.filter(e => e.metric === activeMetric);
+  if (selectedDungeonId !== 'ALL') {
+    filtered = filtered.filter(e => e.dungeonId === selectedDungeonId);
+  }
   if (activeMetric === 'FAST_KILL') {
-    filtered = filtered.filter(e => e.bossId === selectedBossId);
+    const validBossId = bosses.some(b => b.id === selectedBossId)
+      ? selectedBossId
+      : bosses[0]?.id;
+    if (validBossId) {
+      filtered = filtered.filter(e => e.bossId === validBossId);
+    }
     filtered.sort((a, b) => a.value - b.value); // Lower time is faster
   } else {
     filtered.sort((a, b) => b.value - a.value); // Higher DPS/HPS is better
@@ -35,6 +51,8 @@ export const LeaderboardModal: React.FC<Props> = ({ isOpen, onClose, entries }) 
   if (filterClass !== 'ALL') {
     filtered = filtered.filter(e => e.characterClass === filterClass);
   }
+
+  const cleanDungeonName = (name: string) => name.replace(/（.*?）|\(.*?\)/g, '').trim();
 
   return (
     <DismissibleModal
@@ -56,7 +74,7 @@ export const LeaderboardModal: React.FC<Props> = ({ isOpen, onClose, entries }) 
                   全球实时天梯
                 </span>
               </h2>
-              <p className="text-xs text-amber-200/70">记录全服首领极限击杀、登顶极限秒伤与纯净非过量治疗</p>
+              <p className="text-xs text-amber-200/70">记录各副本首领速杀、伤害与治疗排名</p>
             </div>
           </div>
           <button
@@ -67,11 +85,53 @@ export const LeaderboardModal: React.FC<Props> = ({ isOpen, onClose, entries }) 
           </button>
         </div>
 
+        {/* Dungeon Selector Bar (scales for many dungeons) */}
+        <div className="bg-[#111122] border-b border-[#252540] px-6 py-2.5 flex items-center gap-2 overflow-x-auto">
+          <span className="text-[11px] text-gray-400 font-bold flex-shrink-0">副本:</span>
+          {activeMetric !== 'FAST_KILL' && (
+            <button
+              onClick={() => handleSelectDungeon('ALL')}
+              className={`px-2.5 py-1 rounded-md text-xs font-bold flex-shrink-0 transition ${
+                selectedDungeonId === 'ALL'
+                  ? 'bg-amber-500 text-black shadow'
+                  : 'bg-[#1b1b34] text-gray-400 hover:text-gray-200 hover:bg-[#232344]'
+              }`}
+            >
+              全部副本
+            </button>
+          )}
+          {dungeons.map(d => {
+            const isSelected =
+              selectedDungeonId === d.id ||
+              (activeMetric === 'FAST_KILL' && selectedDungeonId === 'ALL' && d.id === activeDungeon?.id);
+            return (
+              <button
+                key={d.id}
+                onClick={() => handleSelectDungeon(d.id)}
+                className={`px-2.5 py-1 rounded-md text-xs font-bold flex-shrink-0 transition flex items-center space-x-1 ${
+                  isSelected
+                    ? 'bg-amber-500/25 text-amber-300 border border-amber-500/60 shadow-sm'
+                    : 'bg-[#1b1b34] text-gray-400 hover:text-gray-200 hover:bg-[#232344] border border-transparent'
+                }`}
+              >
+                <span>{cleanDungeonName(d.name)}</span>
+                <span className="text-[10px] opacity-70 font-mono">({d.bosses.length})</span>
+              </button>
+            );
+          })}
+        </div>
+
         {/* Metric Selector Tabs */}
         <div className="flex flex-wrap items-center justify-between border-b border-[#252540] px-6 bg-[#16162c] gap-2 py-2">
           <div className="flex space-x-2">
             <button
-              onClick={() => setActiveMetric('FAST_KILL')}
+              onClick={() => {
+                setActiveMetric('FAST_KILL');
+                if (selectedDungeonId === 'ALL' && activeDungeon) {
+                  setSelectedDungeonId(activeDungeon.id);
+                  if (activeDungeon.bosses[0]) setSelectedBossId(activeDungeon.bosses[0].id);
+                }
+              }}
               className={`py-2 px-3 text-xs font-bold rounded-lg transition flex items-center space-x-1.5 ${
                 activeMetric === 'FAST_KILL'
                   ? 'bg-amber-500 text-black shadow'
@@ -79,7 +139,7 @@ export const LeaderboardModal: React.FC<Props> = ({ isOpen, onClose, entries }) 
               }`}
             >
               <span>⏱️</span>
-              <span>首领极限速杀榜</span>
+              <span>首领速杀榜</span>
             </button>
 
             <button
@@ -91,7 +151,7 @@ export const LeaderboardModal: React.FC<Props> = ({ isOpen, onClose, entries }) 
               }`}
             >
               <span>💥</span>
-              <span>最高秒伤极限榜 (DPS)</span>
+              <span>伤害榜</span>
             </button>
 
             <button
@@ -103,7 +163,7 @@ export const LeaderboardModal: React.FC<Props> = ({ isOpen, onClose, entries }) 
               }`}
             >
               <span>💚</span>
-              <span>非过量有效治疗榜 (Effective HPS)</span>
+              <span>治疗榜</span>
             </button>
           </div>
 
@@ -132,20 +192,23 @@ export const LeaderboardModal: React.FC<Props> = ({ isOpen, onClose, entries }) 
 
         {/* Sub-tabs for Boss Fast Kill */}
         {activeMetric === 'FAST_KILL' && (
-          <div className="bg-[#121224] border-b border-[#252540] px-6 py-2.5 flex flex-wrap gap-2">
-            {bosses.map(b => (
-              <button
-                key={b.id}
-                onClick={() => setSelectedBossId(b.id)}
-                className={`px-3 py-1 rounded text-xs font-bold transition ${
-                  selectedBossId === b.id
-                    ? 'bg-amber-500/20 text-amber-300 border border-amber-500/60'
-                    : 'bg-[#1b1b34] text-gray-400 hover:bg-[#252548]'
-                }`}
-              >
-                {b.name}
-              </button>
-            ))}
+          <div className="bg-[#121224] border-b border-[#252540] px-6 py-2 flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
+            {bosses.map((b, idx) => {
+              const isSelected = (bosses.some(x => x.id === selectedBossId) ? selectedBossId : bosses[0]?.id) === b.id;
+              return (
+                <button
+                  key={b.id}
+                  onClick={() => setSelectedBossId(b.id)}
+                  className={`px-2.5 py-1 rounded text-xs font-bold transition ${
+                    isSelected
+                      ? 'bg-amber-500/20 text-amber-300 border border-amber-500/60'
+                      : 'bg-[#1b1b34] text-gray-400 hover:bg-[#252548]'
+                  }`}
+                >
+                  {idx + 1}号 {b.name}
+                </button>
+              );
+            })}
           </div>
         )}
 
@@ -163,8 +226,8 @@ export const LeaderboardModal: React.FC<Props> = ({ isOpen, onClose, entries }) 
                     {activeMetric === 'FAST_KILL'
                       ? '击杀耗时'
                       : activeMetric === 'MAX_DPS'
-                      ? '输出秒伤 (DPS)'
-                      : '有效秒疗 (非Overheal)'}
+                      ? '伤害 (DPS)'
+                      : '治疗 (HPS)'}
                   </th>
                   <th className="py-2.5 px-4 text-right">上榜日期</th>
                 </tr>

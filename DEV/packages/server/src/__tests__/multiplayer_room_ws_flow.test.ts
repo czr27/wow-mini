@@ -617,13 +617,16 @@ describe('Multiplayer room WS flow (2–3 humans + AI)', () => {
     );
     assert.ok(host.lastOfType('MEMBER_REPLACE_AI'), '房主应收到 MEMBER_REPLACE_AI');
 
-    // Host leave destroys room; mid-run guests get forceSummary
+    // Host leave transfers host to remaining player g1; once g1 also leaves, room is destroyed
     g1.drain();
     host.inject({ type: 'ROOM_LEAVE', roomId, timeMs: Date.now() });
+    const afterHostLeave = hub.roomManager.getRoom(roomId);
+    assert.ok(afterHostLeave, '仍有真人时房间应保留');
+    assert.equal(afterHostLeave!.hostId, 'g1', '房主应移交给 g1');
+    assert.ok(g1.lastOfType('HOST_TRANSFER'));
+    g1.inject({ type: 'ROOM_LEAVE', roomId, timeMs: Date.now() });
     assert.equal(hub.roomManager.getRoom(roomId), undefined);
-    const closed = g1.lastOfType('ROOM_CLOSED') || host.lastOfType('ROOM_CLOSED');
-    assert.ok(closed);
-    assert.equal((closed!.payload as any).forceSummary, true);
+    hub.dispose();
   });
 
   it('奶妈开房加满AI踢坦克：DPS客人顶替DPS；第二奶妈拒绝', () => {

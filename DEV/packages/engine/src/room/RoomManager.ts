@@ -786,12 +786,7 @@ export class RoomManager {
     const room = this.getRoom(roomId);
     if (!room) return { removed: false, roomDeleted: false };
 
-    // Host leave → destroy entire room
-    if (room.hostId === memberId) {
-      this.leaveWaitingQueue(roomId, memberId);
-      this.rooms.delete(roomId);
-      return { removed: true, roomDeleted: true, destroyedByHost: true };
-    }
+    const wasHost = room.hostId === memberId;
 
     // Remove from waiting queue if present
     this.leaveWaitingQueue(roomId, memberId);
@@ -810,10 +805,19 @@ export class RoomManager {
     const remainingHumans = room.members.filter(m => m.isPlayer && !m.isAi);
     if (remainingHumans.length === 0) {
       this.rooms.delete(roomId);
-      return { removed: idx !== -1, roomDeleted: true };
+      return { removed: idx !== -1, roomDeleted: true, destroyedByHost: wasHost };
     }
 
-    return { removed: idx !== -1, roomDeleted: false };
+    let newHostId: string | undefined;
+    if (wasHost) {
+      const nextHost = remainingHumans[0];
+      nextHost.isHost = true;
+      nextHost.isReady = true;
+      room.hostId = nextHost.id;
+      newHostId = nextHost.id;
+    }
+
+    return { removed: idx !== -1, roomDeleted: false, newHostId };
   }
 
   /**

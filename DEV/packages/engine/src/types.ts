@@ -641,8 +641,12 @@ export interface CombatDisplayPrefs {
   isoDepthFogStrength: number;
   /** Flying proj/AoE cast a ground shadow at landing height. */
   isoFxHeightShadow: boolean;
-  /** DBM 首领预警与高威胁短建议播报（默认开启） */
+  /** DBM 文字预警横幅（分散/分摊/打断/小怪等机制提示，默认开启） */
   enableDbm: boolean;
+  /** DBM 短语音播报（4字左右战术短语音，默认开启） */
+  enableDbmVoice: boolean;
+  /** 战斗统计 (Details!) 是否按 Boss 房间自动清空计算 */
+  detailsResetPerBossRoom?: boolean;
 }
 
 
@@ -735,6 +739,8 @@ export const DEFAULT_COMBAT_DISPLAY_PREFS: CombatDisplayPrefs = {
   isoDepthFogStrength: 0.4,
   isoFxHeightShadow: true,
   enableDbm: true,
+  enableDbmVoice: true,
+  detailsResetPerBossRoom: false,
 };
 
 export function resolveCombatDisplayPrefs(
@@ -757,6 +763,7 @@ export function resolveCombatDisplayPrefs(
   merged.isoDepthFogStrength = clampIsoDepthFogStrength(merged.isoDepthFogStrength as number);
   merged.isoFxHeightShadow = merged.isoFxHeightShadow !== false;
   merged.enableDbm = merged.enableDbm !== false;
+  merged.enableDbmVoice = merged.enableDbmVoice !== false;
   return merged;
 }
 

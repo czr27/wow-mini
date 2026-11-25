@@ -249,7 +249,7 @@ export const UltraxionEncounter: BossEncounterModule = {
         name: '暮光爆发',
         castTimeMs: 5000,
         cooldownMs: 999_999_999,
-        lastCastMs: -999_999_999,
+        lastCastMs: 0,
         interruptible: false,
         school: 'SHADOW',
         range: 600,
@@ -384,7 +384,7 @@ export const UltraxionEncounter: BossEncounterModule = {
     if (!ai.ultraxEnraged && (ai.ultraxFightMs || 0) >= TWILIGHT_ERUPTION_MS) {
       const erupt = ai.skills?.find(s => s.id === 'twilight_eruption');
       if (erupt && !ai.currentCasting) {
-        erupt.lastCastMs = -999_999_999;
+        erupt.lastCastMs = engine.nowMs;
         // 下一帧 BaseBossAI 会选中；若其它技能占着，直接开读条
         ai.currentCasting = { skill: erupt, elapsedMs: 0 };
         engine.effectsManager?.addFloatingText({

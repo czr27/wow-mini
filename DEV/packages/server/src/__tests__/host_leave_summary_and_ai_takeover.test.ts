@@ -135,19 +135,26 @@ function startCombatRoom(hub: RoomWsHub): {
 }
 
 describe('联机退局：房主结算 / 非房主 AI 接续', () => {
-  it('1. 房主战斗中 ROOM_LEAVE → 房间销毁，客人收到 forceSummary=true', () => {
+  it('1. 房主战斗中 ROOM_LEAVE → 房主移交给最早入房玩家 + AI接替；全员离开后销毁', () => {
     const hub = new RoomWsHub();
     const { host, guest, guest2, roomId } = startCombatRoom(hub);
 
     host.inject({ type: 'ROOM_LEAVE', roomId, timeMs: Date.now() });
 
-    assert.equal(hub.roomManager.getRoom(roomId), undefined, '房主离开后房间应销毁');
-    const closed =
-      guest.lastOfType('ROOM_CLOSED') || guest2.lastOfType('ROOM_CLOSED');
-    assert.ok(closed, '客人应收到 ROOM_CLOSED');
-    const payload = closed!.payload as { reason?: string; forceSummary?: boolean };
-    assert.equal(payload.reason, 'host_left');
-    assert.equal(payload.forceSummary, true, '战斗中房主离开应强制客人进结算');
+    const roomAfterHostLeave = hub.roomManager.getRoom(roomId);
+    assert.ok(roomAfterHostLeave, '仍有其他玩家时房主离开不应销毁房间');
+    assert.equal(roomAfterHostLeave!.hostId, 'g_leave', '房主应移交给最早入房的剩余玩家');
+    assert.ok(guest.lastOfType('HOST_TRANSFER'), '应广播 HOST_TRANSFER');
+    assert.ok(guest.lastOfType('MEMBER_REPLACE_AI'), '房主离开后原席位应由 AI 接管');
+
+    guest.inject({ type: 'ROOM_LEAVE', roomId, timeMs: Date.now() });
+    const roomAfterFirstGuest = hub.roomManager.getRoom(roomId);
+    assert.ok(roomAfterFirstGuest);
+    assert.equal(roomAfterFirstGuest!.hostId, 'g2_leave', '再离开后房主继续顺延');
+
+    guest2.inject({ type: 'ROOM_LEAVE', roomId, timeMs: Date.now() });
+    assert.equal(hub.roomManager.getRoom(roomId), undefined, '所有真人离开后房间应自动销毁');
+    hub.dispose();
   });
 
   it('2. 房主返回大厅（ROOM_CLOSED host_left）→ forceSummary，客人进结算', () => {

@@ -275,6 +275,91 @@ export function canHitBoss(
   return Math.hypot(pos.x - bossPos.x, pos.y - bossPos.y) <= range;
 }
 
+export interface DungeonPriorityZone {
+  mode: 'STACK' | 'SPREAD';
+  /** STACK: center to stack at; SPREAD: anchor center */
+  center: { x: number; y: number };
+  /** STACK: max distance from center; SPREAD: min separation distance from allies */
+  radiusPx: number;
+  /** For SPREAD: living ally positions */
+  allyPositions?: Array<{ id: string; x: number; y: number }>;
+  label?: string;
+}
+
+export interface ComputeDungeonPriorityZoneInput {
+  unit: Unit;
+  boss?: Unit | null;
+  bossPos?: { x: number; y: number };
+  allies?: Array<{ id: string; x: number; y: number; unit?: Unit }>;
+  groundEffects?: GroundEffect[];
+  bossCastingSpellName?: string | null;
+  activeAdvices?: string[];
+}
+
+/**
+ * Computes the current dungeon priority positioning zone (STACK / SPREAD) from
+ * boss casts, active DBM advices, unit debuffs, and ground effects.
+ */
+export function computeDungeonPriorityZone(
+  input: ComputeDungeonPriorityZoneInput
+): DungeonPriorityZone | null {
+  const {
+    unit,
+    bossPos,
+    allies = [],
+    groundEffects = [],
+    bossCastingSpellName,
+    activeAdvices = [],
+  } = input;
+
+  const anchor = bossPos ?? { x: 500, y: 200 };
+  const signals = [bossCastingSpellName || '', ...activeAdvices].filter(Boolean).join(' ');
+
+  const hasChestBomb =
+    unit.buffs?.some((b) => b.spellId === 'chest_bomb') ||
+    allies.some((a) => a.unit?.buffs?.some((b) => b.spellId === 'chest_bomb'));
+  if (hasChestBomb || /分散|散开|胸弹/.test(signals)) {
+    return {
+      mode: 'SPREAD',
+      center: anchor,
+      radiusPx: 75,
+      allyPositions: allies.map((a) => ({ id: a.id, x: a.x, y: a.y })),
+      label: '副本机制：优先分散站位',
+    };
+  }
+
+  if (/践踏|分摊|集中|集合|柱子后|暮光时刻/.test(signals)) {
+    // Ultraxion: units phased out with Heroic Will do not stack
+    if (unit.buffs?.some((b) => b.spellId === 'heroic_will')) {
+      return null;
+    }
+    return {
+      mode: 'STACK',
+      center: anchor,
+      radiusPx: 85,
+      label: '副本机制：优先集中分摊',
+    };
+  }
+
+  const soakZone = groundEffects.find(
+    (e) =>
+      e.remainingMs > 0 &&
+      e.kind !== 'DAMAGE_ZONE' &&
+      e.kind !== 'CONE_WARNING' &&
+      /soak|stack|pillar|crystal/i.test(e.spellId || '')
+  );
+  if (soakZone) {
+    return {
+      mode: 'STACK',
+      center: { x: soakZone.x, y: soakZone.y },
+      radiusPx: Math.max(40, (soakZone.radius || 75) * 0.85),
+      label: '副本机制：优先进入集中区',
+    };
+  }
+
+  return null;
+}
+
 export interface GroundFormationTradeOffInput {
   currentPos: { x: number; y: number };
   unit: Unit;
@@ -303,6 +388,8 @@ export interface GroundFormationTradeOffInput {
   nearestHealerPos?: { x: number; y: number };
   /** 当前单位是否主坦（Rank0）；缺省按 role===TANK 且无 tankPos 视为主坦 */
   isPrimaryTank?: boolean;
+  /** 副本机制优先走位区域（集中/分散）：优先级低于躲避红圈，高于自身施法/战斗距离 */
+  dungeonPriorityZone?: DungeonPriorityZone | null;
 }
 
 export type GroundFormationDecision =
@@ -314,7 +401,9 @@ export type GroundFormationDecision =
   | 'DEFAULT_POSITION'
   | 'RETURN_TO_BOSS'
   | 'AGGRO_TANK_PULL'
-  | 'AGGRO_OT_TO_MT';
+  | 'AGGRO_OT_TO_MT'
+  | 'DUNGEON_STACK'
+  | 'DUNGEON_SPREAD';
 
 export interface GroundFormationTradeOffResult {
   targetPos: { x: number; y: number };
@@ -338,6 +427,8 @@ const TANK_STACK_OVERRIDE_DECISIONS = new Set<GroundFormationDecision>([
   'STAY_DESPITE_HAZARD',
   'AGGRO_TANK_PULL',
   'AGGRO_OT_TO_MT',
+  'DUNGEON_STACK',
+  'DUNGEON_SPREAD',
 ]);
 
 /**
@@ -816,6 +907,7 @@ function evaluateGroundFormationPositionCore(
     nearestHealerPos,
     isPrimaryTank,
     aggroIsNonTank = false,
+    dungeonPriorityZone,
   } = input;
 
   const greenZones = groundEffects.filter((e) => isSeekableHealGroundEffect(e));
@@ -889,6 +981,23 @@ function evaluateGroundFormationPositionCore(
     sampleRing(candidates, { x: hz.x, y: hz.y }, (hz.radius || 48) + HAZARD_CLEAR_MARGIN_PX);
   }
 
+  if (dungeonPriorityZone) {
+    if (dungeonPriorityZone.mode === 'STACK') {
+      pushCand(candidates, dungeonPriorityZone.center);
+      sampleRing(candidates, dungeonPriorityZone.center, dungeonPriorityZone.radiusPx * 0.45, 12);
+      sampleRing(candidates, dungeonPriorityZone.center, dungeonPriorityZone.radiusPx * 0.85, 12);
+    } else {
+      sampleRing(candidates, currentPos, dungeonPriorityZone.radiusPx * 0.85, 12);
+      sampleRing(candidates, currentPos, dungeonPriorityZone.radiusPx * 1.15, 12);
+      if (defaultTarget) {
+        sampleRing(candidates, defaultTarget, dungeonPriorityZone.radiusPx * 0.85, 12);
+      }
+      if (hitPos) {
+        sampleRing(candidates, hitPos, dungeonPriorityZone.radiusPx * 1.1, 12);
+      }
+    }
+  }
+
   const isSafe = (p: WalkCand) => !activeHazards.some((h) => isPosInHazard(p, h));
 
   // 层1：不在红圈（硬约束；若全集被滤空则强制加入径向逃离点）
@@ -958,6 +1067,56 @@ function evaluateGroundFormationPositionCore(
     }
   }
 
+  // 层2.5：副本机制优先走位区域（集中/分散）：低于必须躲避（层1），高于自身施法/战斗距离（层4）
+  if (dungeonPriorityZone && dominantLayer < 2) {
+    if (dungeonPriorityZone.mode === 'STACK') {
+      const inStack = region.filter(
+        (p) =>
+          Math.hypot(p.x - dungeonPriorityZone.center.x, p.y - dungeonPriorityZone.center.y) <=
+          dungeonPriorityZone.radiusPx
+      );
+      if (inStack.length > 0) {
+        region = inStack;
+      } else {
+        region = [
+          pickBestCand(
+            region,
+            currentPos,
+            (p) => -Math.hypot(p.x - dungeonPriorityZone.center.x, p.y - dungeonPriorityZone.center.y)
+          ),
+        ];
+      }
+      if (!inHazard) {
+        decision = 'DUNGEON_STACK';
+        reason = dungeonPriorityZone.label || '副本机制：优先集中站位';
+        dominantLayer = 2.5;
+      }
+    } else if (dungeonPriorityZone.mode === 'SPREAD') {
+      const peers = (dungeonPriorityZone.allyPositions || []).filter((a) => a.id !== unit.id);
+      if (peers.length > 0) {
+        const minPeerDist = (p: WalkCand) => {
+          let m = Infinity;
+          for (const a of peers) {
+            const d = Math.hypot(p.x - a.x, p.y - a.y);
+            if (d < m) m = d;
+          }
+          return m;
+        };
+        const spreadOk = region.filter((p) => minPeerDist(p) >= dungeonPriorityZone.radiusPx);
+        if (spreadOk.length > 0) {
+          region = spreadOk;
+        } else {
+          region = [pickBestCand(region, currentPos, (p) => minPeerDist(p))];
+        }
+      }
+      if (!inHazard) {
+        decision = 'DUNGEON_SPREAD';
+        reason = dungeonPriorityZone.label || '副本机制：优先分散站位';
+        dominantLayer = 2.5;
+      }
+    }
+  }
+
   // 层3：危血 → 最大绿圈叠层（可牺牲输出）
   if (!isHealthy && greenZones.length > 0) {
     let maxGreen = 0;
@@ -983,8 +1142,9 @@ function evaluateGroundFormationPositionCore(
     }
   }
 
-  // 层4：健康 → 近战/远程输出约束 + 绿黄叠层（身在红圈时不覆盖躲圈决策）
-  if (isHealthy && !inHazard && dominantLayer < 2) {
+  // 层4：健康 → 近战/远程输出约束 + 绿黄叠层（身在红圈时不覆盖躲圈决策；副本走位优先于战斗距离）
+  if (isHealthy && !inHazard && dominantLayer !== 2) {
+    const canOverrideDecision = dominantLayer < 2.5;
     if (isMelee && hitPos) {
       const inMelee = region.filter((p) => canHitBoss(p, hitPos, meleeRange));
       if (inMelee.length > 0) {
@@ -1004,12 +1164,14 @@ function evaluateGroundFormationPositionCore(
             );
             if (stacked.length > 0) {
               region = stacked;
-              decision = maxS > 0 ? 'SEEK_HEAL_ZONE' : decision;
-              reason = `血线健康：近战射程内绿黄叠层×${maxS}（避开正面）`;
+              if (canOverrideDecision) {
+                decision = 'SEEK_HEAL_ZONE';
+                reason = `血线健康：近战射程内绿黄叠层×${maxS}（避开正面）`;
+              }
             }
           }
         }
-        if (decision === 'DEFAULT_POSITION' || decision === 'DODGE_HAZARD_LEAVE_ZONE') {
+        if (canOverrideDecision && (decision === 'DEFAULT_POSITION' || decision === 'DODGE_HAZARD_LEAVE_ZONE')) {
           if (!canHitBoss(currentPos, hitPos, meleeRange)) {
             decision = 'RETURN_TO_BOSS';
             reason = '血线健康：返回近战攻击位';
@@ -1038,12 +1200,14 @@ function evaluateGroundFormationPositionCore(
           );
           if (stacked.length > 0) {
             region = stacked;
-            decision = 'SEEK_HEAL_ZONE';
-            reason = `血线健康：远程射程内绿黄叠层×${maxS}（近奶≤${HEALER_LEASH_YD}码）`;
+            if (canOverrideDecision) {
+              decision = 'SEEK_HEAL_ZONE';
+              reason = `血线健康：远程射程内绿黄叠层×${maxS}（近奶≤${HEALER_LEASH_YD}码）`;
+            }
           }
         }
       }
-      if (decision === 'DEFAULT_POSITION') {
+      if (canOverrideDecision && decision === 'DEFAULT_POSITION') {
         reason = '血线健康：远程输出位可行域';
       }
       dominantLayer = Math.max(dominantLayer, 4);
@@ -1056,8 +1220,10 @@ function evaluateGroundFormationPositionCore(
         );
         if (stacked.length > 0) {
           region = stacked;
-          decision = 'SEEK_HEAL_ZONE';
-          reason = `治疗：绿黄叠层×${maxS}`;
+          if (canOverrideDecision) {
+            decision = 'SEEK_HEAL_ZONE';
+            reason = `治疗：绿黄叠层×${maxS}`;
+          }
           dominantLayer = Math.max(dominantLayer, 4);
         }
       }

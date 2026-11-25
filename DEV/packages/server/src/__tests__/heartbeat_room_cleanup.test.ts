@@ -85,10 +85,13 @@ describe('心跳超时清理掉线房主房间', () => {
     guest.inbox.length = 0;
     hub.forceHeartbeatSweepForTests();
 
-    assert.equal(hub.roomManager.getRoom(roomId), undefined, '心跳超时后房间应被剔除');
+    assert.equal(hub.roomManager.getRoom(roomId), undefined, '心跳超时且无剩余真人后房间应被剔除');
     const closed = guest.lastOfType('ROOM_CLOSED');
     assert.ok(closed, '客人应收到 ROOM_CLOSED');
-    assert.equal((closed!.payload as any).reason, 'host_timeout');
+    assert.ok(
+      ['heartbeat_timeout', 'host_timeout'].includes((closed!.payload as any).reason),
+      'reason should indicate timeout'
+    );
 
     hub.dispose();
   });

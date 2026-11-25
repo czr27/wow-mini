@@ -6,8 +6,10 @@ import type { DbmRoleHint, DbmSeverity } from '../../engine/DbmManager.js';
 export type TargetKind = 'MELEE_TARGET' | 'RANGED_TARGET' | 'AOE' | 'SELF';
 
 export interface BossSkillDbmMeta {
-  /** 简短战术建议（如 "注意分散"、"近距分摊，注意治疗"、"先杀小怪"） */
+  /** 简短战术建议（如 "注意分散"、"近距分摊"、"躲柱子后"、"先杀小怪"） */
   advice: string;
+  /** 4 字短语音播报词（默认取 advice 精简词） */
+  voiceText?: string;
   severity?: DbmSeverity;
   roleHint?: DbmRoleHint;
   /** 技能冷却即将结束前多少毫秒发出高威胁预告（0 表示不提前预告） */

@@ -298,21 +298,6 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
       } catch {}
     };
 
-    const hostWatchTimer = setInterval(() => {
-      if (
-        shouldGuestLeaveOnHostSilence({
-          isNetworkGuest: d().isNetworkGuestRef.current,
-          activeRoomId: d().activeRoomIdRef.current,
-          runPhase: d().rsmRef.current?.phase,
-          lastHostSignalMs,
-          nowMs: Date.now(),
-          timeoutMs: HOST_GONE_TIMEOUT_MS,
-        })
-      ) {
-        leaveActiveRoomAsGuest('host_timeout', true);
-      }
-    }, 1000);
-
     const unsub = netClient.subscribe((msg) => {
       if (
         isHostAliveSignal(msg.type, {
@@ -450,9 +435,8 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
                 isNetworkHost: d().isNetworkHostRef.current,
                 isNetworkGuest: d().isNetworkGuestRef.current,
                 activeRoomId: room.id,
-                isUnitLocalAuthority: d().isNetworkHostRef.current
-                  ? makeHostAuthorityPredicate(eng, meId)
-                  : makeGuestAuthorityPredicate(eng, meId),
+                // Host & guest share identical in-game sharded authority (self + owned pets/totems)
+                isUnitLocalAuthority: makeGuestAuthorityPredicate(eng, meId),
               });
               installSummonReporters(eng);
             }
@@ -555,16 +539,11 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
           isNetworkHost: d().isNetworkHostRef.current,
           isNetworkGuest: d().isNetworkGuestRef.current,
           activeRoomId: room.id,
-          isUnitLocalAuthority: d().isNetworkHostRef.current
-            ? makeHostAuthorityPredicate(engine, meId || '')
-            : makeGuestAuthorityPredicate(engine, meId || ''),
+          // Both host & guest only own self + pets; server owns Boss/AI/World
+          isUnitLocalAuthority: makeGuestAuthorityPredicate(engine, meId || ''),
         });
         installSummonReporters(engine);
-        if (d().isNetworkHostRef.current) {
-          beginAuthorityPresenceEpoch(room, meId);
-        } else {
-          endAuthorityPresenceEpoch();
-        }
+        endAuthorityPresenceEpoch();
         const cfg = getDungeonConfig(room.dungeonId, room.difficulty);
         const tier = cfg.tier;
         const effectiveCustom = room.customDifficulty || d().customDifficultyRef.current;
@@ -578,8 +557,8 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
           customDiff: effectiveCustom,
           activeRoom: room,
         });
-        // Guest: report initial authority state ASAP so host can start
-        if (d().isNetworkGuestRef.current && meId) {
+        // Both host & guest report initial authority state to server ASAP
+        if ((d().isNetworkHostRef.current || d().isNetworkGuestRef.current) && meId) {
           publishOwnerSnapshot(
             buildLocalOwnerSnapshot(engine, meId, {
               groundEffects: (engine.effectsManager?.groundEffects || [])
@@ -601,7 +580,11 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
           netClient.ackReliableInputs(body.ackedInputIds);
         }
       }
-      if (msg.type === 'COMBAT_STATE' && msg.payload && d().isNetworkGuestRef.current) {
+      if (
+        msg.type === 'COMBAT_STATE' &&
+        msg.payload &&
+        (d().isNetworkHostRef.current || d().isNetworkGuestRef.current)
+      ) {
         const snap = msg.payload as NetworkCombatSnapshot;
         // Room isolation: ignore snapshots from other rooms
         const myRoom = d().activeRoomIdRef.current;
@@ -795,11 +778,7 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
       if (msg.type === 'COMBAT_EFFECT' && msg.payload) {
         const effect = msg.payload as CombatEffect;
         const engine = d().engineRef.current;
-        if (effect.sourceId) noteAuthorityPacket(effect.sourceId, 'COMBAT_EFFECT');
-        if (d().isNetworkHostRef.current) {
-          // Host gathers + applies host-authority only; batch fan-out relays to peers
-          hostReceiveCombatEffect(engine, effect);
-        } else if (d().isNetworkGuestRef.current) {
+        if (d().isNetworkHostRef.current || d().isNetworkGuestRef.current) {
           ingestCombatEffect(engine, effect, { onHudEffect: applyCastHud });
         }
         d().setFriendlyUnits([...engine.friendlyUnits]);
@@ -822,13 +801,10 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
           d().setGroundEffects([...(engine.effectsManager?.groundEffects || [])]);
           return;
         }
-        if (snap.ownerId && !snap.purge) noteAuthorityPacket(snap.ownerId, 'OWNER_SNAPSHOT');
-        if (d().isNetworkHostRef.current) {
-          hostReceiveOwnerSnapshot(snap);
-          mergeOwnerSnapshotUnits(engine, snap);
-          d().setFriendlyUnits([...engine.friendlyUnits]);
-          d().setGroundEffects([...(engine.effectsManager?.groundEffects || [])]);
-        } else if (d().isNetworkGuestRef.current && snap.ownerId !== d().currentChar?.id) {
+        if (
+          (d().isNetworkHostRef.current || d().isNetworkGuestRef.current) &&
+          snap.ownerId !== d().currentChar?.id
+        ) {
           mergeOwnerSnapshotUnits(engine, snap);
           d().setFriendlyUnits([...engine.friendlyUnits]);
           d().setBossUnit(engine.bossUnit ? { ...engine.bossUnit } : undefined);
@@ -843,7 +819,7 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
           mergeOwnerSnapshot: (snap) => mergeOwnerSnapshotUnits(engine, snap),
           onHudEffect: applyCastHud,
         });
-        if (d().isNetworkGuestRef.current) {
+        if (d().isNetworkHostRef.current || d().isNetworkGuestRef.current) {
           if (batch.world?.runPhase) {
             const rsm = d().rsmRef.current;
             if (rsm) rsm.phase = batch.world.runPhase as RunPhase;
@@ -1101,26 +1077,16 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
         if (body.kind === 'WIPE') {
           d().setWipeNetworkVote(null);
           d().setMyWipeVote(null);
-          // Only host applies phase transition; guests follow COMBAT_STATE
-          if (d().isNetworkHostRef.current && (body.result === 'RETRY' || body.result === 'FINISH')) {
-            d().applyWipeVoteResultRef.current(body.result as 'RETRY' | 'FINISH');
-          }
+          // Server executes retryFromWipe / finishFromWipe and broadcasts COMBAT_STATE / ROOM_CLOSED
         } else if (body.kind === 'SKIP_TRAVEL') {
           d().setSkipTravelVote(null);
           d().setMySkipVote(null);
-          if (body.result === 'YES' && d().isNetworkHostRef.current) {
-            d().rsmRef.current?.fastForwardTravel();
-            d().setRunPhase(d().rsmRef.current?.phase || 'BOSS_COMBAT');
-            if ((d().rsmRef.current?.phase || 'BOSS_COMBAT') === 'BOSS_COMBAT') {
-              d().setIsApproaching(true);
-            }
-          }
+          // Server executes fastForwardTravel and broadcasts COMBAT_STATE
         }
       }
     });
 
     return () => {
-      clearInterval(hostWatchTimer);
       setHostEffectHudHook(null);
       unsub();
     };

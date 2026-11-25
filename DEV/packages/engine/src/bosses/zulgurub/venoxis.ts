@@ -12,6 +12,7 @@ export type VenoxisAiState = {
   venoxisLinkAcc?: number;
   venoxisPoolAcc?: number;
   venoxisWithdrawalMs?: number;
+  venoxisWithdrawalDone?: boolean;
   skills?: BossSkill[];
   currentCasting?: { skill: BossSkill; elapsedMs: number } | null;
 };
@@ -174,8 +175,9 @@ export const VenoxisEncounter: BossEncounterModule = {
         });
       }
 
-      // 20% → 回坛戒断易伤 + 血毒触须
-      if (boss.maxHp > 0 && boss.hp / boss.maxHp <= 0.2) {
+      // 20% → 回坛戒断易伤 + 血毒触须（仅触发一次）
+      if (!ai.venoxisWithdrawalDone && boss.maxHp > 0 && boss.hp / boss.maxHp <= 0.2) {
+        ai.venoxisWithdrawalDone = true;
         ai.venoxisPhase = 'withdrawal';
         ai.venoxisWithdrawalMs = 12_000;
         const bPos = boss.position || { x: 500, y: 200 };

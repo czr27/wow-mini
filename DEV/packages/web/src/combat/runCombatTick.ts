@@ -186,8 +186,12 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
   engine.resourceManager.manaRegenMultiplier =
     rsm.phase === 'TRAVEL_RECOVERY' ? TRAVEL_MANA_REGEN_MULTIPLIER : 1;
 
-  // Network guests: own skills/pets authority — resolve local cast; world from host batch/state
-  if (ctx.isNetworkGuestRef.current) {
+  // Networked players (both host & guest): own skills/pets authority — resolve local cast; world from server
+  const isNetworkedPlayer =
+    (ctx.isNetworkHostRef.current || ctx.isNetworkGuestRef.current) &&
+    !!ctx.activeRoomIdRef.current &&
+    netClient.connected;
+  if (isNetworkedPlayer) {
     netClient.flushReliableInputRetries();
     const now = Date.now();
     const myId = ctx.currentChar?.id;

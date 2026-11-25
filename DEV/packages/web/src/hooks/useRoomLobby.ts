@@ -91,20 +91,10 @@ export function useRoomLobby(deps: RoomLobbyDeps) {
 
   const handleLeaveActiveRoom = () => {
     if (activeRoomId && currentChar) {
-      const room = roomFacadeRef.current.getRoom(activeRoomId) || roomManager.getRoom(activeRoomId);
-      const isHost = room?.hostId === currentChar.id || isNetworkHostRef.current;
-      if (isHost) {
-        // 先广播 ROOM_CLOSED，客人立刻离房；再清本地
-        roomFacadeRef.current.closeRoom(activeRoomId, 'host_left');
-      } else {
-        roomFacadeRef.current.leaveRoom(activeRoomId, currentChar.id);
-      }
+      // Host & guest both leave via ROOM_LEAVE; server transfers host to next player or destroys if empty
+      roomFacadeRef.current.leaveRoom(activeRoomId, currentChar.id);
     } else if (activeRoomId) {
       roomFacadeRef.current.closeRoom(activeRoomId, 'destroyed');
-    }
-    // Also tear down any other rooms still listed under this host (stale combat ghosts)
-    if (currentChar) {
-      roomFacadeRef.current.closeHostedRooms(currentChar.id, 'host_left');
     }
     roomManager.cleanupAiOnlyRooms();
     isNetworkGuestRef.current = false;

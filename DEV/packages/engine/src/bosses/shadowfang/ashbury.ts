@@ -102,7 +102,8 @@ export const AshburyEncounter: BossEncounterModule = {
         targetKind: 'AOE',
         description: '6秒引导：全员空中昏迷；每秒扣除 (最大生命-1)/6，满血无治疗则恰好剩 1 点',
         dbm: {
-          advice: '全团窒息压血至 1 点，结束后 1s 安全治疗再抬血',
+          advice: '全团窒息压血至 1 点，结束后安全抬血',
+          voiceText: '准备抬血',
           severity: 'CRITICAL',
           roleHint: 'HEALER',
           preWarnMs: 3000,
@@ -117,8 +118,10 @@ export const AshburyEncounter: BossEncounterModule = {
           if (engine) {
             engine.bossHealingGraceRemainingMs = 1000;
             engine.emitDbmAlert?.({
-              title: '窒息结束：安全治疗窗口',
-              advice: '全团残血，治疗立刻群刷抬血！',
+              title: '窒息结束：安全治疗窗',
+              advice: '安全抬血',
+              voiceText: '安全抬血',
+              replaceKey: 'skill_ashbury_asphyxiate',
               severity: 'CRITICAL',
               roleHint: 'HEALER',
               spellId: 'asphyxiate_grace',

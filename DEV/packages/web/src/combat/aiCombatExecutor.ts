@@ -576,6 +576,53 @@ export type FriendlyAiCombatTickCtx = {
   addIncomingCast: (targetId: string, cast: IncomingHealCast) => void;
 };
 
+export const STABLE_TANK_THREAT_THRESHOLD = 3000;
+
+/**
+ * Returns true if a living tank holds stable threat on `enemy` (or if no living tank exists).
+ * Also holds back AI DPS if their own threat is >= 95% of the tank's threat to avoid OT.
+ */
+export function isTankThreatStableForEnemy(
+  engine: CombatEngine,
+  enemy: Unit,
+  dpsUnit: Unit,
+  livingTanks?: Unit[],
+): boolean {
+  const tanks =
+    livingTanks ??
+    engine.friendlyUnits.filter((t) => t.role === 'TANK' && (t.isAlive ?? t.alive) && t.hp > 0);
+  if (tanks.length === 0) return true;
+
+  const currentTargetId =
+    engine.threatManager.getCurrentTarget(enemy.id) ||
+    engine.threatManager.getTopThreatSource(enemy.id);
+  if (!currentTargetId) return false;
+
+  const tankHolder = tanks.find((t) => t.id === currentTargetId);
+  if (!tankHolder) return false;
+
+  const tankThreat = engine.threatManager.getThreatFor(enemy.id, tankHolder.id);
+  if (tankThreat < STABLE_TANK_THREAT_THRESHOLD) return false;
+
+  const dpsThreat = engine.threatManager.getThreatFor(enemy.id, dpsUnit.id);
+  if (dpsThreat >= tankThreat * 0.95) return false;
+
+  return true;
+}
+
+/** Filters `enemies` to those where tank threat is stable for an AI DPS unit. */
+export function filterEnemiesWithStableTankThreat(
+  engine: CombatEngine,
+  enemies: Unit[],
+  dpsUnit: Unit,
+): Unit[] {
+  const livingTanks = engine.friendlyUnits.filter(
+    (t) => t.role === 'TANK' && (t.isAlive ?? t.alive) && t.hp > 0
+  );
+  if (livingTanks.length === 0) return enemies;
+  return enemies.filter((e) => isTankThreatStableForEnemy(engine, e, dpsUnit, livingTanks));
+}
+
 /**
  * Universal friendly-AI combat tick (interrupt / restore / battle-rez / tank /
  * read-bar advance / GCD / candidate pick). Mutates ctx.aiCasts & ctx.aiCooldowns.
@@ -922,11 +969,19 @@ export function runFriendlyAiCombatTick(ctx: FriendlyAiCombatTickCtx): void {
       if (usableCandidates.length === 0) continue;
     }
 
-    const aiEnemies = tankLooseAdd
+    const rawEnemies = tankLooseAdd
       ? [tankLooseAdd, ...ctx.livingEnemies.filter((e) => e.id !== tankLooseAdd!.id)]
       : ctx.livingEnemies.length > 0
         ? ctx.livingEnemies
         : [boss];
+
+    const aiEnemies =
+      u.role !== 'TANK' && u.role !== 'HEALER'
+        ? filterEnemiesWithStableTankThreat(engine, rawEnemies, u)
+        : rawEnemies;
+    if (u.role !== 'TANK' && u.role !== 'HEALER' && aiEnemies.length === 0) {
+      continue;
+    }
 
     const decision = evaluateUniversalAIDecision({
       caster: u,

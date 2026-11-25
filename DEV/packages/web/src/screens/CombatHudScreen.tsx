@@ -458,6 +458,8 @@ export function CombatHudScreen(props: CombatHudScreenProps) {
             durationSec={totalDurationSec}
             initialPos={currentChar?.uiLayout?.statsPanel}
             onSavePos={(pos) => onSaveUiLayout({ statsPanel: pos })}
+            resetPerBossRoom={!!currentChar?.uiLayout?.combatDisplay?.detailsResetPerBossRoom}
+            bossRoomKey={`${dungeonId || 'dungeon'}:${currentBossIndex}`}
           />
         </div>
 

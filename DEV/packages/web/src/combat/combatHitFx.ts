@@ -32,11 +32,13 @@ export const HIT_FX_IMPACT_STAGGER_MS = 20;
 const MAX_PROJECTILES = 36;
 const MAX_SLASHES = 30;
 const MAX_SNOW_BURSTS = 6;
+const MAX_AOE_BURSTS = 24;
 const FLAKES_PER_BURST = 5;
 
 const PROJ_MS = 280;
 const SLASH_MS = 200;
 const SWEEP_MS = 260;
+const AOE_BURST_MS = 360;
 const SNOW_FLAKE_MS = 420;
 const SNOW_STAGGER_MS = 70;
 
@@ -169,14 +171,27 @@ export interface HealSnowflakeBurst {
   expireAt: number;
 }
 
+export interface HitAoeBurst {
+  id: string;
+  x: number;
+  y: number;
+  radius: number;
+  color: string;
+  scale: number;
+  side: HitFxSide;
+  bornAt: number;
+  durationMs: number;
+}
+
 export interface HitFxState {
   projectiles: HitProjectile[];
   slashes: HitSlash[];
   snowBursts: HealSnowflakeBurst[];
+  aoeBursts: HitAoeBurst[];
 }
 
 export function createHitFxState(): HitFxState {
-  return { projectiles: [], slashes: [], snowBursts: [] };
+  return { projectiles: [], slashes: [], snowBursts: [], aoeBursts: [] };
 }
 
 function hashStr(s: string): number {
@@ -672,15 +687,15 @@ export function ingestCombatActionsAsHitFx(state: HitFxState, opts: IngestHitFxO
     const isEnemy = isEnemyActorUnit(actor) || actor?.role === 'ENEMY' || actor?.classId === 'BOSS';
 
     if (isAoe) {
-      if (isHeal || !aPos) continue;
-      const meleeAoe = isEnemy
+      if (!aPos && typeof a.x !== 'number') continue;
+      const meleeAoe = !isHeal && (isEnemy
         ? isMeleeAoeSpell(a.spellId, a.spellName) ||
           (!isMagicAoeSpell(a.spellId, a.spellName) &&
+            !!aPos &&
             !!tPos &&
             Math.hypot(aPos.x - tPos.x, aPos.y - tPos.y) <= 95)
         : isMeleeClassSpec((actor?.classId as any) || 'MAGE', (actor as any)?.spec) ||
-          isMeleeAoeSpell(a.spellId, a.spellName);
-      if (!meleeAoe) continue;
+          isMeleeAoeSpell(a.spellId, a.spellName));
 
       const hitScale = isEnemy ? HIT_FX_BOSS_SIZE_MULT : actorScale;
       const visual = resolveHitFxVisual({
@@ -692,34 +707,68 @@ export function ingestCombatActionsAsHitFx(state: HitFxState, opts: IngestHitFxO
         bossName: opts.bossName || actor?.name,
       });
       const side: HitFxSide = isEnemy ? 'ENEMY' : 'FRIENDLY';
-      const spin = isSpinAoeSpell(a.spellId, a.spellName);
-      const ang =
-        tPos && (tPos.x !== aPos.x || tPos.y !== aPos.y)
-          ? Math.atan2(tPos.y - aPos.y, tPos.x - aPos.x)
-          : 0;
-      const pivotX = spin ? aPos.x : aPos.x + Math.cos(ang) * 4 * hitScale;
-      const pivotY = spin ? aPos.y : aPos.y + Math.sin(ang) * 4 * hitScale;
-      const sweepArcRad = spin ? Math.PI * 1.55 : Math.PI * 1.1;
-      for (let i = 0; i < 2; i++) {
-        pushCap(
-          state.slashes,
-          {
-            id: `${a.id}_sw${i}`,
-            x: pivotX,
-            y: pivotY,
-            angle: ang + (i === 1 ? 0.35 : 0),
-            color: visual.slashColor,
-            scale: hitScale,
-            side,
-            style: visual.slashStyle,
-            mode: 'sweep',
-            sweepArcRad,
-            bornAt: now + i * 45,
-            durationMs: SWEEP_MS,
-          },
-          MAX_SLASHES
-        );
+
+      if (meleeAoe && aPos) {
+        const spin = isSpinAoeSpell(a.spellId, a.spellName);
+        const ang =
+          tPos && (tPos.x !== aPos.x || tPos.y !== aPos.y)
+            ? Math.atan2(tPos.y - aPos.y, tPos.x - aPos.x)
+            : 0;
+        const pivotX = spin ? aPos.x : aPos.x + Math.cos(ang) * 4 * hitScale;
+        const pivotY = spin ? aPos.y : aPos.y + Math.sin(ang) * 4 * hitScale;
+        const sweepArcRad = spin ? Math.PI * 1.55 : Math.PI * 1.1;
+        for (let i = 0; i < 2; i++) {
+          pushCap(
+            state.slashes,
+            {
+              id: `${a.id}_sw${i}`,
+              x: pivotX,
+              y: pivotY,
+              angle: ang + (i === 1 ? 0.35 : 0),
+              color: visual.slashColor,
+              scale: hitScale,
+              side,
+              style: visual.slashStyle,
+              mode: 'sweep',
+              sweepArcRad,
+              bornAt: now + i * 45,
+              durationMs: SWEEP_MS,
+            },
+            MAX_SLASHES
+          );
+        }
+        changed = true;
+        continue;
       }
+
+      // Ranged / caster AoE: class-colored (or boss red) explosion at designated area
+      const targetCenter =
+        typeof a.x === 'number' && typeof a.y === 'number'
+          ? { x: a.x, y: a.y }
+          : tPos || aPos;
+      if (!targetCenter) continue;
+      const classFallbackColor =
+        CLASS_COLORS[(actor?.classId || '').toUpperCase() as keyof typeof CLASS_COLORS];
+      const burstColor = isEnemy
+        ? BOSS_COLOR
+        : isHeal
+          ? classFallbackColor || HEAL_SNOW_COLOR
+          : visual.projColor || classFallbackColor || '#69CCF0';
+      pushCap(
+        state.aoeBursts,
+        {
+          id: `${a.id}_ab`,
+          x: targetCenter.x,
+          y: targetCenter.y,
+          radius: Math.max(18, 26 * hitScale),
+          color: burstColor,
+          scale: hitScale,
+          side,
+          bornAt: now,
+          durationMs: AOE_BURST_MS,
+        },
+        MAX_AOE_BURSTS
+      );
       changed = true;
       continue;
     }
@@ -741,7 +790,7 @@ export function ingestCombatActionsAsHitFx(state: HitFxState, opts: IngestHitFxO
             fading: false,
             flakes: makeFlakes(),
             bornAt: now,
-            expireAt: now + 30_000,
+            expireAt: now + 6_000,
           },
           MAX_SNOW_BURSTS
         );
@@ -1049,10 +1098,29 @@ function spiralFlakePos(
   };
 }
 
-export function pruneHitFx(state: HitFxState, now = performance.now()): void {
+export function pruneHitFx(
+  state: HitFxState,
+  now = performance.now(),
+  opts?: {
+    resolvePos?: (unitId: string) => { x: number; y: number } | null;
+    isActorAlive?: (unitId: string) => boolean;
+  }
+): void {
   state.projectiles = state.projectiles.filter((p) => now - p.bornAt < p.durationMs);
   state.slashes = state.slashes.filter((s) => now - s.bornAt < s.durationMs);
-  state.snowBursts = state.snowBursts.filter((s) => now < s.expireAt);
+  state.aoeBursts = state.aoeBursts.filter((b) => now - b.bornAt < b.durationMs);
+  state.snowBursts = state.snowBursts.filter((s) => {
+    if (now >= s.expireAt) return false;
+    if (!s.fading && opts?.isActorAlive && !opts.isActorAlive(s.actorId)) return false;
+    if (!s.fading && opts?.resolvePos) {
+      const p = opts.resolvePos(s.actorId);
+      if (p) {
+        s.cx = p.x;
+        s.cy = p.y;
+      }
+    }
+    return true;
+  });
 }
 
 function drawShape(
@@ -1441,6 +1509,58 @@ export function drawHitFx(
       ctx.closePath();
       ctx.fill();
     }
+    ctx.restore();
+  }
+
+  for (const b of state.aoeBursts) {
+    const side = b.side || 'FRIENDLY';
+    if (side === 'ENEMY' ? !showEProj : !showFProj) continue;
+    if (now < b.bornAt) continue;
+    const t = Math.min(1, (now - b.bornAt) / Math.max(1, b.durationMs));
+    const ease = 1 - Math.pow(1 - t, 2.2);
+    const sc = Math.max(0.55, b.scale);
+    const maxR = Math.max(16 * sc, b.radius);
+    const curR = maxR * (0.22 + 0.78 * ease);
+    const baseA = side === 'ENEMY' ? HIT_FX_BOSS_ALPHA : HIT_FX_ALPHA;
+    const alpha = baseA * (1 - Math.pow(t, 1.3));
+    if (alpha <= 0.01) continue;
+
+    ctx.save();
+    ctx.translate(b.x, b.y);
+
+    // 1. Class-colored radial explosion flash
+    const [r, g, bl] = hexToRgb(b.color);
+    const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, curR);
+    grad.addColorStop(0, `rgba(255,255,255,${alpha * 0.72 * (1 - t)})`);
+    grad.addColorStop(0.35, `rgba(${r},${g},${bl},${alpha * 0.65})`);
+    grad.addColorStop(0.75, `rgba(${r},${g},${bl},${alpha * 0.25})`);
+    grad.addColorStop(1, `rgba(${r},${g},${bl},0)`);
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(0, 0, curR, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 2. Expanding shockwave ring
+    ctx.strokeStyle = rgbaFromHex(b.color, Math.min(0.95, alpha + 0.15));
+    ctx.lineWidth = Math.max(1.2, 3.2 * sc * (1 - t * 0.65));
+    ctx.beginPath();
+    ctx.arc(0, 0, curR * 0.92, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // 3. Radial burst sparks/shards flying outward
+    const rays = 8;
+    ctx.strokeStyle = rgbaFromHex('#FFFFFF', alpha * 0.78);
+    ctx.lineWidth = Math.max(1, 1.8 * sc * (1 - t * 0.5));
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    for (let i = 0; i < rays; i++) {
+      const ang = (i / rays) * Math.PI * 2 + 0.2;
+      const r0 = curR * (0.35 + 0.3 * t);
+      const r1 = curR * (0.75 + 0.32 * ease);
+      ctx.moveTo(Math.cos(ang) * r0, Math.sin(ang) * r0);
+      ctx.lineTo(Math.cos(ang) * r1, Math.sin(ang) * r1);
+    }
+    ctx.stroke();
     ctx.restore();
   }
 

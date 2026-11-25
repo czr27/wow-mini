@@ -389,6 +389,7 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
   const [draggedSlotIdx, setDraggedSlotIdx] = useState<number | null>(null);
   const [sniffingSlotIdx, setSniffingSlotIdx] = useState<number | null>(null);
   const [inspectedSpellId, setInspectedSpellId] = useState<string | null>(null);
+  const [hoveredCertId, setHoveredCertId] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [isSkillBookOpen, setIsSkillBookOpen] = useState(false);
   const [newCharName, setNewCharName] = useState('');
@@ -1159,50 +1160,98 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
                   </div>
                 </div>
 
-                {/* Dungeon Clear Certificates (Rewards) */}
-                <div className="bg-[#1a1a30] border border-[#2e2e4e] p-4 rounded-xl space-y-3">
+                {/* Dungeon Clear Certificates (Bag-style Inventory Grid) */}
+                <div className="bg-[#1a1a30] border border-[#2e2e4e] p-4 rounded-xl space-y-2.5 relative">
                   <div className="flex items-center justify-between">
                     <div>
-                      <h4 className="font-bold text-sm text-gray-200">
-                        🏆 获得的副本通关证明（点击查看历史全战报）
+                      <h4 className="font-bold text-sm text-gray-200 flex items-center space-x-2">
+                        <span>🎒 通关证明物品栏</span>
+                        <span className="text-[11px] font-mono text-amber-300/90 bg-amber-500/10 border border-amber-500/30 px-1.5 py-0.5 rounded">
+                          {selectedChar.clearCertificates?.length || 0} 枚
+                        </span>
                       </h4>
                       <p className="text-xs text-gray-400">
-                        击败最终首领获得的最高荣耀凭据，可调阅伤害、有效治疗及逐Boss击杀细节
+                        每排 12 格与动作条对齐；悬浮查看副本与专精，单击查看详细战报
                       </p>
                     </div>
                   </div>
 
-                  {selectedChar.clearCertificates && selectedChar.clearCertificates.length > 0 ? (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto pr-1">
-                      {selectedChar.clearCertificates.map(cert => (
-                        <div
-                          key={cert.id}
-                          onClick={() => onViewCertificate(cert)}
-                          className="bg-[#121222] border border-amber-500/40 hover:border-amber-400 p-2.5 rounded-lg cursor-pointer transition hover:bg-[#1a1a32] flex items-center justify-between shadow-sm"
-                        >
-                          <div>
-                            <div className="text-xs font-bold text-amber-300 flex items-center space-x-1">
-                              <span>📜</span>
-                              <span>{cert.dungeonName}</span>
-                            </div>
-                            <div className="text-[10px] text-gray-400 mt-0.5">
-                              {new Date(cert.clearedAtIso).toLocaleDateString()} · 耗时 {cert.totalDurationSec}s
-                            </div>
-                            <div className="text-[10px] text-emerald-400 font-mono mt-0.5">
-                              DPS: {Math.max(0, cert.characterStats?.dps || 0)} | 有效HPS: {Math.max(0, cert.characterStats?.effectiveHps || 0)}
-                            </div>
+                  {(() => {
+                    const certs = selectedChar.clearCertificates || [];
+                    const certRows = Math.max(1, Math.ceil(certs.length / 12));
+                    const totalBagSlots = certRows * 12;
+                    const hoveredCert = hoveredCertId ? certs.find(c => c.id === hoveredCertId) : null;
+                    const shortDungeonTag = (name: string) => {
+                      const clean = name.replace(/（.*?）|\(.*?\)/g, '').trim();
+                      return clean.slice(0, 2) || '通关';
+                    };
+
+                    return (
+                      <div className="relative">
+                        <div className={certRows > 3 ? 'max-h-[156px] overflow-y-auto pr-0.5' : ''}>
+                          <div className="grid grid-cols-12 gap-0.5 w-full border border-[#3b3b5c] rounded-lg p-1 bg-[#0c0c18] shadow-inner">
+                            {Array.from({ length: totalBagSlots }).map((_, idx) => {
+                              const cert = certs[idx];
+                              if (!cert) {
+                                return (
+                                  <div
+                                    key={`empty-${idx}`}
+                                    className="aspect-square rounded border border-[#22223a] bg-[#090914] opacity-60"
+                                  />
+                                );
+                              }
+                              const classColor = CLASS_COLORS[cert.characterClass] || '#f59e0b';
+                              const specLabel =
+                                CLASS_SPECS[cert.characterClass]?.find(s => s.id === cert.characterSpec)?.name ||
+                                cert.characterSpec;
+                              return (
+                                <button
+                                  key={cert.id}
+                                  type="button"
+                                  onClick={() => onViewCertificate(cert)}
+                                  onMouseEnter={() => setHoveredCertId(cert.id)}
+                                  onMouseLeave={() => setHoveredCertId(prev => (prev === cert.id ? null : prev))}
+                                  title={`${cert.dungeonName} · ${specLabel}`}
+                                  className="aspect-square rounded border border-amber-500/60 hover:border-amber-300 bg-gradient-to-br from-[#1d192b] to-[#111120] hover:from-[#2b243f] hover:to-[#18182e] transition flex flex-col items-center justify-center relative group shadow-sm"
+                                  style={{ boxShadow: `inset 0 0 0 1px ${classColor}33` }}
+                                >
+                                  <span className="text-sm leading-none">📜</span>
+                                  <span
+                                    className="text-[9px] font-bold leading-none mt-0.5 truncate max-w-full px-0.5"
+                                    style={{ color: classColor }}
+                                  >
+                                    {shortDungeonTag(cert.dungeonName)}
+                                  </span>
+                                </button>
+                              );
+                            })}
                           </div>
-                          <span className="text-xs text-amber-400 font-bold bg-amber-500/10 px-2 py-1 rounded border border-amber-500/30">
-                            查阅战报
-                          </span>
                         </div>
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="text-center py-6 border border-dashed border-[#2f2f4a] rounded-lg text-gray-500 text-xs">
-                      暂无通关证明。率领你的冒险团击败影牙城堡尾王「高弗雷勋爵」获取首次通关荣耀！
-                    </div>
-                  )}
+
+                        {hoveredCert && (() => {
+                          const specLabel =
+                            CLASS_SPECS[hoveredCert.characterClass]?.find(s => s.id === hoveredCert.characterSpec)?.name ||
+                            hoveredCert.characterSpec;
+                          const classColor = CLASS_COLORS[hoveredCert.characterClass] || '#fbbf24';
+                          return (
+                            <div className="mt-2 bg-[#0d0d1a] border border-amber-500/50 rounded-lg px-3 py-2 text-xs shadow-lg flex flex-wrap items-center justify-between gap-2 pointer-events-none">
+                              <div className="flex items-center space-x-2">
+                                <span>📜</span>
+                                <span className="font-bold text-amber-300">{hoveredCert.dungeonName}</span>
+                                <span className="text-gray-500">|</span>
+                                <span className="font-bold" style={{ color: classColor }}>
+                                  通关专精：{CLASS_NAMES[hoveredCert.characterClass]} · {specLabel}
+                                </span>
+                              </div>
+                              <div className="text-[11px] text-gray-400 font-mono">
+                                {new Date(hoveredCert.clearedAtIso).toLocaleDateString()} · 耗时 {hoveredCert.totalDurationSec}s · 单击查看详情
+                              </div>
+                            </div>
+                          );
+                        })()}
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 {/* Game settings (combat display prefs) */}
@@ -1244,8 +1293,17 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
                     return (
                       <div className="space-y-3">
                         <div>
-                          <div className="text-[10px] text-amber-400/80 font-bold mb-1.5">插件与首领预警</div>
-                          <Check label="DBM 播报提醒（首领技能预告 / 治疗分散 / 小怪提示，房主同步权威）" k="enableDbm" />
+                          <div className="text-[10px] text-amber-400/80 font-bold mb-1.5">DBM 播报（房主权威同步）</div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-1.5">
+                            <Check label="DBM 文字播报（分散/分摊/打断/小怪）" k="enableDbm" />
+                            <Check label="DBM 短语音播报（4字战术语音）" k="enableDbmVoice" />
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-[10px] text-amber-400/80 font-bold mb-1.5">战斗统计插件 (Details!)</div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-1.5">
+                            <Check label="按照 Boss 房间自动清空计算" k="detailsResetPerBossRoom" />
+                          </div>
                         </div>
                         <div>
                           <div className="text-[10px] text-amber-400/80 font-bold mb-1.5">视角</div>

@@ -108,7 +108,10 @@ export class BaseBossAI {
         );
       }
       const computedMetrics = this.skillMetricsMap.get(skill.id);
-      this.dbmRulesMap.set(skill.id, deriveBossSkillDbmRule(skill, computedMetrics));
+      const dbmRule = deriveBossSkillDbmRule(skill, computedMetrics);
+      if (dbmRule) {
+        this.dbmRulesMap.set(skill.id, dbmRule);
+      }
     }
   }
 
@@ -169,7 +172,8 @@ export class BaseBossAI {
     const targetId = engine.getBossTargetId();
     const primaryTarget =
       engine.friendlyUnits.find(u => u.id === targetId && (u.alive ?? u.isAlive)) ||
-      engine.friendlyUnits.find(u => (u.alive ?? u.isAlive) && u.role === 'TANK') ||
+      engine.friendlyUnits.find(u => (u.alive ?? u.isAlive) && u.role === 'TANK' && !u.isPet && u.unitKind !== 'PET') ||
+      engine.friendlyUnits.find(u => (u.alive ?? u.isAlive) && !u.isPet && u.unitKind !== 'PET') ||
       engine.friendlyUnits.find(u => (u.alive ?? u.isAlive));
 
     const bPos = boss.position || { x: 540, y: 190 };
@@ -268,6 +272,8 @@ export class BaseBossAI {
         engine.emitDbmAlert({
           title: `即将施放：${skill.name} (${sec}s)`,
           advice: rule.advice,
+          voiceText: rule.voiceText,
+          replaceKey: `skill_${this.bossId}_${skill.id}`,
           severity: rule.severity === 'CRITICAL' ? 'WARN' : rule.severity,
           ttlMs: Math.min(3500, Math.max(2000, remaining + 600)),
           roleHint: rule.roleHint,
@@ -294,6 +300,8 @@ export class BaseBossAI {
     engine.emitDbmAlert({
       title: `${prefix}：${skill.name}`,
       advice: rule.advice,
+      voiceText: rule.voiceText,
+      replaceKey: `skill_${this.bossId}_${skill.id}`,
       severity: rule.severity,
       ttlMs: rule.ttlMs,
       roleHint: rule.roleHint,
@@ -314,6 +322,7 @@ export class BaseBossAI {
   ): void {
     const targetId =
       engine.getBossTargetId() ||
+      engine.friendlyUnits.find(u => (u.alive ?? u.isAlive) && (u.hp ?? 0) > 0 && !u.isPet && u.unitKind !== 'PET')?.id ||
       engine.friendlyUnits.find(u => (u.alive ?? u.isAlive) && (u.hp ?? 0) > 0)?.id ||
       null;
     const isAoe =

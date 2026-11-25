@@ -121,7 +121,7 @@ describe('Prim 迷宫生成器', () => {
     }
   });
 
-  it('画布不变，迷宫在安全区内居中，下边再向下 30', () => {
+  it('画布不变，迷宫在屏幕中间 70% 区域居中铺满', () => {
     const canvasW = MAZE_CANVAS_LOGICAL_SIZE.width;
     const canvasH = MAZE_CANVAS_LOGICAL_SIZE.height;
     assert.equal(canvasW, 780);
@@ -143,8 +143,8 @@ describe('Prim 迷宫生成器', () => {
     assert.ok(layout.originY >= MAZE_HUD_SAFE_INSETS.top - 0.5);
     assert.ok(layout.originX + mazeW <= canvasW - MAZE_HUD_SAFE_INSETS.right + 0.5);
     assert.ok(layout.originY + mazeH <= canvasH - MAZE_HUD_SAFE_INSETS.bottom + 0.5);
-    assert.equal(MAZE_HUD_SAFE_INSETS.top, 56, '上边界保持不动');
-    assert.equal(MAZE_HUD_SAFE_INSETS.bottom, 142, '下边界再向下 30');
+    assert.equal(MAZE_HUD_SAFE_INSETS.top, 54, '70% 居中上边距为 54');
+    assert.equal(MAZE_HUD_SAFE_INSETS.bottom, 54, '70% 居中下边距为 54');
     // 迷宫水平居中（左右边距相等）
     const leftGap = layout.originX;
     const rightGap = canvasW - (layout.originX + mazeW);

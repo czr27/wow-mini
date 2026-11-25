@@ -72,8 +72,9 @@ export const MAZE_VIEWPORT_FRACTION = 1;
  * Rev 8: ≥6 trash packs spawned; 2–3 marked isEncounter on the march path.
  * Rev 9: non-encounter packs spawn only off the mandatory path (≥3 cells away).
  * Rev 10: 迷宫宽度 +30% (scale 2.08) 且严格保持长宽比例，小怪按死胡同/阵型合理重布，烛台依内壁智能排布。
+ * Rev 11: 迷宫有效范围居中铺满屏幕 70% 区域，移除非遭遇怪卡顿源并统一人物比例与Boss房一致。
  */
-export const MAZE_LAYOUT_REVISION = 10;
+export const MAZE_LAYOUT_REVISION = 11;
 
 /** Non-encounter packs must sit at least this many PATH cells off the main route. */
 export const MAZE_AMBIENT_MIN_PATH_DIST = 3;
@@ -90,14 +91,22 @@ export const MAZE_UPWARD_SHIFT_PX = 0;
 /** Combat canvas design size — do not grow the canvas for maze. */
 export const MAZE_CANVAS_LOGICAL_SIZE = { width: 780, height: 360 } as const;
 
-/** Default combat StatsPanel width — maze L/R each leave up to 1.5× this. */
-export const COMBAT_STATS_DEFAULT_WIDTH = 300;
-export const MAZE_SIDE_MARGIN_FROM_STATS = Math.round(COMBAT_STATS_DEFAULT_WIDTH * 1.5); // 450
+/** 迷宫有效范围占屏幕比例 (70%) */
+export const MAZE_MIDDLE_RATIO = 0.7;
 
-/** Bottom inset before “再向下” extension (rev3 action-bar clearance). */
-const MAZE_BOTTOM_INSET_BASE = 172;
-/** Maze bottom edge extends this many px lower than the prior clearance. */
-export const MAZE_BOTTOM_EXTEND_PX = 30;
+/** Default combat StatsPanel width — kept for compatibility. */
+export const COMBAT_STATS_DEFAULT_WIDTH = 300;
+export const MAZE_SIDE_MARGIN_FROM_STATS = Math.round(
+  (MAZE_CANVAS_LOGICAL_SIZE.width * (1 - MAZE_MIDDLE_RATIO)) / 2
+); // 117
+
+/** Insets for the 70% centered maze active playfield */
+export const MAZE_HUD_SAFE_INSETS = {
+  left: Math.round((MAZE_CANVAS_LOGICAL_SIZE.width * (1 - MAZE_MIDDLE_RATIO)) / 2), // 117
+  right: Math.round((MAZE_CANVAS_LOGICAL_SIZE.width * (1 - MAZE_MIDDLE_RATIO)) / 2), // 117
+  top: Math.round((MAZE_CANVAS_LOGICAL_SIZE.height * (1 - MAZE_MIDDLE_RATIO)) / 2), // 54
+  bottom: Math.round((MAZE_CANVAS_LOGICAL_SIZE.height * (1 - MAZE_MIDDLE_RATIO)) / 2), // 54
+} as const;
 
 /**
  * Maze playfield / grid width scale vs rev6 (~70% band + base cols).
@@ -110,30 +119,11 @@ export const MAZE_WIDTH_COMPLEXITY_SCALE = 2.08;
 export const MAZE_TRAVERSE_SPEED_SCALE = MAZE_WIDTH_COMPLEXITY_SCALE;
 
 /**
- * Resolve L/R insets for a canvas (equal on both sides → maze stays centered).
- * Prefer leaving 1.5× default stats width each side when the canvas is wide enough
- * to still keep the maze wider than the old ~50% band; otherwise target
- * ~70% × MAZE_WIDTH_COMPLEXITY_SCALE of canvas width (clamped to full width).
+ * Resolve L/R insets for a canvas (equal on both sides → maze stays centered in 70%).
  */
 export function mazeSideInsetForCanvas(canvasWidth: number): number {
-  const desired = MAZE_SIDE_MARGIN_FROM_STATS;
-  const oldBand = canvasWidth * 0.5;
-  const playIfDesired = canvasWidth - 2 * desired;
-  if (playIfDesired >= oldBand * 1.1) return desired;
-  const targetPlay = Math.min(
-    canvasWidth,
-    Math.ceil(canvasWidth * 0.7 * MAZE_WIDTH_COMPLEXITY_SCALE)
-  );
-  return Math.max(0, Math.floor((canvasWidth - targetPlay) / 2));
+  return Math.round((canvasWidth * (1 - MAZE_MIDDLE_RATIO)) / 2);
 }
-
-/** HUD-safe insets for the design canvas (maze grows inside; canvas size fixed). */
-export const MAZE_HUD_SAFE_INSETS = {
-  left: mazeSideInsetForCanvas(MAZE_CANVAS_LOGICAL_SIZE.width),
-  right: mazeSideInsetForCanvas(MAZE_CANVAS_LOGICAL_SIZE.width),
-  top: 56,
-  bottom: MAZE_BOTTOM_INSET_BASE - MAZE_BOTTOM_EXTEND_PX, // 142
-} as const;
 
 export interface MazeLayout {
   dungeonId: string;
@@ -174,19 +164,11 @@ export function computeMazePlacement(
   canvasHeight: number,
   viewportFraction: number = MAZE_VIEWPORT_FRACTION
 ): { cellSize: number; originX: number; originY: number; mazeW: number; mazeH: number } {
-  const side = mazeSideInsetForCanvas(canvasWidth);
-  const safeX0 = side;
-  const safeY0 = MAZE_HUD_SAFE_INSETS.top;
-  const safeX1 = canvasWidth - side;
-  const safeY1 = canvasHeight - MAZE_HUD_SAFE_INSETS.bottom;
-  const safeW = Math.max(1, safeX1 - safeX0);
-  const safeH = Math.max(1, safeY1 - safeY0);
-  // Fill HUD-safe rect (viewportFraction≤1 keeps optional cap for legacy callers)
-  const playW = Math.max(1, Math.min(safeW, canvasWidth * Math.max(viewportFraction, 0.5)));
-  const playH = Math.max(1, Math.min(safeH, canvasHeight * Math.max(viewportFraction, 0.5)));
-  // Always center the playfield (and the maze inside it) on the canvas.
-  const playX0 = (canvasWidth - playW) / 2;
-  const playY0 = safeY0 + (safeH - playH) / 2;
+  // 迷宫有效范围居中铺满屏幕中间 70% 区域
+  const playW = Math.round(canvasWidth * MAZE_MIDDLE_RATIO);
+  const playH = Math.round(canvasHeight * MAZE_MIDDLE_RATIO);
+  const playX0 = Math.round((canvasWidth - playW) / 2);
+  const playY0 = Math.round((canvasHeight - playH) / 2);
 
   const rawW = Math.max(1, cols * baseCellSize);
   const rawH = Math.max(1, rows * baseCellSize);
