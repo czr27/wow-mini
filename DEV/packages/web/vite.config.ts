@@ -114,6 +114,9 @@ function artResourcesPlugin(): Plugin {
 
 export default defineConfig({
   plugins: [react(), artResourcesPlugin()],
+  optimizeDeps: {
+    exclude: ['@cata-raid-sim/engine'],
+  },
   server: {
     host: '0.0.0.0',
     port: 3000,
