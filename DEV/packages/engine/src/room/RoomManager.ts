@@ -254,6 +254,8 @@ export function reconcileRoomRoster(room: LobbyRoom): void {
     if (m.isAi) {
       m.isReady = true;
       m.isPlayer = false;
+    } else if (m.isHost || m.id === room.hostId) {
+      m.isReady = true;
     }
     bySlot.set(m.slotIndex, m);
   }
@@ -434,11 +436,11 @@ export function validateStartGame(room: LobbyRoom): StartGameValidation {
     reasons.push('房间内没有成员');
   }
 
-  // 仅真人需准备；AI 一律视为已准备（顺带纠正脏数据里的 AI.isReady=false）
+  // 仅非房主真人需准备；房主与 AI 一律视为已准备（房主无独立准备按钮）
   for (const m of room.members) {
-    if (m.isAi) m.isReady = true;
+    if (m.isAi || m.isHost || m.id === room.hostId) m.isReady = true;
   }
-  const allReady = room.members.every((m) => m.isAi || m.isReady);
+  const allReady = room.members.every((m) => m.isAi || m.isHost || m.id === room.hostId || m.isReady);
   if (!allReady) {
     reasons.push('有玩家未准备');
   }
@@ -851,10 +853,14 @@ export class RoomManager {
     return true;
   }
 
-  /** Clear ready flags for human players (AI stays ready). */
+  /** Clear ready flags for non-host human guests (host & AI stay ready). */
   private clearHumanReady(room: LobbyRoom): void {
     for (const m of room.members) {
-      if (m.isPlayer && !m.isAi) m.isReady = false;
+      if (m.isAi || m.isHost || m.id === room.hostId) {
+        m.isReady = true;
+      } else if (m.isPlayer) {
+        m.isReady = false;
+      }
     }
   }
 
@@ -888,6 +894,7 @@ export class RoomManager {
   ): { success: boolean; addedCount: number; removedCount: number } {
     const room = this.getRoom(roomId);
     if (!room) return { success: false, addedCount: 0, removedCount: 0 };
+    reconcileRoomRoster(room);
 
     const removedCount = opts?.replaceExistingAi ? this.clearAllAiMembers(room) : 0;
 

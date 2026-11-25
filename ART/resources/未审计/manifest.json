@@ -73,6 +73,7 @@
     "lava_lash.jpg",
     "lifebloom.jpg",
     "light_of_dawn.jpg",
+    "lightwell.jpg",
     "living_bomb.jpg",
     "mana_tide.jpg",
     "mind_freeze.jpg",
@@ -2165,7 +2166,35 @@
       "searchEngine": null,
       "searchCandidates": [],
       "httpBackend": "curl_cffi:chrome110"
+    },
+    {
+      "filename": "lightwell.jpg",
+      "spellId": "lightwell",
+      "cnName": "圣光井",
+      "enName": "Holy Light",
+      "wowheadSpell": 29383,
+      "flavor": "classic",
+      "iconName": "spell_holy_holybolt",
+      "iconUrl": "https://wow.zamimg.com/images/wow/icons/large/spell_holy_holybolt.jpg",
+      "source": "tooltip",
+      "dataEnv": 1,
+      "bytes": 1716,
+      "savedAs": "G:/Desktop/wow_simu/ART/resources/未审计/lightwell.jpg",
+      "pageUrl": "https://www.wowhead.com/classic/cn/spell=29383/%E5%9C%A3%E5%85%89%E4%BA%95",
+      "query": "圣光井",
+      "searchEngine": "sogou",
+      "searchCandidates": [
+        "https://www.wowhead.com/classic/cn/spell=29383/%E5%9C%A3%E5%85%89%E4%BA%95",
+        "https://www.wowhead.com/classic/cn/spell=1042/%E5%9C%A3%E5%85%89%E4%BA%95",
+        "https://www.wowhead.com/classic/cn/spell=183012/%E5%9C%A3%E5%85%89%E4%BA%95",
+        "https://www.wowhead.com/classic/cn/spell=114918/%E5%9C%A3%E5%85%89%E4%BA%95",
+        "https://www.wowhead.com/classic/cn/spell=356717/%E5%9C%A3%E5%85%89%E4%BA%95",
+        "https://www.wowhead.com/cata/cn/spell=29383/%E5%9C%A3%E5%85%89%E4%BA%95",
+        "https://www.wowhead.com/cata/cn/spell=1042/%E5%9C%A3%E5%85%89%E4%BA%95",
+        "https://www.wowhead.com/cata/cn/spell=183012/%E5%9C%A3%E5%85%89%E4%BA%95"
+      ],
+      "httpBackend": "curl_cffi:chrome110"
     }
   ],
-  "updatedAt": 1795426617161
+  "updatedAt": 1795566993449
 }

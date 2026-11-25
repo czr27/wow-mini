@@ -96,8 +96,9 @@ describe('自定义难度大厅规则', () => {
     });
     mgr.autoFillAi(room.id);
     assert.equal(room.members.length, 5);
-    const dpsAi = room.members.find((m) => m.isAi && m.role === 'DPS');
-    assert.ok(dpsAi);
+    const dpsAis = room.members.filter((m) => m.isAi && m.role === 'DPS');
+    assert.ok(dpsAis.length > 0);
+    const dpsAiIds = new Set(dpsAis.map((m) => m.id));
     const tankAi = room.members.find((m) => m.isAi && m.role === 'TANK');
     assert.ok(tankAi);
 
@@ -110,7 +111,10 @@ describe('自定义难度大厅规则', () => {
     });
     assert.equal(join.ok, true, join.reason);
     assert.equal(join.member?.role, 'DPS');
-    assert.equal(join.replacedAiId, dpsAi!.id, '满员热加入应优先顶同职责 DPS AI，不先顶坦克');
+    assert.ok(
+      join.replacedAiId && dpsAiIds.has(join.replacedAiId),
+      '满员热加入应优先顶同职责 DPS AI，不先顶坦克'
+    );
     assert.ok(room.members.some((m) => m.id === tankAi!.id), '坦克 AI 应保留');
   });
 

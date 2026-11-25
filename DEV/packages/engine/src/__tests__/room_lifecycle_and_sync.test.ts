@@ -189,4 +189,27 @@ describe('Room Lifecycle, AI-Only Cleanup, AI Name Sync & Custom Difficulty', ()
     assert.ok(roomA.lastSettlement?.cleared);
     assert.strictEqual(roomB.status, 'OUT_OF_COMBAT', '结算房间A不得改写房间B');
   });
+
+  it('6. 房主切换难度/地图后点击 AI 补齐仍保持房主就绪且可正常开局', () => {
+    const manager = new RoomManager();
+    const room = manager.createRoom({
+      name: '切图切难度补齐',
+      dungeonId: 'shadowfang_keep',
+      difficulty: 'HEROIC',
+      host: { id: 'host_1', name: '吉安娜', classId: 'MAGE', spec: 'FIRE' },
+    });
+
+    assert.strictEqual(manager.setRoomDifficulty(room.id, 'NORMAL'), true);
+    assert.strictEqual(manager.switchMap(room.id, 'scarlet_monastery'), true);
+
+    const fillRes = manager.autoFillAi(room.id, { replaceExistingAi: true });
+    assert.strictEqual(fillRes.success, true);
+
+    const validation = manager.validateStartGame(room.id);
+    assert.strictEqual(validation.canStart, true, `补齐后应可开局: ${validation.reasons.join(';')}`);
+    assert.strictEqual(validation.allReady, true);
+
+    const start = manager.startGame(room.id, 'host_1');
+    assert.strictEqual(start.success, true, start.reason || '');
+  });
 });
