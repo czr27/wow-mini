@@ -1,26 +1,27 @@
 @echo off
+chcp 65001 >nul
 setlocal EnableExtensions
 cd /d "%~dp0"
 
-title Cata Raid Sim - �ճ�����
+title Cata Raid Sim - 日常启动
 echo ========================================
-echo   ���ֱ丱��ģ���� - �ճ�����
+echo   大灾变副本模拟器 - 日常启动
 echo ========================================
 echo.
-echo �����µ��Ե�һ���ܣ�����˫����
-echo   R0_�µ��԰�װ������.bat
+echo 若是新电脑第一次跑，请先双击：
+echo   R0_新电脑安装并启动.bat
 echo.
 
 where node >nul 2>nul
 if errorlevel 1 (
-  echo [ȱ��] δ��װ Node.js���������� R0_�µ��԰�װ������.bat
+  echo [缺少] 未安装 Node.js，请先运行 R0_新电脑安装并启动.bat
   rem pause
   exit /b 1
 )
 
 if not exist "DEV\node_modules" (
-  echo [��ʾ] δ�ҵ� DEV\node_modules����Ϊִ�а�װ�ű�...
-  call "%~dp0R0_�µ��԰�װ������.bat"
+  echo [提示] 未找到 DEV\node_modules，改为执行安装脚本...
+  call "%~dp0R0_新电脑安装并启动.bat"
   exit /b %errorlevel%
 )
 

@@ -1,16 +1,17 @@
 @echo off
+chcp 65001 >nul
 cd /d "%~dp0"
 
-echo ÕýÔÚÇå³ý¸Õ²ÅÌî´íµÄ Git ÓÃ»§ÃûºÍÓÊÏä...
+echo æ­£åœ¨æ¸…é™¤åˆšæ‰å¡«é”™çš„ Git ç”¨æˆ·åå’Œé‚®ç®±...
 git config --global --unset-all user.name 2>nul
 git config --global --unset-all user.email 2>nul
 
 if exist ".git" (
-    echo ÕýÔÚÉ¾³ý±¾µØ .git ¼ÇÂ¼£¨²»»áÉ¾ÄãµÄÈÎºÎ´úÂëÎÄ¼þ£©...
+    echo æ­£åœ¨åˆ é™¤æœ¬åœ° .git è®°å½•ï¼ˆä¸ä¼šåˆ ä½ çš„ä»»ä½•ä»£ç æ–‡ä»¶ï¼‰...
     attrib -h -r -s ".git" /s /d >nul 2>nul
     rmdir /s /q ".git"
 )
 
 echo.
-echo ÖØÖÃÍê³É£¡ÏÖÔÚ¿ÉÒÔÖØÐÂË«»÷ÔËÐÐ "G1_Ê×´ÎÉÏ´«.bat" ÁË¡£
+echo é‡ç½®å®Œæˆï¼çŽ°åœ¨å¯ä»¥é‡æ–°åŒå‡»è¿è¡Œ "G1_é¦–æ¬¡ä¸Šä¼ .bat" äº†ã€‚
 pause
