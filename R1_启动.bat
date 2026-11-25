@@ -1,36 +1,37 @@
 @echo off
+chcp 65001 >nul
 setlocal EnableExtensions
 cd /d "%~dp0"
 
-title Cata Raid Sim - ÈÕ³£Æô¶¯
+title Cata Raid Sim - æ—¥å¸¸å¯åŠ¨
 echo ========================================
-echo   ´óÔÖ±ä¸±±¾Ä£ÄâÆ÷ - ÈÕ³£Æô¶¯
+echo   å¤§ç¾å˜å‰¯æœ¬æ¨¡æ‹Ÿå™¨ - æ—¥å¸¸å¯åŠ¨
 echo ========================================
 echo.
-echo ÈôÊÇĞÂµçÄÔµÚÒ»´ÎÅÜ£¬ÇëÏÈË«»÷£º
-echo   R0_ĞÂµçÄÔ°²×°²¢Æô¶¯.bat
+echo è‹¥æ˜¯æ–°ç”µè„‘ç¬¬ä¸€æ¬¡è·‘ï¼Œè¯·å…ˆåŒå‡»ï¼š
+echo   R0_æ–°ç”µè„‘å®‰è£…å¹¶å¯åŠ¨.bat
 echo.
 
 where node >nul 2>nul
 if errorlevel 1 (
-  echo [È±ÉÙ] Î´°²×° Node.js£¬ÇëÏÈÔËĞĞ R0_ĞÂµçÄÔ°²×°²¢Æô¶¯.bat
+  echo [ç¼ºå°‘] æœªå®‰è£… Node.jsï¼Œè¯·å…ˆè¿è¡Œ R0_æ–°ç”µè„‘å®‰è£…å¹¶å¯åŠ¨.bat
   pause
   exit /b 1
 )
 
 if not exist "DEV\node_modules" (
-  echo [ÌáÊ¾] Î´ÕÒµ½ DEV\node_modules£¬¸ÄÎªÖ´ĞĞ°²×°½Å±¾...
-  call "%~dp0R0_ĞÂµçÄÔ°²×°²¢Æô¶¯.bat"
+  echo [æç¤º] æœªæ‰¾åˆ° DEV\node_modulesï¼Œæ”¹ä¸ºæ‰§è¡Œå®‰è£…è„šæœ¬...
+  call "%~dp0R0_æ–°ç”µè„‘å®‰è£…å¹¶å¯åŠ¨.bat"
   exit /b %errorlevel%
 )
 
-:: Ã¿´ÎÆô¶¯¶¼±àÒë engine£¬±ÜÃâÔ´ÂëÓĞĞÂ·½·¨µ« dist ¹ıÆÚµ¼ÖÂ·şÎñ¶Ë±ÀÀ£
-echo [±àÒë] packages/engine ...
+:: æ¯æ¬¡å¯åŠ¨éƒ½ç¼–è¯‘ engineï¼Œé¿å…æºç æœ‰æ–°æ–¹æ³•ä½† dist è¿‡æœŸå¯¼è‡´æœåŠ¡ç«¯å´©æºƒ
+echo [ç¼–è¯‘] packages/engine ...
 pushd "%~dp0DEV"
 call npm run build --workspace=packages/engine
 if errorlevel 1 (
   popd
-  echo [´íÎó] engine ±àÒëÊ§°Ü
+  echo [é”™è¯¯] engine ç¼–è¯‘å¤±è´¥
   pause
   exit /b 1
 )
@@ -38,14 +39,14 @@ popd
 
 
 cd /d "%~dp0DEV"
-echo Æô¶¯ Server + Web ...
-echo ä¯ÀÀÆ÷: http://127.0.0.1:5173/
+echo å¯åŠ¨ Server + Web ...
+echo æµè§ˆå™¨: http://127.0.0.1:5173/
 echo.
 
-:: /D Ö¸¶¨¹¤×÷Ä¿Â¼£¬±ÜÃâÇ¶Ì×ÒıºÅµ¼ÖÂÓï·¨´íÎó
+:: /D æŒ‡å®šå·¥ä½œç›®å½•ï¼Œé¿å…åµŒå¥—å¼•å·å¯¼è‡´è¯­æ³•é”™è¯¯
 start "Cata Raid Sim - Server" /D "%~dp0DEV" cmd /k "npm run dev --workspace=packages/server"
 timeout /t 2 /nobreak >nul
-echo ÇëÊÖ¶¯´ò¿ªä¯ÀÀÆ÷·ÃÎÊ: http://127.0.0.1:5173/
+echo è¯·æ‰‹åŠ¨æ‰“å¼€æµè§ˆå™¨è®¿é—®: http://127.0.0.1:5173/
 call npm run dev --workspace=packages/web
 
 pause
