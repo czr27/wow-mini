@@ -149,15 +149,21 @@ export const GlubtokEncounter: BossEncounterModule = {
       if ((ai.glubtokFirewallAcc || 0) >= 8000) {
         ai.glubtokFirewallAcc = 0;
         const bPos = boss.position || { x: 500, y: 200 };
-        // 火墙：环形采样点伤害 — 距 Boss 约 70–100 的环带
-        for (const u of living(engine)) {
-          const d = Math.hypot(
-            (u.position?.x || 0) - bPos.x,
-            (u.position?.y || 0) - bPos.y,
-          );
-          if (d >= 65 && d <= 105) {
-            engine.dealDamage(boss, u, 18_000, 'FIRE', true, '火墙');
-          }
+        // 火墙：生成可观测、可躲避的地面火焰区域（环绕 Boss 约 85px 半径的 4 个节点）
+        for (let k = 0; k < 4; k++) {
+          const ang = (k * Math.PI) / 2 + ((ai.glubtokFightMs || 0) / 8000) * 0.7;
+          engine.effectsManager?.addGroundEffect({
+            kind: 'DAMAGE_ZONE',
+            spellId: 'glubtok_firewall',
+            ownerId: boss.id,
+            x: bPos.x + Math.cos(ang) * 85,
+            y: bPos.y + Math.sin(ang) * 85,
+            radius: 32,
+            colorHex: '#EF4444',
+            remainingMs: 3500,
+            tickIntervalMs: 1000,
+            tickValue: 12_000,
+          });
         }
         engine.effectsManager?.addFloatingText({
           targetId: boss.id,

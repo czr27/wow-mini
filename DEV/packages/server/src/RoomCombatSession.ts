@@ -13,6 +13,7 @@ import {
   getUnitHaste,
   inferAiSpecForUnit,
   isAiCdReady,
+  tickEnemyAdds,
   markAiCdUsed,
   notifyOom,
   runFriendlyAiCombatTick,
@@ -60,6 +61,7 @@ export class RoomCombatSession {
   private aiCasts: Record<string, AiActiveCast> = {};
   private aiCooldowns: Record<string, number> = {};
   private aiPersonalities = new Map<string, AIPersonality>();
+  private addLastAttackMs = new Map<string, number>();
   private lastOomWarningMs: Record<string, number> = {};
   private srvEffectSeq = 0;
 
@@ -689,6 +691,8 @@ export class RoomCombatSession {
     // 2. 运行完整 10 职业 / 30 专精通用 AI 战斗决策循环
     const livingEnemies = this.engine.enemyUnits.filter((e) => (e.isAlive ?? e.alive) && e.hp > 0);
     const bossThreatTargetId = this.engine.getBossTargetId() || null;
+
+    tickEnemyAdds(this.engine, boss, deltaMs, this.addLastAttackMs);
 
     runFriendlyAiCombatTick({
       engine: this.engine,

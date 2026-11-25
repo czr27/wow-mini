@@ -13,9 +13,9 @@ export const LEVEL_80_BOSS_DAMAGE_SCALE = 0.45;
 export const LEVEL_80_STATS = {
   level: LEVEL_80_CAP,
   haste: LEVEL_80_MAX_HASTE,
-  tankBaseHp: 65000,
-  dpsHealerBaseHp: 36000,
-  petBaseHp: 22000,
+  tankBaseHp: 110000,
+  dpsHealerBaseHp: 68000,
+  petBaseHp: 35000,
   casterBaseMp: 42000,
   healerBaseMp: 45000,
   tankAttackPower: 5400,

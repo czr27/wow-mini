@@ -7,6 +7,7 @@ interface Props {
   totalMs?: number;
   deadUnits?: Unit[];
   isReviving?: boolean;
+  reviveProgress?: number;
   revivingTargetName?: string;
   isPlayerHealer?: boolean;
   onPlayerRevive?: () => void;
@@ -17,9 +18,6 @@ interface Props {
   skipTravelVote?: NetworkVoteState | null;
   mySkipVote?: 'YES' | 'NO' | null;
   onSkipTravelVote?: (choice: 'YES' | 'NO') => void;
-  /** Maze auto-path vs manual control */
-  autoNavActive?: boolean;
-  onToggleAutoNav?: () => void;
   dungeonTier?: '5man' | '20man';
 }
 
@@ -32,17 +30,13 @@ export const TravelRecovery: React.FC<Props> = ({
   totalMs = 7000,
   deadUnits = [],
   isReviving = false,
-  revivingTargetName = '',
-  isPlayerHealer = false,
-  onPlayerRevive,
+  reviveProgress = 0,
   onFastForward,
   isCorpseRunning = false,
   corpseRunRemainingMs = 0,
   skipTravelVote = null,
   mySkipVote = null,
   onSkipTravelVote,
-  autoNavActive = true,
-  onToggleAutoNav,
   dungeonTier = '5man',
 }) => {
   const seconds = Math.max(0, Math.ceil(remainingMs / 1000));
@@ -83,30 +77,29 @@ export const TravelRecovery: React.FC<Props> = ({
   }
 
   if (hasDeadMembers) {
+    const revPct = Math.min(100, Math.max(0, reviveProgress * 100));
     return (
       <div className={`${shellClass} border-amber-500/45 bg-[#1a1206]/92`}>
-        <div className="px-3.5 py-2.5 flex items-center justify-between gap-3">
+        <div className="px-3.5 pt-2.5 pb-2 flex items-center justify-between gap-3">
           <div className="min-w-0">
             <div className="text-[11px] font-bold text-amber-100 tracking-wide truncate">
-              等待复活 · {deadUnits.map((u) => u.name).join('、')}
+              系统群体复活（8s）· {deadUnits.map((u) => u.name).join('、')}
             </div>
-            <div className="text-[10px] text-amber-200/65 truncate">
+            <div className="text-[10px] text-amber-200/70 truncate">
               {isReviving
-                ? `正在复活【${revivingTargetName || '阵亡队员'}】…`
+                ? `正在读条群体复活中… ${Math.round(revPct)}%`
                 : '全员齐备后方可继续行军'}
             </div>
           </div>
-          <div className="flex items-center gap-2 shrink-0">
-            {isPlayerHealer && onPlayerRevive ? (
-              <button
-                type="button"
-                onClick={onPlayerRevive}
-                className="px-3 py-1.5 rounded-lg text-[11px] font-bold text-emerald-50 bg-emerald-700/90 hover:bg-emerald-600 border border-emerald-400/40 transition-colors"
-              >
-                复活队友
-              </button>
-            ) : null}
+          <div className="shrink-0 font-mono text-sm font-bold text-amber-300 tabular-nums">
+            {Math.max(0, ((1 - reviveProgress) * 8)).toFixed(1)}s
           </div>
+        </div>
+        <div className="h-1.5 bg-black/50">
+          <div
+            className="h-full bg-gradient-to-r from-amber-600 via-amber-400 to-emerald-400 transition-[width] duration-75 ease-linear"
+            style={{ width: `${revPct}%` }}
+          />
         </div>
       </div>
     );
@@ -181,32 +174,19 @@ export const TravelRecovery: React.FC<Props> = ({
       }}
     >
       <div className="px-3 pt-2.5 pb-2 flex items-center gap-2.5">
-        {/* Auto / manual toggle */}
-        <button
-          type="button"
-          onClick={onToggleAutoNav}
-          title={autoNavActive ? '点击切换为手动操控' : '点击恢复自动寻路'}
-          className={`shrink-0 flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 border transition-all ${
-            autoNavActive
-              ? 'bg-cyan-500/15 border-cyan-400/45 text-cyan-100 shadow-[0_0_16px_rgba(34,211,238,0.12)]'
-              : 'bg-slate-800/70 border-slate-500/40 text-slate-300 hover:border-slate-400/60'
-          }`}
-        >
-          <span
-            className={`inline-block w-1.5 h-1.5 rounded-full ${
-              autoNavActive ? 'bg-cyan-300 animate-pulse' : 'bg-slate-500'
-            }`}
-          />
+        {/* Status badge (fixed auto-march, no manual control in maze) */}
+        <div className="shrink-0 flex items-center gap-1.5 rounded-xl px-2.5 py-1.5 border bg-cyan-500/15 border-cyan-400/45 text-cyan-100 shadow-[0_0_16px_rgba(34,211,238,0.12)]">
+          <span className="inline-block w-1.5 h-1.5 rounded-full bg-cyan-300 animate-pulse" />
           <span className="text-[11px] font-bold tracking-wide whitespace-nowrap">
-            {autoNavActive ? '自动寻路' : '手动操控'}
+            队伍行军
           </span>
-        </button>
+        </div>
 
         {/* March destination + progress */}
         <div className="flex-1 min-w-0">
           <div className="flex items-baseline justify-between gap-2 mb-1">
             <div className="text-[11px] font-semibold text-slate-100/95 truncate">
-              <span className="text-slate-400 font-medium">行军 · </span>
+              <span className="text-slate-400 font-medium">前往 · </span>
               {targetBossName || '首领'}
             </div>
             <div className="text-[10px] text-slate-400 shrink-0 tabular-nums">
@@ -218,16 +198,12 @@ export const TravelRecovery: React.FC<Props> = ({
               className="h-full rounded-full transition-[width] duration-150 ease-out"
               style={{
                 width: `${progressPct}%`,
-                background: autoNavActive
-                  ? 'linear-gradient(90deg, #0e7490, #22d3ee, #67e8f9)'
-                  : 'linear-gradient(90deg, #475569, #94a3b8)',
+                background: 'linear-gradient(90deg, #0e7490, #22d3ee, #67e8f9)',
               }}
             />
           </div>
           <div className="mt-1 text-[9px] text-slate-500 truncate">
-            {autoNavActive
-              ? '阵型疾跑中 · 单击地面或 WASD 可接管'
-              : '单击地面 / WASD 移动 · 点左侧恢复自动寻路'}
+            系统自动推进中 · 迷宫阶段禁止自主移动（可右键旋转/俯仰视角）
           </div>
         </div>
 

@@ -588,6 +588,9 @@ export interface CombatDisplayPrefs {
   /** Boss 血条 / 名称 */
   showBossHp: boolean;
   showBossName: boolean;
+  /** 小怪血条 / 名称 */
+  showAddHp: boolean;
+  showAddName: boolean;
   /** 当前目标（对象）血条 / 名称 */
   showTargetHp: boolean;
   showTargetName: boolean;
@@ -706,6 +709,8 @@ export const DEFAULT_COMBAT_DISPLAY_PREFS: CombatDisplayPrefs = {
   showAllNames: false,
   showBossHp: true,
   showBossName: true,
+  showAddHp: true,
+  showAddName: true,
   showTargetHp: true,
   showTargetName: true,
   showFocusHp: true,

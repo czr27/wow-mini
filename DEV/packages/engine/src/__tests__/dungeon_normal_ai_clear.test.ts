@@ -10,6 +10,12 @@ import {
   getSpellByAnyId,
   createLevel80BaseStats,
   LEVEL_80_STATS,
+  getEffectiveGcdMs,
+  getHastedCastTimeMs,
+  getUnitHaste,
+  isPosInHazard,
+  rollAiDamage,
+  rollAiHeal,
 } from '../index.js';
 import type { ClassId, Unit } from '../types.js';
 
@@ -137,6 +143,8 @@ function simulateNormalBossEncounter(
   const STEP_MS = 250;
   const MAX_MS = 180_000;
   let lastBossAaMs = 0;
+  let lastPartyAaMs = 0;
+  const unitNextReadyAtMs = new Map<string, number>();
 
   for (let t = 0; t < MAX_MS; t += STEP_MS) {
     engine.tick(STEP_MS);
@@ -164,6 +172,45 @@ function simulateNormalBossEncounter(
 
     tickEnemyAdds(engine, boss, STEP_MS, addTimers);
 
+    // 友军白字普攻（每 2s）
+    if (t - lastPartyAaMs >= 2000) {
+      lastPartyAaMs = t;
+      const firstEnemy =
+        engine.enemyUnits.find((e) => e.id !== boss.id && (e.isAlive ?? e.alive) && e.hp > 0) ||
+        boss;
+      for (const u of livingAllies) {
+        if (u.role === 'HEALER') continue;
+        const isMelee = ['DK', 'ROGUE', 'WARRIOR', 'PALADIN'].includes(u.classId);
+        const isCrit = Math.random() < (u.stats.critChance || 0.25);
+        const baseAuto = isMelee ? (isCrit ? 9000 : 4500) : (isCrit ? 4000 : 2000);
+        engine.resolveAttackHit(u, firstEnemy, baseAuto, 'PHYSICAL', isCrit, '普通攻击');
+      }
+    }
+
+    // 真实躲圈与沃登绿药走动模拟
+    const hazards = (engine.effectsManager?.groundEffects || []).filter(
+      (g) => (g.kind === 'DAMAGE_ZONE' || g.kind === 'CONE_WARNING') && g.remainingMs > 0
+    );
+    for (const u of livingAllies) {
+      const pos = u.position || { x: 200, y: 200 };
+      const hitHz = hazards.find((h) => isPosInHazard(pos, h));
+      if (hitHz) {
+        const dx = pos.x - hitHz.x;
+        const dy = pos.y - hitHz.y;
+        const len = Math.hypot(dx, dy) || 1;
+        const safeR = (hitHz.radius || 45) + 16;
+        u.position = {
+          x: hitHz.x + (dx / len) * safeR,
+          y: hitHz.y + (dy / len) * safeR,
+        };
+      } else if (u.buffs?.some((b) => b.spellId === 'walden_green_toxin')) {
+        u.position = {
+          x: pos.x + ((t / STEP_MS) % 2 === 0 ? 8 : -8),
+          y: pos.y,
+        };
+      }
+    }
+
     const gs = {
       units: [...engine.friendlyUnits, ...engine.enemyUnits],
       bossId: boss.id,
@@ -172,6 +219,10 @@ function simulateNormalBossEncounter(
     };
 
     for (const u of livingAllies) {
+      // 真实 GCD 与读条间隔约束（不再每 250ms 瞬发）
+      const nextReady = unitNextReadyAtMs.get(u.id) ?? 0;
+      if (t < nextReady) continue;
+
       const roleAi = u.role === 'TANK' ? tankAi : u.role === 'HEALER' ? healerAi : dpsAi;
       const actions = roleAi.decide(u, gs);
       const top = actions[0];
@@ -182,14 +233,36 @@ function simulateNormalBossEncounter(
         (u.role === 'HEALER' ? livingAllies[0] : boss);
       if (!sp || !target) continue;
 
-      if (sp.isTaunt) {
+      const haste = getUnitHaste(u, LEVEL_80_STATS.haste);
+      const gcdMs = getEffectiveGcdMs(
+        u.classId === 'ROGUE' || u.classId === 'HUNTER' ? 'ROGUE' : 'NORMAL',
+        haste
+      );
+      const castMs = sp.castTimeMs > 0 ? getHastedCastTimeMs(sp.castTimeMs, haste) : 0;
+      unitNextReadyAtMs.set(u.id, t + Math.max(gcdMs, castMs));
+
+      const isCrit = Math.random() < (u.stats.critChance || 0.25);
+      if (sp.isInterrupt) {
+        bossAi.interruptCurrentCast();
+      } else if (sp.isTaunt) {
         engine.threatManager.applyTaunt(target.id, u.id);
       } else if (sp.isHeal || sp.isShield) {
-        const amt = Math.max(8_000, Math.round((sp.directHeal || 12_000) * 1.1));
-        engine.healUnit(u, target, amt, false, sp.name);
-      } else if (sp.isDamage) {
-        const amt = Math.max(4_500, Math.round((sp.directDamage || 7_500) * 1.1));
-        engine.dealDamage(u, target, amt, sp.school || 'PHYSICAL', false, sp.name);
+        const baseH = sp.directHeal || sp.hotTotalHeal || sp.shieldValue || 10_000;
+        const amt = rollAiHeal(u, Math.max(8_000, baseH), isCrit);
+        engine.healUnit(u, target, amt, isCrit, sp.name);
+      } else if (sp.isDamage || sp.isDot) {
+        const baseD = sp.directDamage || Math.round((sp.dotTotalDamage || 12_000) * 0.75);
+        const amt = rollAiDamage(u, Math.max(8_500, baseD), sp.school || 'PHYSICAL', isCrit);
+        if (sp.isAOE) {
+          const aoeTargets = engine.enemyUnits
+            .filter((e) => (e.isAlive ?? e.alive) && e.hp > 0)
+            .slice(0, sp.maxAoeTargets || 5);
+          for (const et of aoeTargets) {
+            engine.dealDamage(u, et, amt, sp.school || 'PHYSICAL', isCrit, sp.name);
+          }
+        } else {
+          engine.dealDamage(u, target, amt, sp.school || 'PHYSICAL', isCrit, sp.name);
+        }
       }
     }
   }

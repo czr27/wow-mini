@@ -131,4 +131,86 @@ describe('DBM 精简播报、短语音与顶替规则', () => {
     assert.equal(alerts[0].advice, '先杀小怪');
     assert.equal(alerts[0].voiceText, '先杀小怪');
   });
+
+  it('5. 沃登绿/红魔药交替触发「保持移动」与「站立不动」并共用 replaceKey', () => {
+    const engine = new CombatEngine();
+    const boss = engine.spawnBoss('walden', '沃登勋爵', 500_000);
+    spawnCombatUnit(engine, {
+      id: 'tank_1',
+      name: '防战',
+      classId: 'WARRIOR',
+      role: 'TANK',
+      unitKind: 'AI',
+    });
+
+    const ai = new BaseBossAI('walden', 'shadowfang_keep');
+    const potion = ai.skills.find((s) => s.id === 'potion_catalyst')!;
+    assert.ok(potion);
+
+    // 第一次施放：绿药
+    potion.execute(boss, engine);
+    const greenAlerts = engine.drainDbmAlerts();
+    assert.equal(greenAlerts.length, 1);
+    assert.equal(greenAlerts[0].voiceText, '保持移动');
+    assert.equal(greenAlerts[0].replaceKey, 'walden_potion');
+
+    // 第二次施放：红药（不同 title，同 replaceKey）
+    engine.elapsedMs += 2000;
+    potion.execute(boss, engine);
+    const redAlerts = engine.drainDbmAlerts();
+    assert.equal(redAlerts.length, 1);
+    assert.equal(redAlerts[0].voiceText, '站立不动');
+    assert.equal(redAlerts[0].replaceKey, 'walden_potion');
+  });
+
+  it('6. 奥卓克希昂暮光时刻与凋零之光触发对应短语音', () => {
+    const engine = new CombatEngine();
+    const boss = engine.spawnBoss('ultraxion', '奥卓克希昂', 2_000_000);
+    spawnCombatUnit(engine, {
+      id: 'tank_1',
+      name: '防战',
+      classId: 'WARRIOR',
+      role: 'TANK',
+      unitKind: 'AI',
+    });
+
+    const ai = new BaseBossAI('ultraxion', 'dragon_soul');
+    const hour = ai.skills.find((s) => s.id === 'hour_of_twilight')!;
+    assert.ok(hour.dbm);
+    assert.equal(hour.dbm.voiceText, '暮光时刻');
+
+    // 推进到 40s 触发凋零之光
+    ai.tick(40_000, boss, engine);
+    const alerts = engine.drainDbmAlerts();
+    const fading = alerts.find((a) => a.spellId === 'fading_light');
+    assert.ok(fading);
+    assert.equal(fading.voiceText, '点离领域');
+  });
+
+  it('7. 格拉布托克 P2 转阶段、曲奇抛食物、赫洛德旋风斩均有短语音且常规技能不刷屏', () => {
+    const engine = new CombatEngine();
+    const glubtok = engine.spawnBoss('glubtok', '戈洛克托克', 500_000);
+    spawnCombatUnit(engine, {
+      id: 'dps_1',
+      name: '法师',
+      classId: 'MAGE',
+      role: 'DPS',
+      unitKind: 'AI',
+    });
+
+    const glubAi = new BaseBossAI('glubtok', 'deadmines');
+    glubtok.hp = 200_000; // <= 50% 触发 P2
+    glubAi.tick(100, glubtok, engine);
+    const glubAlerts = engine.drainDbmAlerts();
+    assert.equal(glubAlerts.length, 1);
+    assert.equal(glubAlerts[0].voiceText, '躲避火墙');
+
+    const cookieAi = new BaseBossAI('cookie', 'deadmines');
+    assert.equal(cookieAi.skills.find((s) => s.id === 'cookie_cleave')?.dbm, undefined);
+    assert.equal(cookieAi.skills.find((s) => s.id === 'throw_food')?.dbm?.voiceText, '吃好食物');
+
+    const herodAi = new BaseBossAI('herod', 'scarlet_monastery');
+    assert.equal(herodAi.skills.find((s) => s.id === 'herod_strike')?.dbm, undefined);
+    assert.equal(herodAi.skills.find((s) => s.id === 'whirlwind')?.dbm?.voiceText, '注意远离');
+  });
 });

@@ -202,10 +202,6 @@ function resolveUnitCastState(
 
 /** Combat viewport shell: canvas + floating HUD (no App business logic). */
 export function CombatHudScreen(props: CombatHudScreenProps) {
-  const [autoNavActive, setAutoNavActive] = useState(true);
-  useEffect(() => {
-    if (props.runPhase === 'TRAVEL_RECOVERY') setAutoNavActive(true);
-  }, [props.runPhase, props.currentBossIndex]);
   const {
     friendlyUnits,
     bossUnit,
@@ -340,8 +336,6 @@ export function CombatHudScreen(props: CombatHudScreenProps) {
           syncRemotePositions={syncRemotePositions}
           isNetworkGuest={isNetworkGuest}
           onNetworkMoveReport={onNetworkMoveReport}
-          autoNavActive={autoNavActive}
-          onAutoNavChange={setAutoNavActive}
           combatDisplayPrefs={currentChar?.uiLayout?.combatDisplay ?? null}
         />
       </div>
@@ -394,6 +388,7 @@ export function CombatHudScreen(props: CombatHudScreenProps) {
               totalMs={totalTravelMs}
               deadUnits={deadUnits}
               isReviving={!!revivingUnitId}
+              reviveProgress={reviveProgress}
               revivingTargetName={friendlyUnits.find(u => u.id === revivingUnitId)?.name || ''}
               isPlayerHealer={isPlayerHealer}
               onPlayerRevive={onPlayerRevive}
@@ -403,8 +398,6 @@ export function CombatHudScreen(props: CombatHudScreenProps) {
               skipTravelVote={skipTravelVote}
               mySkipVote={mySkipVote}
               onSkipTravelVote={onSkipTravelVote}
-              autoNavActive={autoNavActive}
-              onToggleAutoNav={() => setAutoNavActive((v) => !v)}
               dungeonTier={dungeonTier}
             />
           </div>

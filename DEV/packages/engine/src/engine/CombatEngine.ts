@@ -2432,6 +2432,7 @@ export class CombatEngine {
     isPet?: boolean;
     ownerId?: string;
     unitKind?: Unit['unitKind'];
+    summonSpellId?: string;
     isBoss?: boolean;
     isAlive: boolean;
     hp: number;
@@ -2469,6 +2470,7 @@ export class CombatEngine {
         isPet: !!u.isPet || unitKind === 'PET',
         ownerId: u.ownerId,
         unitKind,
+        summonSpellId: u.summonSpellId,
         isBoss,
         isAlive: u.isAlive,
         hp: u.hp,
@@ -2502,6 +2504,7 @@ export class CombatEngine {
       isPet?: boolean;
       ownerId?: string;
       unitKind?: Unit['unitKind'];
+      summonSpellId?: string;
       isAlive: boolean;
       hp: number;
       maxHp: number;
@@ -2535,6 +2538,7 @@ export class CombatEngine {
           isPet: !!s.isPet || unitKind === 'PET',
           ownerId: s.ownerId,
           unitKind,
+          summonSpellId: s.summonSpellId,
           isAlive: s.isAlive,
           hp: s.hp,
           maxHp: s.maxHp,

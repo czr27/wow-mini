@@ -1365,6 +1365,126 @@ function drawBossHpBar(
   ctx.restore();
 }
 
+/** Draw summoned combat add / tentacle / barrier model on canvas. */
+function drawEnemyAddModel(
+  ctx: CanvasRenderingContext2D,
+  add: Unit,
+  pos: { x: number; y: number },
+  isSelected: boolean,
+  tickCount: number,
+  opts?: { showName?: boolean }
+) {
+  ctx.save();
+  ctx.translate(pos.x, pos.y);
+
+  // Ground shadow
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+  ctx.beginPath();
+  ctx.ellipse(0, 2, 13, 6, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  if (isSelected) {
+    ctx.strokeStyle = '#EF4444';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.ellipse(0, 2, 17, 9, 0, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  const sid = add.summonSpellId || '';
+  const sway = Math.sin(tickCount * 0.14 + pos.x * 0.05) * 2.5;
+
+  if (
+    sid.includes('bloodvenom') ||
+    sid.includes('tentacle') ||
+    sid.includes('limb') ||
+    sid.includes('corruption')
+  ) {
+    // 触须类：紫红扭曲触须 + 毒光核心
+    ctx.fillStyle = sid.includes('bloodvenom') ? '#6B21A8' : '#7F1D1D';
+    ctx.beginPath();
+    ctx.moveTo(-7, 0);
+    ctx.quadraticCurveTo(-5 + sway, -14, sway * 1.4, -24);
+    ctx.quadraticCurveTo(6 + sway, -14, 7, 0);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = sid.includes('bloodvenom') ? '#A3E635' : '#F87171';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+    ctx.fillStyle = sid.includes('bloodvenom') ? '#BEF264' : '#FCA5A5';
+    ctx.beginPath();
+    ctx.arc(sway * 0.8, -14, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (sid.includes('barrier') || sid.includes('crystal') || sid.includes('ice_tomb')) {
+    // 水晶/屏障类
+    ctx.fillStyle = sid.includes('ice') ? '#38BDF8' : '#A855F7';
+    ctx.beginPath();
+    ctx.moveTo(0, -24);
+    ctx.lineTo(10, -10);
+    ctx.lineTo(6, 2);
+    ctx.lineTo(-6, 2);
+    ctx.lineTo(-10, -10);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = '#F3E8FF';
+    ctx.lineWidth = 1.2;
+    ctx.stroke();
+  } else {
+    // 常规召唤小怪（食尸鬼/僵尸/骷髅/豹/狂战士等）
+    ctx.fillStyle = '#450A0A';
+    ctx.beginPath();
+    ctx.arc(0, -10, 10, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#EF4444';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    // Glowing red eyes
+    ctx.fillStyle = '#FCA5A5';
+    ctx.fillRect(-4, -13, 2.5, 2.5);
+    ctx.fillRect(1.5, -13, 2.5, 2.5);
+  }
+
+  if (opts?.showName) {
+    ctx.font = 'bold 10px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(0,0,0,0.75)';
+    ctx.fillText(add.name, 1, -29);
+    ctx.fillStyle = '#FCA5A5';
+    ctx.fillText(add.name, 0, -30);
+  }
+  ctx.restore();
+}
+
+/** Compact red HP plate for summoned adds; optional name inside. */
+function drawEnemyAddHpBar(
+  ctx: CanvasRenderingContext2D,
+  add: Unit,
+  pos: { x: number; y: number },
+  opts?: { name?: string | null }
+) {
+  if (!((add.isAlive ?? add.alive) && add.hp > 0)) return;
+  const hpPct = Math.max(0, Math.min(1, add.hp / Math.max(1, add.maxHp)));
+  const hasName = !!(opts?.name && opts.name.trim());
+  const barW = hasName ? 68 : 48;
+  const barH = hasName ? 10 : 5;
+  const y = -36;
+  ctx.save();
+  ctx.translate(pos.x, pos.y);
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.78)';
+  ctx.fillRect(-barW / 2 - 1, y - 1, barW + 2, barH + 2);
+  ctx.fillStyle = '#2a0000';
+  ctx.fillRect(-barW / 2, y, barW, barH);
+  ctx.fillStyle = '#EF4444';
+  ctx.fillRect(-barW / 2, y, barW * hpPct, barH);
+  ctx.strokeStyle = '#7F1D1D';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(-barW / 2, y, barW, barH);
+  if (hasName) {
+    drawNameInsideBar(ctx, opts!.name!, barW, barH, y, '#FECACA');
+  }
+  ctx.restore();
+}
+
 // ── Procedural Dungeon Labyrinth Corridors ──────────────────────────────────
 // 1. Shadowfang Keep (5-man Castle Corridors, 10 waypoints)
 const SHADOWFANG_WAYPOINTS = [
@@ -3008,6 +3128,19 @@ export const CombatCanvas: React.FC<Props> = ({
       }
     }
 
+    // 1.5 Direct Target Selection: Click on Summoned Add
+    if (runPhase !== 'TRAVEL_RECOVERY') {
+      for (const add of enemyUnitsRef.current) {
+        if (bossUnit && add.id === bossUnit.id) continue;
+        if (!(add.alive ?? add.isAlive) || add.hp <= 0 || !add.position) continue;
+        if (Math.hypot(clickX - add.position.x, clickY - add.position.y) <= 26) {
+          handleSelectOrFocus(add.id);
+          clickTargetRef.current = null;
+          return;
+        }
+      }
+    }
+
     // 2. Direct Target Selection: Click on Player Character
     const pp = playerPosRef.current;
     const pUnit = units.find(u => u.isPlayer);
@@ -3030,11 +3163,7 @@ export const CombatCanvas: React.FC<Props> = ({
       }
     }
 
-    // 4. Click on empty ground: Navigate/walk player to clicked position in combat (maze is always auto-nav)
-    if (pUnit && (pUnit.isAlive ?? pUnit.alive) && pUnit.hp > 0 && runPhase !== 'TRAVEL_RECOVERY') {
-      clickTargetRef.current = { x: clickX, y: clickY, time: Date.now() };
-      setAutoNav(false);
-    }
+    // Click-to-move is disabled inside all dungeon phases (use WASD / chord move in combat; auto-march in maze)
   };
 
   // Double-click on canvas: Select unit or Boss
@@ -3386,7 +3515,8 @@ export const CombatCanvas: React.FC<Props> = ({
         for (let i = 0; i < packWindows.length; i++) {
           const w = packWindows[i];
           const prevStop = i === 0 ? 0 : packWindows[i - 1].stopDist;
-          const nextFight = i + 1 < packWindows.length ? packWindows[i + 1].fightStart : exitSprintStart;
+          // Final cleared segment runs continuously to totalT so targetLeadDist never snaps backward at exitSprintStart
+          const nextFight = i + 1 < packWindows.length ? packWindows[i + 1].fightStart : totalT;
           if (elapsed < w.fightStart) {
             const marchStart = i === 0 ? 0 : packWindows[i - 1].clearAt;
             const denom = Math.max(1, w.fightStart - marchStart);
@@ -4412,30 +4542,26 @@ export const CombatCanvas: React.FC<Props> = ({
             });
           });
 
-          // If member is dead, show resurrecting beam from healer
-          if (!u.alive && revivingUnitId === u.id) {
-            const healer = units.find(unit => (unit.role === 'HEALER' || unit.classId === 'SHAMAN' || unit.classId === 'DRUID' || unit.classId === 'PRIEST' || unit.classId === 'PALADIN') && (unit.alive ?? unit.isAlive));
-            if (healer) {
-              const hPos = healer.isPlayer ? playerPosRef.current : (companionPositionsRef.current[healer.id] || { x: 60, y: 80 });
-              ctx.save();
-              ctx.strokeStyle = '#10B981';
-              ctx.lineWidth = 3;
-              ctx.setLineDash([4, 4]);
-              ctx.beginPath();
-              ctx.moveTo(hPos.x, hPos.y);
-              ctx.lineTo(curPos.x, curPos.y);
-              ctx.stroke();
-              ctx.restore();
+          // If member is dead during system mass-resurrection (8s), show holy beam & progress bar above corpse
+          if ((!u.alive && !u.isAlive) && (revivingUnitId || reviveProgress > 0)) {
+            ctx.save();
+            ctx.strokeStyle = '#FBBF24';
+            ctx.lineWidth = 2.5;
+            ctx.setLineDash([4, 4]);
+            ctx.beginPath();
+            ctx.moveTo(curPos.x, curPos.y - 42);
+            ctx.lineTo(curPos.x, curPos.y);
+            ctx.stroke();
+            ctx.restore();
 
-              // Resurrect bar above corpse
-              ctx.fillStyle = '#000';
-              ctx.fillRect(curPos.x - 25, curPos.y - 25, 50, 6);
-              ctx.fillStyle = '#F59E0B';
-              ctx.fillRect(curPos.x - 25, curPos.y - 25, 50 * (reviveProgress || 0.5), 6);
-              ctx.strokeStyle = '#FFF';
-              ctx.lineWidth = 1;
-              ctx.strokeRect(curPos.x - 25, curPos.y - 25, 50, 6);
-            }
+            // Resurrect bar above corpse
+            ctx.fillStyle = '#000';
+            ctx.fillRect(curPos.x - 25, curPos.y - 25, 50, 6);
+            ctx.fillStyle = '#F59E0B';
+            ctx.fillRect(curPos.x - 25, curPos.y - 25, 50 * (reviveProgress || 0), 6);
+            ctx.strokeStyle = '#FFF';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(curPos.x - 25, curPos.y - 25, 50, 6);
           }
         });
 
@@ -4803,6 +4929,13 @@ export const CombatCanvas: React.FC<Props> = ({
       const unitsById = new Map<string, Unit>();
       for (const u of units) unitsById.set(u.id, u);
       if (bossUnit) unitsById.set(bossUnit.id, bossUnit);
+      const livingAdds =
+        runPhase !== 'TRAVEL_RECOVERY'
+          ? enemyUnitsRef.current.filter(
+              (e) => (!bossUnit || e.id !== bossUnit.id) && (e.isAlive ?? e.alive) && e.hp > 0
+            )
+          : [];
+      for (const add of livingAdds) unitsById.set(add.id, add);
 
       if (pendingAoeActionsRef.current.length > 0) {
         const batch = pendingAoeActionsRef.current.splice(0, pendingAoeActionsRef.current.length);
@@ -4950,6 +5083,28 @@ export const CombatCanvas: React.FC<Props> = ({
             ctx.ellipse(cx, cy - 11.2, 1.1, 1.8, 0, 0, Math.PI * 2);
             ctx.fill();
           }
+        } else if (effect.spellId === 'cookie_bad_food' || effect.spellId === 'cookie_good_food') {
+          const isBad = effect.spellId === 'cookie_bad_food';
+          ctx.fillStyle = isBad ? '#A855F7' : '#22C55E';
+          ctx.beginPath();
+          ctx.arc(effect.x, effect.y, 7, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = isBad ? '#F3E8FF' : '#DCFCE7';
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+          ctx.fillStyle = '#FFFFFF';
+          ctx.font = 'bold 10px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText(isBad ? '☠️ 坏食物' : '🍖 好食物', effect.x, effect.y - 11);
+        } else if (effect.spellId === 'glubtok_firewall') {
+          ctx.fillStyle = 'rgba(249, 115, 22, 0.9)';
+          ctx.beginPath();
+          ctx.arc(effect.x, effect.y, 8, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = '#FDE047';
+          ctx.font = 'bold 10px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText('🔥 火墙', effect.x, effect.y - 12);
         }
         ctx.restore();
       }
@@ -5412,6 +5567,23 @@ export const CombatCanvas: React.FC<Props> = ({
             },
           });
         }
+        for (const add of livingAdds) {
+          const aPos = add.position || { x: bossPosRef.current.x + 40, y: bossPosRef.current.y + 30 };
+          const showAddHpBar =
+            prefs.showAddHp || add.id === selectedUnitId || add.id === focusTargetId;
+          const showAddNameOnly =
+            (prefs.showAddName || add.id === selectedUnitId) && !showAddHpBar;
+          sprites.push({
+            depth: viewDepthKey(aPos.x, aPos.y, viewCam),
+            paint: () => {
+              withUprightAt(ctx, viewCam, aPos, (sp) => {
+                drawEnemyAddModel(ctx, add, sp, add.id === selectedUnitId, tickCount, {
+                  showName: showAddNameOnly,
+                });
+              });
+            },
+          });
+        }
         units.forEach((u, idx) => {
           const isPlayer = u.isPlayer;
           const pos = isPlayer
@@ -5443,6 +5615,17 @@ export const CombatCanvas: React.FC<Props> = ({
         withUprightAt(ctx, viewCam, bossPosRef.current, (sp) => {
           drawBossHpBar(ctx, bossUnit, sp, {
             name: prefs.showBossName ? bossUnit.name : null,
+          });
+        });
+      }
+      for (const add of livingAdds) {
+        const showAddHpBar =
+          prefs.showAddHp || add.id === selectedUnitId || add.id === focusTargetId;
+        if (!showAddHpBar) continue;
+        const aPos = add.position || { x: bossPosRef.current.x + 40, y: bossPosRef.current.y + 30 };
+        withUprightAt(ctx, viewCam, aPos, (sp) => {
+          drawEnemyAddHpBar(ctx, add, sp, {
+            name: prefs.showAddName ? add.name : null,
           });
         });
       }
@@ -5678,9 +5861,13 @@ export const CombatCanvas: React.FC<Props> = ({
         title={
           groundTargetState
             ? '单击有效区域释放技能，右键或ESC取消'
-            : displayPrefs.canvasViewMode === 'ISO'
-              ? '2.5D：按住右键左右转 / 上下俯仰(20°–垂直) · 按住右键按左键向前走 · 单击地面移动 · 滚轮缩放'
-              : '单击地面移动，单击或双击角色选中目标 · 滚轮缩放视角'
+            : runPhase === 'TRAVEL_RECOVERY'
+              ? displayPrefs.canvasViewMode === 'ISO'
+                ? '迷宫自动行军 · 按住右键旋转/俯仰视角 · 滚轮缩放'
+                : '迷宫自动行军 · 滚轮缩放视角'
+              : displayPrefs.canvasViewMode === 'ISO'
+                ? '2.5D：按住右键左右转 / 上下俯仰(20°–垂直) · 按住右键按左键向前走 · 长按 WASD 移动 · 滚轮缩放'
+                : '长按 WASD 移动，单击或双击角色选中目标 · 滚轮缩放视角'
         }
       />
       {/* Top Center Banner when in Ground Targeting Mode */}
@@ -5706,7 +5893,7 @@ export const CombatCanvas: React.FC<Props> = ({
             </>
           ) : (
             <>
-              单击地面跑动 · 单击选人 · 长按 <strong className="text-white bg-slate-800 px-1 rounded">W A S D</strong> 连续移动 ·
+              单击选人 · 长按 <strong className="text-white bg-slate-800 px-1 rounded">W A S D</strong> 连续移动 ·
               滚轮缩放（±50%）
               {displayPrefs.canvasViewMode === 'ISO' ? (
                 <>

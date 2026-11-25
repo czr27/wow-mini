@@ -1415,6 +1415,8 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
                             <Check label="全员名称" k="showAllNames" />
                             <Check label="Boss 血条" k="showBossHp" />
                             <Check label="Boss 名称" k="showBossName" />
+                            <Check label="小怪血条" k="showAddHp" />
+                            <Check label="小怪名称" k="showAddName" />
                             <Check label="目标血条" k="showTargetHp" />
                             <Check label="目标名称" k="showTargetName" />
                             <Check label="焦点血条" k="showFocusHp" />

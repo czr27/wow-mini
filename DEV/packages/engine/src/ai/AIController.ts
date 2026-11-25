@@ -5,6 +5,7 @@
 // ============================================================
 
 import { Unit, RunPhase, SpellSchool } from '../types.js';
+import { LEVEL_80_STATS } from '../engine/TierProfile.js';
 
 export * from './SkillMetricEvaluator.js';
 
@@ -158,11 +159,15 @@ export function rollAiDamage(
   varianceRatio = 0.08
 ): number {
   const { individualMod } = getUnitPersonality(unit);
+  const baseStat =
+    school === 'PHYSICAL'
+      ? LEVEL_80_STATS.dpsAttackPower
+      : LEVEL_80_STATS.dpsSpellPower;
   const statVal =
     school === 'PHYSICAL'
-      ? (unit.stats.attackPower || 8500)
-      : (unit.stats.spellPower || 8500);
-  const statScale = statVal / 8500;
+      ? (unit.stats.attackPower || baseStat)
+      : (unit.stats.spellPower || baseStat);
+  const statScale = statVal / baseStat;
 
   // Natural WoW damage roll: ±varianceRatio (e.g. ±8%)
   const roll = 1 + (Math.random() * 2 - 1) * varianceRatio;
@@ -187,7 +192,8 @@ export function rollAiHeal(
   varianceRatio = 0.08
 ): number {
   const { individualMod } = getUnitPersonality(unit);
-  const statScale = (unit.stats.spellPower || 9000) / 9000;
+  const baseSp = LEVEL_80_STATS.healerSpellPower;
+  const statScale = (unit.stats.spellPower || baseSp) / baseSp;
   const roll = 1 + (Math.random() * 2 - 1) * varianceRatio;
   const critMult = isCrit ? (1.95 + (Math.random() * 2 - 1) * 0.05) : 1.0;
   const rawHeal = baseHeal * individualMod * statScale * roll * critMult;

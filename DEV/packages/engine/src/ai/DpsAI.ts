@@ -35,6 +35,7 @@ const PRIORITY_ADD_PREFIXES = [
   'yorsahj_blood_',
   'zanzil_zanzili_zombie',
   'zanzil_gurubashi_berserker',
+  'helix_lumbering_oaf',
 ];
 
 export function selectDpsPriorityEnemies(livingEnemies: Unit[], boss: Unit | undefined): Unit[] {

@@ -1191,30 +1191,30 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
     }
   }
 
-  // 3. Recovery Phase: Surviving Healer Resurrects Dead Teammates (3.0s cast)
+  // 3. Recovery Phase: System Mass Resurrection for All Dead Teammates (8.0s cast)
   if (rsm.phase === 'TRAVEL_RECOVERY') {
-    const deadAlly = engine.friendlyUnits.find(u => (!u.isAlive && !u.alive) || u.hp <= 0);
-    const healer = engine.friendlyUnits.find(
-      u => (u.isAlive ?? u.alive) && u.hp > 0 && (u.role === 'HEALER' || u.classId === 'SHAMAN' || u.classId === 'DRUID')
-    );
+    const deadAllies = engine.friendlyUnits.filter(u => (!u.isAlive && !u.alive) || u.hp <= 0);
 
-    if (deadAlly && healer && !rsm.isCorpseRunning) {
-      ctx.setRevivingUnitId(deadAlly.id);
+    if (deadAllies.length > 0 && !rsm.isCorpseRunning) {
+      ctx.setRevivingUnitId(deadAllies[0].id);
       state.reviveTimerMs += deltaMs;
-      const progress = Math.min(1, state.reviveTimerMs / 3000);
+      const progress = Math.min(1, state.reviveTimerMs / 8000);
       ctx.setReviveProgress(progress);
 
       if (progress >= 1) {
         withNetworkVitals(engine, () => {
-          engine.resurrectUnit(deadAlly.id, 0.5, 0.5);
-          engine.healUnit(healer, deadAlly, Math.round(deadAlly.maxHp * 0.5), false);
+          for (const dead of deadAllies) {
+            engine.resurrectUnit(dead.id, 0.5, 0.5);
+          }
         });
-        engine.effectsManager?.addFloatingText({
-          targetId: deadAlly.id,
-          text: '起死回生！',
-          category: 'HEAL',
-          isCrit: true,
-        });
+        for (const dead of deadAllies) {
+          engine.effectsManager?.addFloatingText({
+            targetId: dead.id,
+            text: '系统群体复活！',
+            category: 'HEAL',
+            isCrit: true,
+          });
+        }
         state.reviveTimerMs = 0;
         ctx.setRevivingUnitId(null);
         ctx.setReviveProgress(0);
