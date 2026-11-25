@@ -135,6 +135,16 @@ export const MograineWhitemaneEncounter: BossEncounterModule = {
       if (res && !ai.currentCasting) {
         ai.currentCasting = { skill: res, elapsedMs: 0 };
       }
+      engine.emitDbmAlert?.({
+        title: '大检察官怀特迈恩进场',
+        advice: '打断复活并先杀怀特迈恩',
+        voiceText: '先杀怀特',
+        replaceKey: 'mw_whitemane_phase',
+        severity: 'CRITICAL',
+        spellId: 'whitemane_resurrection',
+        bossId: boss.id,
+        source: 'ENCOUNTER',
+      });
       engine.effectsManager?.addFloatingText({
         targetId: boss.id,
         text: '⛪ 怀特迈恩进场！打断复活 / 集火她！',

@@ -135,6 +135,16 @@ function applyFadingLight(engine: CombatEngine, boss: Unit, ai: UltraxionAiState
     school: 'SHADOW',
   });
   ai.ultraxFadingLeftMs!.set(target.id, durationMs);
+  engine.emitDbmAlert?.({
+    title: '凋零之光',
+    advice: '点名者到期前点英勇意志离场',
+    voiceText: '点离领域',
+    replaceKey: 'ultraxion_fading_light',
+    severity: 'CRITICAL',
+    spellId: FADING_LIGHT_SPELL_ID,
+    bossId: boss.id,
+    source: 'ENCOUNTER',
+  });
   engine.effectsManager?.addFloatingText({
     targetId: target.id,
     text: '⚠️ 凋零之光！到期前离开暮光领域！',
@@ -206,6 +216,12 @@ export const UltraxionEncounter: BossEncounterModule = {
         range: 450,
         targetKind: 'AOE',
         description: '指定分摊组留在领域内吸收；余人须英勇意志离开；无人分摊则失败',
+        dbm: {
+          advice: '分摊或点英勇意志离开领域',
+          voiceText: '暮光时刻',
+          severity: 'CRITICAL',
+          preWarnMs: 3000,
+        },
         execute: (boss, engine) => {
           const living = livingFriendlies(engine);
           const soakIds = new Set(ai.ultraxSoakIds || []);

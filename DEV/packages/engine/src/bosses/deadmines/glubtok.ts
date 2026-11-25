@@ -105,6 +105,16 @@ export const GlubtokEncounter: BossEncounterModule = {
 
     if (ai.glubtokPhase === 'p1' && boss.maxHp > 0 && boss.hp / boss.maxHp <= 0.5) {
       ai.glubtokPhase = 'p2';
+      engine.emitDbmAlert?.({
+        title: '转阶段：双元素之怒',
+        advice: '避开火焰壁垒扫射',
+        voiceText: '躲避火墙',
+        replaceKey: 'glubtok_p2',
+        severity: 'WARN',
+        spellId: 'glubtok_p2',
+        bossId: boss.id,
+        source: 'ENCOUNTER',
+      });
       engine.effectsManager?.addFloatingText({
         targetId: boss.id,
         text: '💥 半血！火焰/冰霜花瓣与火墙！',

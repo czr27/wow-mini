@@ -149,6 +149,11 @@ export const GodfreyEncounter: BossEncounterModule = {
         range: 320,
         targetKind: 'RANGED_TARGET',
         description: '60°红色扇形预警后扫射；扇形内重伤，流弹波及全场；可清食尸鬼',
+        dbm: {
+          advice: '躲开正面扇形弹幕',
+          voiceText: '躲开正面',
+          severity: 'WARN',
+        },
         execute: (boss, engine) => {
           const bPos = boss.position || { x: 530, y: 200 };
           const tank = engine.friendlyUnits.find(u => (u.alive ?? u.isAlive) && u.role === 'TANK');

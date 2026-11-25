@@ -58,6 +58,11 @@ export const FoeReaperEncounter: BossEncounterModule = {
         range: 200,
         targetKind: 'AOE',
         description: '正面锥形收割；远离行进路线',
+        dbm: {
+          advice: '远离Boss旋风收割',
+          voiceText: '远离boss',
+          severity: 'WARN',
+        },
         execute: (boss, engine) => {
           const bPos = boss.position || { x: 500, y: 200 };
           const tank = living(engine).find(u => u.role === 'TANK');
@@ -92,6 +97,11 @@ export const FoeReaperEncounter: BossEncounterModule = {
         range: 360,
         targetKind: 'AOE',
         description: '过载乱跑：靠近 Boss 持续受伤',
+        dbm: {
+          advice: '过载乱跑，远离Boss路径',
+          voiceText: '远离boss',
+          severity: 'WARN',
+        },
         execute: (boss, engine) => {
           ai.foeOverdriveAcc = 6000;
           const bPos = boss.position || { x: 500, y: 200 };

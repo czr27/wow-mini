@@ -82,6 +82,11 @@ export const SpringvaleEncounter: BossEncounterModule = {
         range: 160,
         targetKind: 'AOE',
         description: '正面 60° 锥形高额暗影伤害；坦克需背对团队',
+        dbm: {
+          advice: '躲开正面顺劈',
+          voiceText: '躲开正面',
+          severity: 'WARN',
+        },
         execute: (boss, engine) => {
           const bPos = boss.position || { x: 420, y: 220 };
           const tank = engine.friendlyUnits.find(u => (u.alive ?? u.isAlive) && u.role === 'TANK');

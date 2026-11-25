@@ -73,6 +73,11 @@ export const BlackhornEncounter: BossEncounterModule = {
         range: 400,
         targetKind: 'AOE',
         description: 'P1 对舰船与全团造成伤害',
+        dbm: {
+          advice: '集合分摊暮光弹',
+          voiceText: '集合分摊',
+          severity: 'CRITICAL',
+        },
         execute: (boss, engine) => {
           if (ai.blackhornPhase === 'landed') return;
           const shipDmg = living(engine).length >= 15 ? 80_000 : 45_000;

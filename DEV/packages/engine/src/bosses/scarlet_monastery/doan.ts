@@ -94,6 +94,11 @@ export const DoanEncounter: BossEncounterModule = {
         range: 100,
         targetKind: 'AOE',
         description: '近距奥爆',
+        dbm: {
+          advice: '奥术爆炸，注意远离',
+          voiceText: '注意远离',
+          severity: 'WARN',
+        },
         execute: (boss, engine) => {
           if ((ai.doanBubbleMs || 0) > 0) return;
           const bPos = boss.position || { x: 500, y: 200 };

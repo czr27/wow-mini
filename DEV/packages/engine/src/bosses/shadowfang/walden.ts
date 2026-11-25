@@ -41,6 +41,16 @@ export const WaldenEncounter: BossEncounterModule = {
           potionIndex++;
           const spellId = isGreen ? 'walden_green_toxin' : 'walden_red_toxin';
           const name = isGreen ? '剧毒催化剂(绿药-必须走动)' : '凝固毒素(红药-必须静止)';
+          engine.emitDbmAlert?.({
+            title: isGreen ? '绿色剧毒魔药' : '红色致死魔药',
+            advice: isGreen ? '持续移动消层！' : '立刻停手静止！',
+            voiceText: isGreen ? '保持移动' : '站立不动',
+            replaceKey: 'walden_potion',
+            severity: 'WARN',
+            spellId,
+            bossId: boss.id,
+            source: 'ENCOUNTER',
+          });
           for (const u of engine.friendlyUnits) {
             if (!(u.alive ?? u.isAlive)) continue;
             // Strip previous color toxin so move/stop rules stay exclusive

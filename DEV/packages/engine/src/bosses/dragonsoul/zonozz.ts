@@ -100,6 +100,11 @@ export const ZonozzEncounter: BossEncounterModule = {
         range: 400,
         targetKind: 'AOE',
         description: '传球：持球者靠近 Boss 撞上叠易伤；失败则全团重创',
+        dbm: {
+          advice: '分摊撞球传回Boss',
+          voiceText: '分摊撞球',
+          severity: 'WARN',
+        },
         execute: (boss, engine) => {
           if (ai.zonozzPhase === 'void') return;
           const carriers = living(engine).filter(u => u.role === 'DPS' || u.role === 'HEALER');

@@ -69,6 +69,11 @@ export const VenoxisEncounter: BossEncounterModule = {
         range: 320,
         targetKind: 'AOE',
         description: '点两人：距离过近持续掉血，拉开扯断',
+        dbm: {
+          advice: '毒液连线，拉开扯断',
+          voiceText: '拉开扯断',
+          severity: 'WARN',
+        },
         execute: (boss, engine) => {
           if (ai.venoxisPhase === 'withdrawal') return;
           const pool = living(engine).filter(u => u.role !== 'TANK');

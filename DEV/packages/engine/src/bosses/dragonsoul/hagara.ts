@@ -99,6 +99,16 @@ function enterFrostPhase(boss: Unit, engine: CombatEngine, ai: HagaraAiState) {
     remainingMs: 25_000,
   });
 
+  engine.emitDbmAlert?.({
+    title: '冰霜阶段',
+    advice: '打破冰墓，躲冰壁垒内圈',
+    voiceText: '躲冰壁垒',
+    replaceKey: 'hagara_phase',
+    severity: 'WARN',
+    spellId: 'hagara_frost',
+    bossId: boss.id,
+    source: 'ENCOUNTER',
+  });
   engine.effectsManager?.addFloatingText({
     targetId: boss.id,
     text: '❄️ 冰霜阶段！打破冰墓，站在冰环内圈！',
@@ -135,6 +145,16 @@ function enterLightningPhase(boss: Unit, engine: CombatEngine, ai: HagaraAiState
       summonSpellId: CONDUCTIVE_CRYSTAL_SUMMON,
     });
   }
+  engine.emitDbmAlert?.({
+    title: '闪电阶段',
+    advice: '连线导雷击杀传导水晶',
+    voiceText: '连线导雷',
+    replaceKey: 'hagara_phase',
+    severity: 'WARN',
+    spellId: 'hagara_lightning',
+    bossId: boss.id,
+    source: 'ENCOUNTER',
+  });
   engine.effectsManager?.addFloatingText({
     targetId: boss.id,
     text: '⚡ 闪电阶段！击杀传导水晶结束风暴！',

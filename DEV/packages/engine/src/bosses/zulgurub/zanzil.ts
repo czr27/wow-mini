@@ -99,6 +99,11 @@ export const ZanzilEncounter: BossEncounterModule = {
         range: 400,
         targetKind: 'AOE',
         description: '按药剂类型饮用对应大锅，否则重伤',
+        dbm: {
+          advice: '按药剂类型饮用对应大锅',
+          voiceText: '选对药锅',
+          severity: 'WARN',
+        },
         execute: (boss, engine) => {
           const kind = ai.zanzilNextElixir || 'frost';
           ai.zanzilActiveElixir = kind;

@@ -131,6 +131,16 @@ export const JindoEncounter: BossEncounterModule = {
       // 锁本体
       boss.hp = boss.maxHp;
       spawnBarrier(engine, boss, 0);
+      engine.emitDbmAlert?.({
+        title: '脆弱屏障阶段',
+        advice: '拉古拉巴什之魂破盾',
+        voiceText: '拉魂破盾',
+        replaceKey: 'jindo_barrier',
+        severity: 'WARN',
+        spellId: 'jindo_barrier',
+        bossId: boss.id,
+        source: 'ENCOUNTER',
+      });
       engine.effectsManager?.addFloatingText({
         targetId: boss.id,
         text: '🛡️ 打破三层脆弱屏障！',

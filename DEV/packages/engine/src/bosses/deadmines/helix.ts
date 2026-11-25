@@ -67,6 +67,11 @@ export const HelixEncounter: BossEncounterModule = {
         range: 320,
         targetKind: 'RANGED_TARGET',
         description: '点名胸弹：靠近队友则全团击飞伤',
+        dbm: {
+          advice: '点名炸弹，注意分散',
+          voiceText: '注意分散',
+          severity: 'WARN',
+        },
         execute: (boss, engine) => {
           const pool = living(engine).filter(u => u.role !== 'TANK');
           const t = pool[Math.floor(Math.random() * Math.max(1, pool.length))] || living(engine)[0];

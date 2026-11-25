@@ -35,6 +35,11 @@ export const HerodEncounter: BossEncounterModule = {
         range: 100,
         targetKind: 'AOE',
         description: '旋风：近战离开',
+        dbm: {
+          advice: '近战远离旋风斩范围',
+          voiceText: '注意远离',
+          severity: 'WARN',
+        },
         execute: (boss, engine) => {
           ai.herodWhirlwindMs = 4000;
           const bPos = boss.position || { x: 500, y: 200 };

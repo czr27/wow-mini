@@ -124,6 +124,12 @@ export const SpineEncounter: BossEncounterModule = {
         range: 400,
         targetKind: 'AOE',
         description: '预告滚转：全员需抓稳',
+        dbm: {
+          advice: '即将滚转，抓稳防翻',
+          voiceText: '抓稳防翻',
+          severity: 'CRITICAL',
+          preWarnMs: 0,
+        },
         execute: (boss, engine) => {
           engine.effectsManager?.addFloatingText({
             targetId: boss.id,

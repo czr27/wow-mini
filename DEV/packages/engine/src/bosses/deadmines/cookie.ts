@@ -47,6 +47,12 @@ export const CookieEncounter: BossEncounterModule = {
         range: 360,
         targetKind: 'AOE',
         description: '抛出好/坏食物落点；坏食物躲开，好食物可踩',
+        dbm: {
+          advice: '吃绿色好食物，避开腐烂食物',
+          voiceText: '吃好食物',
+          severity: 'INFO',
+          preWarnMs: 0,
+        },
         execute: (boss, engine) => {
           const fri = living(engine);
           for (let i = 0; i < 2; i++) {

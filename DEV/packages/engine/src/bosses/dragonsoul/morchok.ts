@@ -149,6 +149,11 @@ export const MorchokEncounter: BossEncounterModule = {
         range: 360,
         targetKind: 'AOE',
         description: '连线最近若干人，12s 后爆炸；贴水晶伤害更低',
+        dbm: {
+          advice: '靠近共鸣水晶减伤',
+          voiceText: '靠近水晶',
+          severity: 'WARN',
+        },
         execute: (boss, engine) => {
           if (ai.morchokPhase === 'black_blood') return;
           const living = livingFriendlies(engine);
