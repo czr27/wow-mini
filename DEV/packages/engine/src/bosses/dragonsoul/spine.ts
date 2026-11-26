@@ -37,6 +37,14 @@ export function applySpineGrip(engine: CombatEngine, u: Unit) {
     stacks: 1,
     maxStacks: 1,
   });
+  if (u.isPlayer) {
+    engine.effectsManager?.addFloatingText({
+      targetId: u.id,
+      text: '🛡️ 抓稳防翻 (6s)',
+      category: 'STATUS',
+      isCrit: false,
+    });
+  }
 }
 
 /**
@@ -126,7 +134,7 @@ export const SpineEncounter: BossEncounterModule = {
         targetKind: 'AOE',
         description: '预告滚转：全员需抓稳',
         dbm: {
-          advice: '即将滚转，抓稳防翻',
+          advice: '即将滚转！点击「抓稳防翻」',
           voiceText: '抓稳防翻',
           severity: 'CRITICAL',
           preWarnMs: 0,
@@ -181,7 +189,7 @@ export const SpineEncounter: BossEncounterModule = {
         ai.spineRollAt = (ai.spineFightMs || 0) + 4000;
         engine.emitDbmAlert?.({
           title: '即将滚转（4s）',
-          advice: '抓稳防翻',
+          advice: '点击「抓稳防翻」',
           voiceText: '抓稳防翻',
           replaceKey: 'spine_roll',
           severity: 'CRITICAL',

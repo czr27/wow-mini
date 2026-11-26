@@ -9,10 +9,12 @@ import type {
   UserAccount,
   DbmAlert,
   RoomChatMessage,
+  TemporaryExtraAction,
 } from '@cata-raid-sim/engine';
 import { resolveCombatDisplayPrefs, getUnitCrowdControlInfo } from '@cata-raid-sim/engine';
 import { CombatCanvas } from '../canvas/CombatCanvas.js';
 import { ActionBar, ActionSlot, PlayerCastState, PlayerCastBar } from '../components/ActionBar.js';
+import { SPELL_ICONS } from '../assets/pixelIcons.js';
 import { BossDefeatedBanner, type BossDefeatedBannerInfo } from '../components/BossDefeatedBanner.js';
 import { BuffFrame } from '../components/BuffFrame.js';
 import { ChatPanel } from '../components/ChatPanel.js';
@@ -141,6 +143,9 @@ export type CombatHudScreenProps = {
   dbmAlerts?: DbmAlert[];
   chatMessages?: RoomChatMessage[];
   onSendChat?: (text: string) => void;
+  extraAction?: TemporaryExtraAction | null;
+  extraActionUsage?: { spellId: string; usesRemaining: number; cdUntilMs: number } | null;
+  onBossExtraAction?: () => void;
 };
 
 function resolveUnitCastState(
@@ -515,6 +520,91 @@ export function CombatHudScreen(props: CombatHudScreenProps) {
             bossRoomKey={`${dungeonId || 'dungeon'}:${currentBossIndex}`}
           />
         </div>
+
+        {/* Temporary Server/Host-Granted Extra Action Slot (1.2x ActionBar slot = 53px, click-only, with CD/uses/lifecycle) */}
+        {runPhase === 'BOSS_COMBAT' &&
+          props.extraAction &&
+          props.onBossExtraAction &&
+          playerUnit &&
+          (playerUnit.isAlive ?? playerUnit.alive) &&
+          playerUnit.hp > 0 && (() => {
+            const act = props.extraAction!;
+            const iconSvg = SPELL_ICONS[act.spellId];
+            const nowMs = Date.now();
+            const usage =
+              props.extraActionUsage?.spellId === act.spellId ? props.extraActionUsage : null;
+            const usesLeft = usage ? usage.usesRemaining : (act.maxUses ?? 1);
+            const cdRemMs = usage ? Math.max(0, usage.cdUntilMs - nowMs) : 0;
+            const isOnCd = cdRemMs > 0;
+            const isExhausted = usesLeft <= 0;
+            const lifeRemMs = act.expiresAtMs ? Math.max(0, act.expiresAtMs - nowMs) : null;
+            const activeBuff = playerUnit.buffs?.find((b) => b.spellId === act.spellId);
+            const buffRemSec = activeBuff ? Math.max(0, activeBuff.remainingMs / 1000).toFixed(1) : null;
+            const canClick = !isOnCd && !isExhausted;
+
+            return (
+              <div className="pointer-events-auto fixed bottom-[184px] left-1/2 -translate-x-1/2 z-30 flex flex-col items-center">
+                <button
+                  type="button"
+                  disabled={!canClick}
+                  onClick={() => props.onBossExtraAction?.()}
+                  title={`${act.name}${act.reason ? ` (${act.reason})` : ''} · 剩余次数: ${usesLeft}${act.cooldownMs ? ` · 冷却: ${(act.cooldownMs / 1000).toFixed(0)}s` : ''}`}
+                  className={`relative w-[53px] h-[53px] rounded-md border-2 overflow-hidden bg-[#121222] transition select-none ${
+                    activeBuff
+                      ? 'border-emerald-400 ring-2 ring-emerald-400/60 shadow-[0_0_16px_rgba(16,185,129,0.7)]'
+                      : isExhausted || isOnCd
+                      ? 'border-slate-600 opacity-75 cursor-not-allowed'
+                      : 'border-amber-400 ring-2 ring-amber-400/70 shadow-[0_0_20px_rgba(251,191,36,0.8)] animate-pulse hover:scale-105 active:scale-95 cursor-pointer'
+                  }`}
+                >
+                  {iconSvg ? (
+                    <div
+                      className={`w-full h-full pointer-events-none [&>svg]:w-full [&>svg]:h-full ${
+                        isExhausted || isOnCd ? 'grayscale-[65%] brightness-75' : ''
+                      }`}
+                      dangerouslySetInnerHTML={{ __html: iconSvg }}
+                    />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-lg bg-amber-950/80 text-amber-300">
+                      🛡️
+                    </div>
+                  )}
+
+                  {/* Cooldown overlay */}
+                  {isOnCd && (
+                    <div className="absolute inset-0 bg-black/70 flex items-center justify-center z-20 pointer-events-none">
+                      <span className="text-xs font-mono font-black text-amber-300">
+                        {(cdRemMs / 1000).toFixed(1)}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Top-left: lifecycle countdown */}
+                  {lifeRemMs !== null && (
+                    <span className="absolute top-0.5 left-0.5 text-[8.5px] font-mono font-bold bg-black/85 text-cyan-300 px-1 rounded leading-tight z-20 pointer-events-none">
+                      {(lifeRemMs / 1000).toFixed(0)}s
+                    </span>
+                  )}
+
+                  {/* Top-right: remaining uses */}
+                  <span
+                    className={`absolute top-0.5 right-0.5 text-[9px] font-mono font-black px-1 rounded leading-tight z-20 border pointer-events-none ${
+                      isExhausted
+                        ? 'bg-black/90 text-red-400 border-red-500/60'
+                        : 'bg-black/85 text-amber-300 border-amber-500/60'
+                    }`}
+                  >
+                    {usesLeft}次
+                  </span>
+
+                  {/* Bottom: skill name / active buff countdown */}
+                  <span className="absolute bottom-0 inset-x-0 bg-black/85 text-[9px] font-bold text-gray-100 truncate text-center py-0.5 px-0.5 leading-tight z-20 pointer-events-none">
+                    {buffRemSec ? `${buffRemSec}s` : act.name}
+                  </span>
+                </button>
+              </div>
+            );
+          })()}
 
         <div className="pointer-events-auto flex justify-center w-full absolute bottom-4 left-0">
           <ActionBar

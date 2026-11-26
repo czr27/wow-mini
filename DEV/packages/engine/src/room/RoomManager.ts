@@ -300,6 +300,9 @@ export function compositionValidAfterAiSwap(
   addPlayerRole: RoleId
 ): boolean {
   const quota = DUNGEON_ROLE_QUOTAS[room.dungeonId] || DUNGEON_ROLE_QUOTAS.shadowfang_keep;
+  if (removeAiRole === addPlayerRole) {
+    return true;
+  }
   const next = countRoles(room.members);
   next[removeAiRole] = Math.max(0, (next[removeAiRole] || 0) - 1);
   next[addPlayerRole] = (next[addPlayerRole] || 0) + 1;

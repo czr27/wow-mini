@@ -82,6 +82,7 @@ export class RoomCombatSession {
   private tickCount = 0;
   private seq = 0;
   private lastBossAttackTick = 0;
+  private travelReviveTimerMs = 0;
   private prevPhase: RunPhase = 'LOBBY';
   private disposed = false;
 
@@ -808,6 +809,32 @@ export class RoomCombatSession {
 
     this.rsm.tick(deltaMs);
 
+    // 迷宫阶段：服务端统一读条系统群体复活（8s），给死亡对象直接发放 RESURRECT；复活完成后自动开始走迷宫倒计时
+    if (this.rsm.phase === 'TRAVEL_RECOVERY') {
+      const deadAllies = this.engine.friendlyUnits.filter(
+        (u) => (!u.isAlive && !u.alive) || u.hp <= 0
+      );
+      if (deadAllies.length > 0 && !this.rsm.isCorpseRunning) {
+        this.travelReviveTimerMs += deltaMs;
+        if (this.travelReviveTimerMs >= 8000) {
+          for (const dead of deadAllies) {
+            this.engine.resurrectUnit(dead.id, 0.5, 0.5);
+            this.engine.effectsManager?.addFloatingText({
+              targetId: dead.id,
+              text: '系统群体复活！',
+              category: 'HEAL',
+              isCrit: true,
+            });
+          }
+          this.travelReviveTimerMs = 0;
+        }
+      } else {
+        this.travelReviveTimerMs = 0;
+      }
+    } else {
+      this.travelReviveTimerMs = 0;
+    }
+
     if (this.rsm.phase === 'BOSS_COMBAT') {
       const bossCfg = this.rsm.getCurrentBoss();
       const expectedBossId = bossCfg?.id || 'ashbury';
@@ -1226,6 +1253,12 @@ export class RoomCombatSession {
       runPhase: this.rsm.phase,
       travelRemainingMs: this.rsm.travelRemainingMs,
       totalTravelMs: this.rsm.totalTravelMs,
+      reviveProgress:
+        this.rsm.phase === 'TRAVEL_RECOVERY' && this.travelReviveTimerMs > 0
+          ? Math.min(1, this.travelReviveTimerMs / 8000)
+          : 0,
+      isCorpseRunning: this.rsm.isCorpseRunning,
+      corpseRunTimerMs: this.rsm.corpseRunTimerMs,
       currentBossIndex: this.rsm.currentBossIndex,
       isCleared: this.rsm.isCleared,
       totalDurationSec: Math.round(this.rsm.totalRunDurationSec),

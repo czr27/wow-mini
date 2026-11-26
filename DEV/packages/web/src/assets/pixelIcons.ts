@@ -1087,6 +1087,9 @@ for (const cls of Object.values(ALL_CLASSES_NORMALIZED)) {
  * 实时生效的技能/Buff 图标字典。
  * 在游戏加载时，优先使用 \ART\resources\ 中发现的文件（如 Tranquility.jpg）；若无则使用 DEFAULT_SPELL_ICONS 中的自绘矢量图。
  */
+DEFAULT_SPELL_ICONS['spine_grip'] = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36"><rect width="36" height="36" rx="4" fill="#18120a"/><rect x="2" y="2" width="32" height="32" rx="3" fill="#2a1d0d" stroke="#f59e0b" stroke-width="1.5"/><path d="M18 6v14M13 11l5-5 5 5" stroke="#fbbf24" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/><path d="M9 19c0 6 4 10 9 10s9-4 9-10" stroke="#38bdf8" stroke-width="2.4" fill="none" stroke-linecap="round"/><circle cx="18" cy="20" r="3" fill="#fbbf24"/></svg>`;
+DEFAULT_SPELL_ICONS['heroic_will'] = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 36 36"><rect width="36" height="36" rx="4" fill="#1a1608"/><rect x="2" y="2" width="32" height="32" rx="3" fill="#2e260c" stroke="#fde047" stroke-width="1.5"/><circle cx="18" cy="18" r="7" fill="#fbbf24" opacity="0.9"/><path d="M18 5v5M18 26v5M5 18h5M26 18h5M9 9l3.5 3.5M23.5 23.5L27 27M27 9l-3.5 3.5M12.5 23.5L9 27" stroke="#fef08a" stroke-width="2" stroke-linecap="round"/></svg>`;
+
 export const SPELL_ICONS: Record<string, string> = { ...DEFAULT_SPELL_ICONS };
 
 /**

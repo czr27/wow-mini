@@ -122,6 +122,20 @@ export interface NetworkCombatAction {
   visualTone?: 'HEAL' | 'FRIENDLY' | 'ENEMY';
 }
 
+export interface TemporaryExtraAction {
+  spellId: string;
+  name: string;
+  hotkey?: string;
+  /** 技能冷却时间（ms） */
+  cooldownMs?: number;
+  /** 本次机制窗口内可使用次数 */
+  maxUses?: number;
+  /** 生存周期截止时间戳（ms），超时或机制结束自动没收 */
+  expiresAtMs?: number;
+  /** 授予来源说明 */
+  reason?: string;
+}
+
 export interface NetworkCombatSnapshot {
   roomId: string;
   seq: number;
@@ -131,6 +145,10 @@ export interface NetworkCombatSnapshot {
   /** Host dungeon progress — guests must follow (maze / boss index) */
   travelRemainingMs?: number;
   totalTravelMs?: number;
+  /** 迷宫阶段服务端系统复活进度（0..1，>0 表示正在读条复活） */
+  reviveProgress?: number;
+  isCorpseRunning?: boolean;
+  corpseRunTimerMs?: number;
   currentBossIndex?: number;
   isCleared?: boolean;
   /** Host run clock — guests need this for clear certificates */
@@ -143,6 +161,8 @@ export interface NetworkCombatSnapshot {
   bossTargetId?: string | null;
   /** Host-authoritative boss overhead skill label (covers instant skills + post-cast lingering) */
   bossOverheadSkillName?: string | null;
+  /** Temporary encounter extra action granted by host/server during mechanic windows */
+  extraAction?: TemporaryExtraAction | null;
   units: NetworkUnitSnapshot[];
   casts?: NetworkCastTimeline[];
   cooldowns?: NetworkCooldownTimeline[];

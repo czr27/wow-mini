@@ -12,6 +12,7 @@ import type {
   NetworkCooldownTimeline,
   NetworkGcdTimeline,
   NetworkCombatSnapshot,
+  TemporaryExtraAction,
   NetworkVoteState,
   PlayerInputPayload,
   VoteResultPayload,
@@ -118,6 +119,7 @@ export type NetworkRoomSyncDeps = {
   guestGcdTimelinesRef: MutableRefObject<NetworkGcdTimeline[]>;
   companionCastsRef?: MutableRefObject<Record<string, CompanionCastHud>>;
   guestBossOverheadSkillRef?: MutableRefObject<string | null>;
+  setGuestExtraAction?: Dispatch<SetStateAction<TemporaryExtraAction | null>>;
   playerCastRef: MutableRefObject<PlayerCastState | null>;
   pendingGuestInputsRef: MutableRefObject<PlayerInputPayload[]>;
   applyWipeVoteResultRef: MutableRefObject<(choice: 'RETRY' | 'FINISH') => void>;
@@ -147,6 +149,10 @@ export type NetworkRoomSyncDeps = {
   setPlayerGcdRemainingMs: Dispatch<SetStateAction<number>>;
   setPlayerGcdTotalMs: Dispatch<SetStateAction<number>>;
   setTravelRemainingMs: Dispatch<SetStateAction<number>>;
+  setRevivingUnitId?: Dispatch<SetStateAction<string | null>>;
+  setReviveProgress?: Dispatch<SetStateAction<number>>;
+  setIsCorpseRunning?: Dispatch<SetStateAction<boolean>>;
+  setCorpseRunTimerMs?: Dispatch<SetStateAction<number>>;
   setTotalDurationSec?: Dispatch<SetStateAction<number>>;
   setWipeNetworkVote: Dispatch<SetStateAction<NetworkVoteState | null>>;
   setSkipTravelVote: Dispatch<SetStateAction<NetworkVoteState | null>>;
@@ -677,6 +683,19 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
           if (typeof snap.totalTravelMs === 'number') {
             rsm.totalTravelMs = snap.totalTravelMs;
           }
+          if (typeof snap.reviveProgress === 'number') {
+            const prog = Math.max(0, Math.min(1, snap.reviveProgress));
+            d().setReviveProgress?.(prog);
+            d().setRevivingUnitId?.(prog > 0 ? 'raid' : null);
+          }
+          if (typeof snap.isCorpseRunning === 'boolean') {
+            rsm.isCorpseRunning = snap.isCorpseRunning;
+            d().setIsCorpseRunning?.(snap.isCorpseRunning);
+          }
+          if (typeof snap.corpseRunTimerMs === 'number') {
+            rsm.corpseRunTimerMs = snap.corpseRunTimerMs;
+            d().setCorpseRunTimerMs?.(snap.corpseRunTimerMs);
+          }
           if (typeof snap.currentBossIndex === 'number') {
             rsm.currentBossIndex = snap.currentBossIndex;
           }
@@ -704,6 +723,9 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
         d().guestGcdTimelinesRef.current = snap.gcds || [];
         const overheadRef = d().guestBossOverheadSkillRef ?? fallbackBossOverheadSkillRef;
         overheadRef.current = snap.bossOverheadSkillName ?? null;
+        if ('extraAction' in snap) {
+          d().setGuestExtraAction?.(snap.extraAction ?? null);
+        }
 
         // Host-world ground mirror (AI/boss/enemy rings+terrain) — empty array clears despawns
         if (Array.isArray(snap.groundEffects)) {

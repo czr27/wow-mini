@@ -594,6 +594,21 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
         bossOverheadSkillName: engine.bossUnit
           ? ((engine.bossUnit as any).overheadSkillName ?? null)
           : null,
+        extraAction: (() => {
+          const ai = ctx.bossAiRef.current as any;
+          if (rsm.phase === 'BOSS_COMBAT' && engine.bossUnit?.id === 'spine' && ai?.spineRollAt != null) {
+            const remMs = Math.max(0, ai.spineRollAt - (ai.spineFightMs || 0));
+            return {
+              spellId: 'spine_grip',
+              name: '抓稳防翻',
+              cooldownMs: 3000,
+              maxUses: 1,
+              expiresAtMs: now + remMs,
+              reason: '滚转窗口',
+            };
+          }
+          return null;
+        })(),
         units: filterHostAuthorityUnits(engine.buildNetworkUnitSnapshots(), engine),
         casts: filterHostAuthorityCasts(casts, engine),
         cooldowns: filterHostAuthorityCooldowns(cooldowns, engine),

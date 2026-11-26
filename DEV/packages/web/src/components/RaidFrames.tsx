@@ -425,6 +425,7 @@ export const RaidFrames: React.FC<Props> = ({
   const [isDragging, setIsDragging] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
   const [isLocked, setIsLocked] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(false);
   const tierKey: RaidTierKey = is20Man ? '20man' : '5man';
 
   const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number; latestX?: number; latestY?: number } | null>(null);
@@ -597,40 +598,62 @@ export const RaidFrames: React.FC<Props> = ({
         left: `${pos.x}px`,
         top: `${pos.y}px`,
         width: `${panelSize ? panelSize.width : (isMultiSquad ? 340 : 120)}px`,
-        height: `${panelSize ? panelSize.height : 260}px`,
+        height: isCollapsed ? 'auto' : `${panelSize ? panelSize.height : 260}px`,
       }}
       className={`fixed z-30 p-2 bg-[#08080f]/45 border-2 border-[#1c1c2e]/80 rounded-lg flex flex-col select-none shadow-2xl backdrop-blur-md overflow-hidden ${
         isDragging ? 'cursor-grabbing shadow-[0_0_24px_rgba(245,158,11,0.4)]' : ''
       }`}
     >
-      {/* Top Header & Drag Handle: Raid Summary + Dispel Filter + Lock Toggle */}
+      {/* Top Header & Drag Handle: Raid Summary + Dispel Filter + Lock + Collapse Toggle */}
       <div
         onMouseDown={handleMouseDown}
-        className={`flex items-center justify-between pb-1 px-1 border-b border-[#1f1f33] mb-1.5 text-xs flex-shrink-0 ${
+        className={`flex items-center justify-between px-1 text-xs flex-shrink-0 ${
+          isCollapsed ? '' : 'pb-1 border-b border-[#1f1f33] mb-1.5'
+        } ${
           isLocked ? 'cursor-default' : 'cursor-grab'
         }`}
       >
-        <div className="flex items-center space-x-2">
-          <span className="text-[#f3d178] font-bold tracking-wider font-serif drop-shadow-[0_1px_1px_rgba(0,0,0,0.9)]">
+        <div className="flex items-center space-x-2 min-w-0">
+          <span className="text-[#f3d178] font-bold tracking-wider font-serif drop-shadow-[0_1px_1px_rgba(0,0,0,0.9)] truncate">
             {isMultiSquad ? `团队框架 (${frameUnitCount}人)` : '小队 1'}
           </span>
-          <span className="text-gray-400 text-[10px] font-mono">
+          <span className="text-gray-400 text-[10px] font-mono shrink-0">
             {liveTanks}T · {liveHealers}H · {liveDps}DPS
           </span>
         </div>
 
-        <div className="flex items-center space-x-1">
+        <div className="flex items-center space-x-1 shrink-0">
           {/* Lock / Unlock Toggle Button */}
           <button
-            onClick={() => setIsLocked(!isLocked)}
+            type="button"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              setIsLocked(!isLocked);
+            }}
             className="text-[10px] text-gray-400 hover:text-amber-300 px-1 py-0.5 rounded hover:bg-white/10 transition"
+            title={isLocked ? '已锁定 (点击解锁)' : '未锁定 (点击锁定)'}
           >
             {isLocked ? '🔒' : '🔓'}
+          </button>
+          {/* Collapse / Expand Toggle Button */}
+          <button
+            type="button"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              setIsCollapsed((v) => !v);
+            }}
+            className="text-xs text-gray-400 hover:text-white px-1 py-0.5 rounded hover:bg-white/10 transition leading-none"
+            title={isCollapsed ? '展开团队框架' : '折叠团队框架'}
+          >
+            {isCollapsed ? '▲' : '▼'}
           </button>
         </div>
       </div>
 
       {/* Grid / Columns of Blizzard Compact Raid Frame Squads (Groups 1-4) - STRICTLY 0 SCROLLBARS */}
+      {!isCollapsed && (
       <div className={`w-full flex-1 min-h-0 flex ${isMultiSquad ? 'flex-row space-x-1.5' : 'flex-col space-y-1'} overflow-hidden`}>
         {squads.map((squad, squadIdx) => (
           <div
@@ -1143,8 +1166,10 @@ export const RaidFrames: React.FC<Props> = ({
           </div>
         ))}
       </div>
+      )}
 
       {/* Bottom-Right Corner Resize Grip Handle (Resizable & Account-persisted) */}
+      {!isCollapsed && (
       <div
         onMouseDown={handleResizeStart}
         className="absolute bottom-0 right-0 w-3.5 h-3.5 cursor-se-resize flex items-end justify-end p-0.5 z-40 group select-none"
@@ -1158,6 +1183,7 @@ export const RaidFrames: React.FC<Props> = ({
           <circle cx="5" cy="1" r="0.75" />
         </svg>
       </div>
+      )}
 
       {/* ── Context Menu: Raid Target Mark Picker (右键团队插件主动标记菜单) ── */}
       {activeMarkMenu && (

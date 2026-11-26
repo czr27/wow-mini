@@ -41,6 +41,7 @@ import {
   roomManager,
   type LobbyRoom,
   type RoomChatMessage,
+  type TemporaryExtraAction,
   getRoleBySpec,
   DUNGEON_ROLE_QUOTAS,
   LEVEL_80_MAX_HASTE,
@@ -48,6 +49,7 @@ import {
   getUnitHaste,
   RANGE_40YD_PX,
   useHeroicWill,
+  applySpineGrip,
   pickBossTrashTalkLine,
 } from '@cata-raid-sim/engine';
 import {
@@ -228,6 +230,12 @@ export function App() {
     elapsedMs: number;
     castTimeMs: number;
     interruptible: boolean;
+  } | null>(null);
+  const [guestExtraAction, setGuestExtraAction] = useState<TemporaryExtraAction | null>(null);
+  const [extraActionUsage, setExtraActionUsage] = useState<{
+    spellId: string;
+    usesRemaining: number;
+    cdUntilMs: number;
   } | null>(null);
   const lastMoveBroadcastMsRef = useRef(0);
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
@@ -531,6 +539,10 @@ export function App() {
     setActiveRoomId,
     setLobbySubView,
     setRunPhase,
+    setRevivingUnitId,
+    setReviveProgress,
+    setIsCorpseRunning,
+    setCorpseRunTimerMs,
     setIsApproaching,
     setSessionKickNotice,
     setAuthOpenRequest,
@@ -554,6 +566,7 @@ export function App() {
     setGroundEffects,
     setFloatingTexts,
     setGuestBossCasting,
+    setGuestExtraAction,
     onDbmAlerts: pushDbmAlerts,
     onGmCommand: runGmCommand,
   });
@@ -1388,8 +1401,121 @@ export function App() {
     });
   };
 
+  // Compute active temporary extra action (granted during specific boss mechanic windows, confiscated afterwards)
+  const activeExtraAction: TemporaryExtraAction | null = (() => {
+    if (runPhase !== 'BOSS_COMBAT') return null;
+    const player = friendlyUnits.find((u) => u.isPlayer);
+    if (!player || !(player.isAlive ?? player.alive) || player.hp <= 0) return null;
+
+    if (bossUnit?.id === 'ultraxion') {
+      const twilightBuff = player.buffs?.find((b) => b.spellId === 'twilight_realm');
+      if (twilightBuff) {
+        return {
+          spellId: 'heroic_will',
+          name: '英勇意志',
+          cooldownMs: 5000,
+          maxUses: 1,
+          expiresAtMs: Date.now() + Math.max(0, twilightBuff.remainingMs || 5000),
+          reason: '暮光领域',
+        };
+      }
+      return null;
+    }
+
+    if (isNetworkGuestRef.current) {
+      if (guestExtraAction?.expiresAtMs && Date.now() > guestExtraAction.expiresAtMs + 500) {
+        return null;
+      }
+      return guestExtraAction;
+    }
+
+    const ai = bossAiRef.current as any;
+    if (bossUnit?.id === 'spine' && ai?.spineRollAt != null) {
+      const remMs = Math.max(0, ai.spineRollAt - (ai.spineFightMs || 0));
+      return {
+        spellId: 'spine_grip',
+        name: '抓稳防翻',
+        cooldownMs: 3000,
+        maxUses: 1,
+        expiresAtMs: Date.now() + remMs,
+        reason: '滚转窗口',
+      };
+    }
+
+    return null;
+  })();
+
+  // Reset usage/CD whenever temporary skill is newly granted or confiscated
+  const activeExtraSpellId = activeExtraAction?.spellId ?? null;
+  const activeExtraMaxUses = activeExtraAction?.maxUses;
+  useEffect(() => {
+    if (!activeExtraSpellId) {
+      setExtraActionUsage(null);
+      return;
+    }
+    setExtraActionUsage({
+      spellId: activeExtraSpellId,
+      usesRemaining: activeExtraMaxUses ?? 1,
+      cdUntilMs: 0,
+    });
+  }, [activeExtraSpellId, activeExtraMaxUses]);
+
+  // Special boss encounter extra action (click-only temporary skill, no keybinding conflict)
+  const handleBossExtraAction = useCallback((): boolean => {
+    if (runPhase !== 'BOSS_COMBAT' || !activeExtraAction) return false;
+    const engine = engineRef.current;
+    const bossAi = bossAiRef.current;
+    const player = engine?.friendlyUnits.find(u => u.isPlayer);
+    if (!engine || !player) return false;
+    if (!(player.isAlive ?? player.alive) || player.hp <= 0) return false;
+
+    const now = Date.now();
+    if (activeExtraAction.expiresAtMs && now > activeExtraAction.expiresAtMs + 250) return false;
+    if (extraActionUsage && extraActionUsage.spellId === activeExtraAction.spellId) {
+      if (extraActionUsage.usesRemaining <= 0) return false;
+      if (now < extraActionUsage.cdUntilMs) return false;
+    }
+
+    let executed = false;
+    if (activeExtraAction.spellId === 'heroic_will' && bossAi) {
+      executed = useHeroicWill(engine, bossAi as any, player);
+    } else if (activeExtraAction.spellId === 'spine_grip') {
+      applySpineGrip(engine, player);
+      if (isNetworkGuestRef.current && netClient.connected && activeRoomIdRef.current) {
+        netClient.sendCombatEffect(activeRoomIdRef.current, {
+          effectId: `eff_grip_${now}_${player.id}`,
+          sourceId: player.id,
+          targetId: player.id,
+          spellId: 'spine_grip',
+          spellName: '抓稳',
+          kind: 'APPLY_BUFF',
+          buff: {
+            spellId: 'spine_grip',
+            name: '抓稳',
+            kind: 'BUFF',
+            tags: ['STAT'],
+            stacks: 1,
+            maxStacks: 1,
+            durationMs: 6000,
+            remainingMs: 6000,
+          },
+        });
+      }
+      executed = true;
+    }
+
+    if (executed) {
+      setExtraActionUsage((prev) => ({
+        spellId: activeExtraAction.spellId,
+        usesRemaining: Math.max(0, (prev?.usesRemaining ?? activeExtraAction.maxUses ?? 1) - 1),
+        cdUntilMs: activeExtraAction.cooldownMs ? now + activeExtraAction.cooldownMs : 0,
+      }));
+      setFriendlyUnits([...engine.friendlyUnits]);
+    }
+    return executed;
+  }, [runPhase, activeExtraAction, extraActionUsage]);
+
   // Global Escape & Right-click listener to cancel ground targeting or active cast
-  // Ultraxion: V = 英勇意志（短暂离开暮光领域）
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
@@ -1398,17 +1524,6 @@ export function App() {
           setGroundTargetState(null);
         } else if (playerCastRef.current) {
           handleCancelPlayerCast();
-        }
-      }
-      if ((e.key === 'v' || e.key === 'V') && runPhase === 'BOSS_COMBAT') {
-        const engine = engineRef.current;
-        const bossAi = bossAiRef.current;
-        const player = engine?.friendlyUnits.find(u => u.isPlayer);
-        if (engine && bossAi && player && engine.bossUnit?.id === 'ultraxion') {
-          if (useHeroicWill(engine, bossAi as any, player)) {
-            e.preventDefault();
-            setFriendlyUnits([...engine.friendlyUnits]);
-          }
         }
       }
     };
@@ -2506,6 +2621,9 @@ export function App() {
               }
             }}
             onConfirmGroundTarget={handleConfirmGroundTarget}
+            extraAction={activeExtraAction}
+            extraActionUsage={extraActionUsage}
+            onBossExtraAction={handleBossExtraAction}
             chatMessages={roomChatMessages}
             onSendChat={handleSendChat}
             onCancelGroundTarget={() => setGroundTargetState(null)}
