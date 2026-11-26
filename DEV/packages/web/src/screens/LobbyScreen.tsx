@@ -4,6 +4,7 @@ import type {
   ClassId,
   CustomDifficultySettings,
   LobbyRoom,
+  RoomChatMessage,
 } from '@cata-raid-sim/engine';
 import type { NetworkRoomFacade } from '../net/NetworkRoomFacade.js';
 import { RoomListView, RoomDetailView } from '../components/room/index.js';
@@ -31,6 +32,8 @@ export type LobbyScreenProps = {
   onStartGame: () => void;
   onRefreshRoom: () => void;
   onBackToCharacterSelect: () => void;
+  chatMessages?: RoomChatMessage[];
+  onSendChat?: (text: string) => void;
   /** Auth / character panel when not in room list/detail */
   authPanel: React.ReactNode;
 };
@@ -53,6 +56,8 @@ export function LobbyScreen(props: LobbyScreenProps) {
     onStartGame,
     onRefreshRoom,
     onBackToCharacterSelect,
+    chatMessages,
+    onSendChat,
     authPanel,
   } = props;
 
@@ -91,6 +96,8 @@ export function LobbyScreen(props: LobbyScreenProps) {
           onLeaveRoom={onLeaveRoom}
           onStartGame={onStartGame}
           onRefreshRoom={onRefreshRoom}
+          chatMessages={chatMessages}
+          onSendChat={onSendChat}
         />
       </div>
     );

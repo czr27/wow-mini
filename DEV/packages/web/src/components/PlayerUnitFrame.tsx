@@ -213,7 +213,6 @@ export const PlayerUnitFrame: React.FC<PlayerUnitFrameProps> = ({
             <button
               onClick={() => setIsLocked(!isLocked)}
               className="text-[10px] text-gray-400 hover:text-amber-300 px-1 py-0.5 rounded hover:bg-white/10 transition"
-              title={isLocked ? '已锁定位置 (点击解锁)' : '未锁定位置 (按住拖拽)'}
             >
               {isLocked ? '🔒' : '🔓'}
             </button>
@@ -228,14 +227,12 @@ export const PlayerUnitFrame: React.FC<PlayerUnitFrameProps> = ({
               onClick={() => onSelect && onSelect()}
               className="w-13 h-13 rounded-full border-2 border-[#d4af37] bg-black overflow-hidden relative shadow-[0_0_8px_rgba(0,0,0,0.9)] cursor-pointer hover:border-amber-300 transition"
               style={{ width: '52px', height: '52px' }}
-              title={`点击选中: ${player.name}`}
               dangerouslySetInnerHTML={{ __html: CLASS_PIXEL_AVATARS[player.classId] || '' }}
             />
 
             {/* Level 80 circular badge at bottom-left */}
             <div
               className="absolute -bottom-1 -left-1 w-5 h-5 rounded-full bg-[#1b1b32] border-2 border-[#d4af37] flex items-center justify-center text-[9px] font-black text-amber-300 shadow-[0_2px_4px_rgba(0,0,0,0.9)] z-20 pointer-events-none"
-              title="等级 80 (80级满级满急速)"
             >
               80
             </div>
@@ -244,7 +241,6 @@ export const PlayerUnitFrame: React.FC<PlayerUnitFrameProps> = ({
             {isInCombat && (
               <div
                 className="absolute -top-1.5 -left-1.5 text-sm animate-pulse z-20 filter drop-shadow-[0_0_6px_rgba(239,68,68,0.95)] pointer-events-none"
-                title="战斗状态中 (In Combat)"
               >
                 ⚔️
               </div>
@@ -276,7 +272,6 @@ export const PlayerUnitFrame: React.FC<PlayerUnitFrameProps> = ({
                     backgroundImage:
                       'repeating-linear-gradient(45deg, transparent, transparent 4px, rgba(255,255,255,0.2) 4px, rgba(255,255,255,0.2) 8px)',
                   }}
-                  title={`吸收护盾: ${absorbAmount}`}
                 />
               )}
 
@@ -333,7 +328,6 @@ export const PlayerUnitFrame: React.FC<PlayerUnitFrameProps> = ({
                           : 'border-black/60 opacity-40'
                       }`}
                       style={{ backgroundColor: isReady ? runeColor : '#181822' }}
-                      title={`符文 [${idx + 1}]: ${rune.type} ${isReady ? '就绪' : `冷却中 (${Math.ceil(rune.cdMs / 1000)}s)`}`}
                     >
                       {/* Sweep CD animation */}
                       {!isReady && (

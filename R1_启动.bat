@@ -25,7 +25,7 @@ if not exist "DEV\node_modules" (
   exit /b %errorlevel%
 )
 
-:: 每次启动都编译 engine，避免源码有新方法但 dist 过期导致服务端崩溃
+REM Build engine on startup so dist stays in sync with source
 echo [编译] packages/engine ...
 pushd "%~dp0DEV"
 call npm run build --workspace=packages/engine
@@ -43,7 +43,7 @@ echo 启动 Server + Web ...
 echo 浏览器: http://127.0.0.1:5173/
 echo.
 
-:: /D 指定工作目录，避免嵌套引号导致语法错误
+REM Use /D to specify working directory and avoid nested quote issues
 start "Cata Raid Sim - Server" /D "%~dp0DEV" cmd /k "npm run dev --workspace=packages/server"
 timeout /t 2 /nobreak >nul
 echo 请手动打开浏览器访问: http://127.0.0.1:5173/

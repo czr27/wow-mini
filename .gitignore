@@ -15,3 +15,8 @@ DEV/packages/web/src/utils/hudLayout.js
 DEV/packages/web/src/utils/hudLayout.d.ts
 *.rar
 *.zip
+tools/vgmstream/
+tools/_neon_bgm_raw/
+DEV/packages/web/public/audio/bgm/*.ogg
+DEV/packages/web/public/audio/bgm/*.mp3
+DEV/packages/web/public/audio/bgm/*.wav

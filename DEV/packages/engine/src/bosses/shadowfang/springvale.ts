@@ -1,5 +1,6 @@
 import type { BossEncounterModule, BossSkill } from '../core/BossTypes.js';
 import { spawnCombatUnit } from '../../engine/UnitSpawn.js';
+import { pickWeightedBossTarget } from '../core/BossTargetPicker.js';
 
 type SpringvaleAiState = {
   unholyPower?: number;
@@ -130,7 +131,7 @@ export const SpringvaleEncounter: BossEncounterModule = {
             // Spend for Word of Shame on a random player
             ai.unholyPower = 0;
             const living = engine.friendlyUnits.filter(u => u.alive ?? u.isAlive);
-            const target = living[Math.floor(Math.random() * living.length)];
+            const target = pickWeightedBossTarget(living);
             if (target) {
               engine.applyBuff(target, {
                 id: `word_of_shame_${Date.now()}_${target.id}`,
@@ -171,7 +172,7 @@ export const SpringvaleEncounter: BossEncounterModule = {
         description: '在一名玩家脚下生成暗绿亵渎毒圈，必须迅速走出！',
         execute: (boss, engine) => {
           const living = engine.friendlyUnits.filter(u => u.alive);
-          const target = living[Math.floor(Math.random() * living.length)] || engine.friendlyUnits[0];
+          const target = pickWeightedBossTarget(living) || engine.friendlyUnits[0];
           const targetPos = target ? target.position : { x: 420, y: 220 };
           engine.effectsManager?.addGroundEffect({
             kind: 'DAMAGE_ZONE',

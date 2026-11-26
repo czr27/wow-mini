@@ -13,6 +13,7 @@ import {
   getUnitHaste,
   inferAiSpecForUnit,
   isAiCdReady,
+  spawnGmWildPack,
   tickEnemyAdds,
   markAiCdUsed,
   notifyOom,
@@ -23,6 +24,7 @@ import {
   type ClassId,
   type CombatBatch,
   type CombatEffect,
+  type GmCommandPayload,
   type LobbyRoom,
   type NetworkCastTimeline,
   type NetworkCombatSnapshot,
@@ -64,6 +66,7 @@ export class RoomCombatSession {
   private addLastAttackMs = new Map<string, number>();
   private lastOomWarningMs: Record<string, number> = {};
   private srvEffectSeq = 0;
+  private pendingDbmAlerts: any[] = [];
 
   private tickTimer: ReturnType<typeof setInterval> | null = null;
   private tickCount = 0;
@@ -131,6 +134,28 @@ export class RoomCombatSession {
       return origDeal(attacker, defender, amount, school, isCrit, spellName, isDot);
     };
 
+    const origDrain = this.engine.drainHpTowardFloor.bind(this.engine);
+    this.engine.drainHpTowardFloor = (target, amount, floorHp = 1, spellName = '窒息术') => {
+      if (target && !this.isServerAuthorityUnit(target.id)) {
+        const drained = Math.min(Math.max(0, Math.round(amount)), Math.max(0, target.hp - floorHp));
+        if (drained > 0) {
+          this.pendingEffects.push({
+            effectId: `srv_eff_${++this.srvEffectSeq}`,
+            sourceId: this.engine.bossUnit?.id || 'server',
+            targetId: target.id,
+            spellId: spellName || 'asphyxiate',
+            spellName: spellName || '窒息术',
+            kind: 'DAMAGE',
+            amount: drained,
+            isCrit: false,
+            atMs: Date.now(),
+          });
+        }
+        return drained;
+      }
+      return origDrain(target, amount, floorHp, spellName);
+    };
+
     const origHeal = this.engine.healUnit.bind(this.engine);
     this.engine.healUnit = (healer, target, amount, isCrit, spellName, isHot) => {
       if (target && !this.isServerAuthorityUnit(target.id) && amount > 0) {
@@ -192,6 +217,23 @@ export class RoomCombatSession {
         });
       }
       return origApplyBuff(target, buff);
+    };
+
+    const origRemoveBuff = this.engine.auraManager.removeBuff.bind(this.engine.auraManager);
+    this.engine.auraManager.removeBuff = (unit, buffIdOrSpellId, sourceId) => {
+      const removed = origRemoveBuff(unit, buffIdOrSpellId, sourceId);
+      if (removed && unit && !this.isServerAuthorityUnit(unit.id) && buffIdOrSpellId) {
+        this.pendingEffects.push({
+          effectId: `srv_eff_${++this.srvEffectSeq}`,
+          sourceId: sourceId || 'server',
+          targetId: unit.id,
+          spellId: buffIdOrSpellId,
+          removeSpellId: buffIdOrSpellId,
+          kind: 'REMOVE_BUFF',
+          atMs: Date.now(),
+        });
+      }
+      return removed;
     };
   }
 
@@ -428,6 +470,31 @@ export class RoomCombatSession {
           this.engine.auraManager.removeBuff(tgt, effect.removeSpellId || effect.spellId);
         }
         break;
+      case 'TAUNT':
+        if (src) {
+          this.engine.threatManager.applyTaunt(tgt.id, src.id);
+        }
+        break;
+      case 'RESOURCE': {
+        const delta = effect.resourceDelta ?? effect.amount ?? 0;
+        const kind = (effect.resourceKind || 'MANA').toUpperCase();
+        if (kind === 'MANA' && tgt.maxMp != null) {
+          tgt.mp = Math.max(0, Math.min(tgt.maxMp, (tgt.mp ?? 0) + delta));
+        } else if (kind === 'ENERGY') {
+          tgt.energy = Math.max(0, Math.min(100, (tgt.energy ?? 0) + delta));
+        } else if (kind === 'RAGE') {
+          tgt.rage = Math.max(0, Math.min(100, (tgt.rage ?? 0) + delta));
+        } else if (kind === 'FOCUS') {
+          tgt.focus = Math.max(0, Math.min(100, (tgt.focus ?? 0) + delta));
+        }
+        syncUnitResources(tgt);
+        break;
+      }
+      case 'DISPEL':
+        if (effect.removeSpellId) {
+          this.engine.auraManager.removeBuff(tgt, effect.removeSpellId);
+        }
+        break;
       case 'GROUND_PLACE':
         if (effect.groundEffectId && this.engine.effectsManager) {
           this.engine.effectsManager.addGroundEffect({
@@ -448,6 +515,131 @@ export class RoomCombatSession {
         }
         break;
       default:
+        break;
+    }
+  }
+
+  /** 服务端权威执行 GM 指令（影响 AI 队友、Boss/小怪、地面效果与副本进度） */
+  handleGmCommand(cmd: GmCommandPayload): void {
+    const activeEnemies = () => [
+      ...(this.engine.bossUnit && (this.engine.bossUnit.alive ?? this.engine.bossUnit.isAlive) && this.engine.bossUnit.hp > 0
+        ? [this.engine.bossUnit]
+        : []),
+      ...this.engine.enemyUnits.filter(
+        (e) => e.id !== this.engine.bossUnit?.id && (e.alive ?? e.isAlive) && e.hp > 0
+      ),
+    ];
+
+    const caster =
+      this.engine.bossUnit ||
+      this.engine.friendlyUnits.find((u) => this.isServerAuthorityUnit(u.id)) ||
+      this.engine.friendlyUnits[0];
+
+    switch (cmd.kind) {
+      case 'FRIENDLY_HP_PCT': {
+        const pct = cmd.deltaPct ?? 0;
+        for (const u of this.engine.friendlyUnits) {
+          if (!this.isServerAuthorityUnit(u.id)) continue;
+          if (!(u.alive ?? u.isAlive) || u.hp <= 0) continue;
+          const amt = Math.max(1, Math.round(u.maxHp * Math.abs(pct)));
+          if (pct > 0) this.engine.healUnit(caster || u, u, amt, false, 'GM治疗');
+          else if (pct < 0) this.engine.drainHpTowardFloor(u, amt, 1, 'GM扣血');
+        }
+        break;
+      }
+      case 'FRIENDLY_FULL_RESTORE': {
+        for (const u of this.engine.friendlyUnits) {
+          if (!this.isServerAuthorityUnit(u.id)) continue;
+          if (!(u.alive ?? u.isAlive) || u.hp <= 0) {
+            this.engine.resurrectUnit(u.id, 1);
+          }
+          this.engine.healUnit(caster || u, u, u.maxHp, false, 'GM满血');
+          if (typeof u.maxMp === 'number' && u.maxMp > 0) u.mp = u.maxMp;
+        }
+        break;
+      }
+      case 'ENEMY_HP_PCT': {
+        const pct = cmd.deltaPct ?? 0;
+        for (const e of activeEnemies()) {
+          const delta = Math.round(e.maxHp * pct);
+          e.hp = Math.max(1, Math.min(e.maxHp, e.hp + delta));
+        }
+        break;
+      }
+      case 'ENEMY_SET_HP_ONE':
+        for (const e of activeEnemies()) e.hp = 1;
+        break;
+      case 'ENEMY_KILL_ALL':
+        for (const e of activeEnemies()) {
+          e.hp = 0;
+          e.alive = false;
+          e.isAlive = false;
+        }
+        break;
+      case 'ENEMY_DMG_MULT':
+        this.engine.gmEnemyDamageMult =
+          Math.round(Math.max(0.1, Math.min(5.0, cmd.mult ?? 1.0)) * 10) / 10;
+        break;
+      case 'TRIGGER_BOSS_SKILL': {
+        const boss = this.engine.bossUnit;
+        const skill = this.bossAi?.skills?.find((s) => s.id === cmd.skillId);
+        if (boss && (boss.alive ?? boss.isAlive) && boss.hp > 0 && skill) {
+          skill.execute(boss, this.engine);
+          skill.lastCastMs = this.engine.nowMs;
+          if (this.bossAi) {
+            (this.bossAi as any).lastSkillName = skill.name;
+            (this.bossAi as any).lastSkillAtMs = this.engine.nowMs;
+            (this.bossAi as any).emitSkillDbmAlert?.(this.engine, skill, 'INSTANT');
+          }
+          this.engine.effectsManager?.addFloatingText({
+            targetId: boss.id,
+            text: `🛠️ GM触发：${skill.name}`,
+            category: 'STATUS',
+            isCrit: true,
+          });
+        }
+        break;
+      }
+      case 'RESET_COOLDOWNS':
+        this.engine.cooldownManager?.reset?.();
+        if (this.bossAi?.skills) {
+          for (const s of this.bossAi.skills) s.lastCastMs = -999_999;
+        }
+        break;
+      case 'CLEAR_GROUND_HAZARDS':
+        if (this.engine.effectsManager?.groundEffects) {
+          this.engine.effectsManager.groundEffects.length = 0;
+        }
+        break;
+      case 'FAST_FORWARD_10S': {
+        const boss = this.engine.bossUnit;
+        if (boss && this.bossAi) {
+          this.bossAi.tick(10_000, boss, this.engine);
+        }
+        break;
+      }
+      case 'SKIP_TRAVEL':
+        this.rsm.fastForwardTravel();
+        break;
+      case 'SPAWN_WILD_PACK': {
+        const spawned = spawnGmWildPack(this.engine, cmd.count);
+        if (spawned.length > 0 && this.engine.bossUnit) {
+          this.engine.effectsManager?.addFloatingText({
+            targetId: this.engine.bossUnit.id,
+            text: `🐺 GM 召唤 ${spawned.length} 只野怪！`,
+            category: 'STATUS',
+            isCrit: true,
+          });
+        }
+        break;
+      }
+      case 'TOGGLE_FRIENDLY_INVINCIBLE':
+        this.engine.gmFriendlyInvincible =
+          cmd.enabled !== undefined ? !!cmd.enabled : !this.engine.gmFriendlyInvincible;
+        break;
+      case 'TOGGLE_ENEMY_INVINCIBLE':
+        this.engine.gmEnemyInvincible =
+          cmd.enabled !== undefined ? !!cmd.enabled : !this.engine.gmEnemyInvincible;
         break;
     }
   }
@@ -600,25 +792,62 @@ export class RoomCombatSession {
       if (boss && (boss.isAlive || boss.alive) && boss.hp > 0) {
         this.bossAi?.tick(deltaMs, boss, this.engine);
 
-        // Boss auto-attack (~2s) on top threat target
-        if (!this.engine.isBossHealingGraceActive() && this.tickCount - this.lastBossAttackTick >= 40) {
+        const isAsphyxiate = this.bossAi?.currentCasting?.skill?.id === 'asphyxiate';
+        const isBossGrace = this.engine.isBossHealingGraceActive() || isAsphyxiate;
+        const targetId = this.engine.getBossTargetId();
+        const target =
+          (targetId ? this.engine.getUnit(targetId) : undefined) ||
+          this.engine.friendlyUnits.find((u) => (u.isAlive || u.alive) && u.hp > 0 && u.role === 'TANK') ||
+          this.engine.friendlyUnits.find((u) => (u.isAlive || u.alive) && u.hp > 0);
+
+        // Server-authoritative Boss pursuit toward top threat target (when not casting)
+        if (!isBossGrace && !this.bossAi?.currentCasting && target?.position && boss.position) {
+          const dx = target.position.x - boss.position.x;
+          const dy = target.position.y - boss.position.y;
+          const dist = Math.hypot(dx, dy);
+          if (dist > 60) {
+            const step = Math.min((140 * deltaMs) / 1000, dist - 54);
+            if (step > 0) {
+              boss.position = {
+                x: boss.position.x + (dx / dist) * step,
+                y: boss.position.y + (dy / dist) * step,
+              };
+            }
+          }
+        }
+
+        // Boss auto-attack (~2s) on top threat target; reset swing timer during Asphyxiate / healing grace
+        if (isBossGrace) {
           this.lastBossAttackTick = this.tickCount;
-          const targetId = this.engine.getBossTargetId();
-          const target = targetId ? this.engine.getUnit(targetId) : undefined;
+        } else if (this.tickCount - this.lastBossAttackTick >= 40) {
+          this.lastBossAttackTick = this.tickCount;
           if (target && (target.isAlive || target.alive) && target.hp > 0) {
-            const dmg = 3500;
-            this.engine.dealDamage(boss, target, dmg, 'PHYSICAL', false, '近战攻击');
-            if (!this.isServerAuthorityUnit(target.id)) {
-              this.pendingEffects.push({
-                effectId: `srv_aa_${this.tickCount}_${target.id}`,
-                sourceId: boss.id,
-                targetId: target.id,
-                spellId: 'boss_melee',
-                spellName: '近战攻击',
-                kind: 'DAMAGE',
-                amount: dmg,
-                atMs: Date.now(),
-              });
+            const distToTarget =
+              boss.position && target.position
+                ? Math.hypot(boss.position.x - target.position.x, boss.position.y - target.position.y)
+                : 0;
+            if (distToTarget <= 85) {
+              const is20Man = this.engine.friendlyUnits.length > 5;
+              const dmg = is20Man
+                ? target.role === 'TANK'
+                  ? 32_000
+                  : 65_000
+                : target.role === 'TANK'
+                  ? 18_000
+                  : 32_000;
+              this.engine.dealDamage(boss, target, dmg, 'PHYSICAL', false, '近战攻击');
+              if (!this.isServerAuthorityUnit(target.id)) {
+                this.pendingEffects.push({
+                  effectId: `srv_aa_${this.tickCount}_${target.id}`,
+                  sourceId: boss.id,
+                  targetId: target.id,
+                  spellId: 'boss_melee',
+                  spellName: '近战攻击',
+                  kind: 'DAMAGE',
+                  amount: dmg,
+                  atMs: Date.now(),
+                });
+              }
             }
           }
         }
@@ -852,6 +1081,9 @@ export class RoomCombatSession {
       tickValue: g.tickValue,
     }));
 
+    const freshDbm = this.engine.drainDbmAlerts();
+    if (freshDbm.length > 0) this.pendingDbmAlerts.push(...freshDbm);
+
     const worldSnap: NetworkCombatSnapshot = {
       roomId: this.roomId,
       seq,
@@ -873,6 +1105,7 @@ export class RoomCombatSession {
       groundEffects,
       floatingTexts: this.engine.effectsManager?.floatingTexts || [],
       recentActions: this.engine.drainRecentActions(),
+      ...(this.pendingDbmAlerts.length > 0 ? { dbmAlerts: this.pendingDbmAlerts.splice(0) } : {}),
       ...(this.ackedInputRing.length ? { ackedInputIds: this.ackedInputRing.slice() } : {}),
     };
 

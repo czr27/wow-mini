@@ -1,5 +1,6 @@
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
+import crypto from 'crypto';
 import fs from 'fs';
 import type { IncomingMessage } from 'http';
 import path from 'path';
@@ -34,7 +35,7 @@ function artResourcesPlugin(): Plugin {
     try {
       if (fs.existsSync(artResourcesDir)) {
         return fs.readdirSync(artResourcesDir).filter((file) => {
-          if (file.startsWith('.')) return false;
+          if (file.startsWith('.') || file === 'manifest.json') return false;
           const fullPath = path.join(artResourcesDir, file);
           return fs.statSync(fullPath).isFile();
         });
@@ -45,18 +46,28 @@ function artResourcesPlugin(): Plugin {
     return [];
   };
 
+  const getArtManifest = () => {
+    const files = getArtFiles();
+    const hashes: Record<string, string> = {};
+    for (const file of files) {
+      try {
+        const buf = fs.readFileSync(path.join(artResourcesDir, file));
+        hashes[file] = crypto.createHash('sha256').update(buf).digest('hex').slice(0, 12);
+      } catch {
+        // skip unreadable file
+      }
+    }
+    return { files, hashes, updatedAt: Date.now() };
+  };
+
   const syncManifest = (targetDir: string) => {
     try {
-      const files = getArtFiles();
+      const manifest = getArtManifest();
       if (!fs.existsSync(targetDir)) {
         fs.mkdirSync(targetDir, { recursive: true });
       }
       const manifestPath = path.join(targetDir, 'manifest.json');
-      fs.writeFileSync(
-        manifestPath,
-        JSON.stringify({ files, updatedAt: Date.now() }, null, 2),
-        'utf-8'
-      );
+      fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), 'utf-8');
     } catch (e) {
       console.warn('[artResourcesPlugin] Error syncing manifest:', e);
     }
@@ -68,16 +79,16 @@ function artResourcesPlugin(): Plugin {
       syncManifest(artResourcesDir);
 
       server.middlewares.use('/api/art-resources', (_req, res) => {
-        const files = getArtFiles();
+        const manifest = getArtManifest();
         res.setHeader('Content-Type', 'application/json');
         res.setHeader('Cache-Control', 'no-cache');
-        res.end(JSON.stringify({ files }));
+        res.end(JSON.stringify(manifest));
       });
 
       server.middlewares.use('/ART', (req, res, next) => {
         const decodedUrl = decodeURIComponent(req.url || '');
-        const relPath = decodedUrl.replace(/^\//, '').split('?')[0];
-        const filePath = path.resolve(artDir, relPath);
+        const [rawPath, queryStr] = decodedUrl.replace(/^\//, '').split('?');
+        const filePath = path.resolve(artDir, rawPath);
         if (!filePath.startsWith(artDir)) {
           res.statusCode = 403;
           res.end('Forbidden');
@@ -95,7 +106,12 @@ function artResourcesPlugin(): Plugin {
             '.json': 'application/json',
           };
           res.setHeader('Content-Type', mimeTypes[ext] || 'application/octet-stream');
-          res.setHeader('Cache-Control', 'no-cache');
+          const hasVersionQuery = Boolean(queryStr && /(?:^|&)h=/.test(queryStr));
+          if (hasVersionQuery && ext !== '.json') {
+            res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+          } else {
+            res.setHeader('Cache-Control', 'no-cache');
+          }
           fs.createReadStream(filePath).pipe(res);
           return;
         }

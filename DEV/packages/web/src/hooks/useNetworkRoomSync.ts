@@ -23,6 +23,7 @@ import type {
   CombatBatch,
   OwnerSnapshot,
   DbmAlert,
+  GmCommandPayload,
 } from '@cata-raid-sim/engine';
 import {
   roomManager,
@@ -154,6 +155,7 @@ export type NetworkRoomSyncDeps = {
   setGroundEffects: Dispatch<SetStateAction<GroundEffect[]>>;
   setFloatingTexts: Dispatch<SetStateAction<FloatingCombatText[]>>;
   onDbmAlerts?: (alerts: DbmAlert[]) => void;
+  onGmCommand?: (cmd: GmCommandPayload) => void;
   setGuestBossCasting: Dispatch<
     SetStateAction<{
       spellName: string;
@@ -168,6 +170,31 @@ export type NetworkRoomSyncDeps = {
 };
 
 /** WebSocket connect + room/combat sync subscription (from App). */
+const RECENTLY_LEFT_ROOM_TTL_MS = 4000;
+const recentlyLeftRooms = new Map<string, number>();
+
+/** Guard against stale in-flight ROOM_UPDATE / ROOM_START / HOT_SWAP pulling a user back after leaving. */
+export function markRoomRecentlyLeft(roomId: string | null | undefined, nowMs = Date.now()): void {
+  if (!roomId) return;
+  recentlyLeftRooms.set(roomId, nowMs + RECENTLY_LEFT_ROOM_TTL_MS);
+}
+
+export function clearRoomRecentlyLeft(roomId: string | null | undefined): void {
+  if (!roomId) return;
+  recentlyLeftRooms.delete(roomId);
+}
+
+export function isRoomRecentlyLeft(roomId: string | null | undefined, nowMs = Date.now()): boolean {
+  if (!roomId) return false;
+  const until = recentlyLeftRooms.get(roomId);
+  if (until == null) return false;
+  if (nowMs >= until) {
+    recentlyLeftRooms.delete(roomId);
+    return false;
+  }
+  return true;
+}
+
 export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
   const depsRef = useRef(deps);
   depsRef.current = deps;
@@ -363,6 +390,10 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
       }
       if (msg.type === 'ROOM_UPDATE' && msg.payload) {
         const room = msg.payload as NetLobbyRoom;
+        if (isRoomRecentlyLeft(room.id)) {
+          d().setRoomsTick((t) => t + 1);
+          return;
+        }
         d().roomFacadeRef.current.upsertRoom(room);
         const isMember =
           !!d().currentChar && room.members.some((m) => m.id === d().currentChar.id && !m.isAi);
@@ -521,6 +552,7 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
       }
       if (msg.type === 'ROOM_START' && msg.payload) {
         const room = msg.payload as NetLobbyRoom;
+        if (isRoomRecentlyLeft(room.id)) return;
         pendingQuickPlayStartRef.current = false;
         lastAppliedCombatSeqRef.current = 0;
         guestUnitsSeededRef.current = false;
@@ -775,6 +807,12 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
         if (input.playerId) noteAuthorityPacket(input.playerId, 'PLAYER_INPUT');
         d().pendingGuestInputsRef.current.push(input);
       }
+      if (msg.type === 'GM_COMMAND' && msg.payload) {
+        const gmCmd = msg.payload as GmCommandPayload;
+        if (d().isNetworkHostRef.current || d().isNetworkGuestRef.current) {
+          d().onGmCommand?.(gmCmd);
+        }
+      }
       if (msg.type === 'COMBAT_EFFECT' && msg.payload) {
         const effect = msg.payload as CombatEffect;
         const engine = d().engineRef.current;
@@ -941,7 +979,7 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
           }
         }
 
-        if (d().currentChar && body.playerId === d().currentChar.id) {
+        if (d().currentChar && body.playerId === d().currentChar.id && !isRoomRecentlyLeft(body.room.id)) {
           d().setWaitingQueueRoomId(null);
           d().setActiveRoomId(body.room.id);
           d().isNetworkHostRef.current = body.room.hostId === d().currentChar.id;

@@ -1,5 +1,6 @@
 import type { CombatEngine, Unit } from '@cata-raid-sim/engine';
 import { AUTO_ATTACK_RANGE_PX, RANGE_40YD_PX } from '@cata-raid-sim/engine';
+import { publishCastLand } from './castLifecycleNet.js';
 
 export const PLAYER_AUTO_ATTACK_INTERVAL_TICKS = 40; // 2.0s at 20Hz
 export const PET_AUTO_ATTACK_INTERVAL_TICKS = 48; // 2.4s at 20Hz
@@ -64,6 +65,13 @@ export function tickPlayerAndPetAutoAttacks(params: TickPlayerAutoAttackParams):
           kind: 'INSTANT',
           targetId: boss.id,
         });
+        publishCastLand({
+          unitId: playerUnit.id,
+          spellId: 'auto_attack',
+          spellName: '普通攻击',
+          targetId: boss.id,
+          isHarmful: true,
+        });
       }
     }
   }
@@ -119,6 +127,13 @@ export function tickPlayerAndPetAutoAttacks(params: TickPlayerAutoAttackParams):
             spellName: petSpell,
             kind: 'INSTANT',
             targetId: boss.id,
+          });
+          publishCastLand({
+            unitId: playerPet.id,
+            spellId,
+            spellName: petSpell,
+            targetId: boss.id,
+            isHarmful: true,
           });
         }
       }

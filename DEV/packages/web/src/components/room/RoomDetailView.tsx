@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
-import type { ClassId, DungeonDifficulty, CustomDifficultySettings } from '@cata-raid-sim/engine';
+import type { ClassId, DungeonDifficulty, CustomDifficultySettings, RoomChatMessage } from '@cata-raid-sim/engine';
+import { ChatPanel } from '../ChatPanel.js';
 import {
   type LobbyRoom,
   type RoomMember,
@@ -53,6 +54,8 @@ interface RoomDetailViewProps {
   onLeaveRoom: () => void;
   onStartGame: () => void;
   onRefreshRoom: () => void;
+  chatMessages?: RoomChatMessage[];
+  onSendChat?: (text: string) => void;
 }
 
 const CLASS_META: Record<ClassId, { label: string; color: string }> = {
@@ -86,6 +89,8 @@ export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
   onLeaveRoom,
   onStartGame,
   onRefreshRoom,
+  chatMessages = [],
+  onSendChat,
 }) => {
   const [editingMemberId, setEditingMemberId] = useState<string | null>(null);
   const [showCustomConfigModal, setShowCustomConfigModal] = useState(false);
@@ -279,7 +284,6 @@ export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
                   type="button"
                   onClick={() => handleSwitchDifficulty('NORMAL')}
                   disabled={!canSwitchToStandardDiff}
-                  title={standardDiffBlockedReason}
                   className={`h-6 px-2.5 rounded text-xs transition font-semibold leading-none ${
                     room.difficulty === 'NORMAL'
                       ? 'bg-sky-600 text-white font-bold'
@@ -296,7 +300,6 @@ export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
                   type="button"
                   onClick={() => handleSwitchDifficulty('HEROIC')}
                   disabled={!canSwitchToStandardDiff}
-                  title={standardDiffBlockedReason}
                   className={`h-6 px-2.5 rounded text-xs transition font-semibold leading-none ${
                     room.difficulty === 'HEROIC'
                       ? 'bg-red-600 text-white font-bold'
@@ -317,7 +320,6 @@ export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
                       ? 'bg-violet-600 text-white font-bold'
                       : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
                   }`}
-                  title="选择自定义难度并打开参数面板"
                 >
                   ⚙️ 自定义
                 </button>
@@ -492,12 +494,23 @@ export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
           })}
         </div>
 
+        {/* Room Chat Panel — placed above Start Game bar, full width */}
+        {onSendChat && (
+          <div className="mt-auto pt-2 w-full">
+            <ChatPanel
+              variant="lobby"
+              messages={chatMessages}
+              onSendMessage={onSendChat}
+            />
+          </div>
+        )}
+
         {/* Bottom: 队伍容量 + 准备 + AI补齐 / 开始（或准备） */}
-        <div className="bg-slate-900/90 border border-slate-800 rounded-lg px-4 py-3 flex flex-wrap items-center justify-between gap-3 mt-auto text-xs">
+        <div className={`bg-slate-900/90 border border-slate-800 rounded-lg px-4 py-3 flex flex-wrap items-center justify-between gap-3 text-xs ${onSendChat ? '' : 'mt-auto'}`}>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2 min-w-0">
             <span className="text-slate-400 whitespace-nowrap">
               队伍容量:{' '}
-              <strong className="text-amber-300 font-mono" title="总数/上限 (AI数)">
+              <strong className="text-amber-300 font-mono">
                 {rosterTotal}/{quota.capacity} ({aiCount})
               </strong>
               <span className="ml-1.5 text-slate-500">玩家{humanCount}</span>
@@ -525,7 +538,6 @@ export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
                   ? 'bg-emerald-950/50 border-emerald-600/40 text-emerald-300'
                   : 'bg-slate-950/50 border-slate-700 text-slate-300'
               }`}
-              title="AI 一律视为已准备"
             >
               准备:{' '}
               <span className="font-mono">
@@ -555,11 +567,6 @@ export const RoomDetailView: React.FC<RoomDetailViewProps> = ({
                       ? 'bg-gradient-to-r from-amber-500 via-yellow-400 to-amber-500 text-slate-950 hover:brightness-110 animate-pulse'
                       : 'bg-slate-800 text-slate-600 border border-slate-700 cursor-not-allowed opacity-60'
                   }`}
-                  title={
-                    startValidation.canStart
-                      ? '开始游戏'
-                      : startValidation.reasons.join('；') || '暂不可开局'
-                  }
                 >
                   <span>⚔️</span>
                   <span>开始游戏</span>

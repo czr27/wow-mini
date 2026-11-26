@@ -234,6 +234,42 @@ export function noteGuestCombatSnapshot(opts: {
     ensureLocalKillCoverage(state, rsm, engine, nowMs);
   }
 
+  // Entered WIPE_VOTE: ensure latestWipeReport has bossRemainingHpPct even if host report hasn't arrived yet
+  if (
+    phase === 'WIPE_VOTE' &&
+    bossIndex >= 0 &&
+    (!rsm.latestWipeReport ||
+      rsm.latestWipeReport.bossIndex !== bossIndex ||
+      rsm.latestWipeReport.bossRemainingHpPct === undefined)
+  ) {
+    const boss = engine.bossUnit;
+    const bossMeta = rsm.dungeon.bosses[bossIndex];
+    const durationSec = Math.max(
+      1,
+      state.bossCombatStartMs > 0 ? (nowMs - state.bossCombatStartMs) / 1000 : 1
+    );
+    const bossRemainingHpPct =
+      boss && boss.maxHp > 0 ? parseFloat(((boss.hp / boss.maxHp) * 100).toFixed(1)) : 0;
+    const deltaUnits = unitsWithDeltaStats(engine.friendlyUnits, state.baselineByUnit);
+    const existingWipes = rsm.encounterReports.filter(
+      (e) => e.result === 'WIPE' && e.bossIndex === bossIndex
+    ).length;
+    const fallbackWipe = reportMgrSingleton.generateEncounterReport(
+      bossIndex,
+      boss?.id || bossMeta?.id || `boss_${bossIndex}`,
+      boss?.name || bossMeta?.name || `Boss ${bossIndex + 1}`,
+      'WIPE',
+      durationSec,
+      Math.max(1, existingWipes + 1),
+      deltaUnits,
+      bossRemainingHpPct
+    );
+    rsm.latestWipeReport = fallbackWipe;
+    if (!rsm.encounterReports.some((e) => e.result === 'WIPE' && e.bossIndex === bossIndex && e.wipesBeforeKill === fallbackWipe.wipesBeforeKill)) {
+      rsm.encounterReports.push(fallbackWipe);
+    }
+  }
+
   state.lastBossIndex = bossIndex;
   state.lastBossAlive = alive;
   state.lastPhase = phase;
@@ -280,6 +316,7 @@ export function ensureLocalKillCoverage(
 
 /**
  * Merge host-broadcast reports only into gaps (never wipe local deltas).
+ * Includes both KILL and WIPE reports and keeps latestWipeReport in sync.
  */
 export function mergeHostEncounterReports(
   rsm: RunStateMachine,
@@ -297,8 +334,24 @@ export function mergeHostEncounterReports(
     if (local && local.unitStats.length > 0) continue;
     byIndex.set(h.bossIndex, h);
   }
-  const keepNonKills = rsm.encounterReports.filter((e) => e.result !== 'KILL');
-  rsm.encounterReports = [...keepNonKills, ...byIndex.values()].sort(
+
+  const wipeMap = new Map<string, EncounterReport>();
+  for (const e of rsm.encounterReports) {
+    if (e.result === 'WIPE') {
+      wipeMap.set(`${e.bossIndex}:${e.wipesBeforeKill}`, e);
+    }
+  }
+  let latestHostWipe: EncounterReport | null = null;
+  for (const h of hostReports) {
+    if (h.result !== 'WIPE') continue;
+    wipeMap.set(`${h.bossIndex}:${h.wipesBeforeKill}`, h);
+    latestHostWipe = h;
+  }
+  if (latestHostWipe) {
+    rsm.latestWipeReport = latestHostWipe;
+  }
+
+  rsm.encounterReports = [...wipeMap.values(), ...byIndex.values()].sort(
     (a, b) => a.bossIndex - b.bossIndex
   );
 }

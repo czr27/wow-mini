@@ -1,5 +1,6 @@
 import type { BossEncounterModule, BossSkill } from '../core/BossTypes.js';
 import { spawnCombatUnit } from '../../engine/UnitSpawn.js';
+import { pickWeightedBossTargets } from '../core/BossTargetPicker.js';
 
 type GodfreyAiState = {
   _barrageResolveAt?: number;
@@ -76,8 +77,7 @@ export const GodfreyEncounter: BossEncounterModule = {
         execute: (boss, engine) => {
           const nonTank = engine.friendlyUnits.filter(u => u.alive && u.role !== 'TANK');
           const pool = nonTank.length >= 2 ? nonTank : engine.friendlyUnits.filter(u => u.alive);
-          const shuffled = [...pool].sort(() => Math.random() - 0.5);
-          const targets = shuffled.slice(0, 2);
+          const targets = pickWeightedBossTargets(pool, 2);
 
           for (const target of targets) {
             engine.dealDamage(boss, target, 22000, 'SHADOW', false, '诅咒之弹');

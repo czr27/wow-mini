@@ -3,6 +3,14 @@
 // 规范：优先从 \ART\resources\ 寻找技能图标（如 Tranquility.jpg），未找到则使用自绘 SVG
 // ============================================================
 
+import {
+  CachedArtEntry,
+  deleteCachedArtFiles,
+  getAllCachedArtEntries,
+  isArtCacheSupported,
+  putCachedArtEntries,
+} from './artCache';
+
 export interface ArtResourceMatch {
   spellId: string;
   filename: string;
@@ -72,7 +80,7 @@ async function preloadArtUrls(
     loaded: 0,
     total,
     percent: 35,
-    label: `下载图标 0 / ${total}`,
+    label: `下载资源 0 / ${total}`,
   });
 
   let cursor = 0;
@@ -88,7 +96,7 @@ async function preloadArtUrls(
         loaded,
         total,
         percent: Math.min(95, pct),
-        label: `下载图标 ${loaded} / ${total}`,
+        label: `下载资源 ${loaded} / ${total}`,
       });
     }
   });
@@ -230,6 +238,30 @@ export const CUSTOM_ART_URLS: Record<string, string> = {};
 /** classId -> /ART/resources/... URL */
 export const CUSTOM_CLASS_ART_URLS: Record<string, string> = {};
 
+/** filename -> 本地 IndexedDB 生成的 blob: URL */
+const FILE_BLOB_URLS: Record<string, string> = {};
+
+/** filename -> 服务端 manifest 提供的文件 Hash */
+const FILE_HASHES: Record<string, string> = {};
+
+function setFileBlobUrl(file: string, blobUrl: string): void {
+  const prev = FILE_BLOB_URLS[file];
+  if (prev && prev !== blobUrl && prev.startsWith('blob:') && typeof URL !== 'undefined') {
+    try {
+      URL.revokeObjectURL(prev);
+    } catch {
+      // ignore revoke errors
+    }
+  }
+  FILE_BLOB_URLS[file] = blobUrl;
+}
+
+function resolveArtUrl(file: string): string {
+  if (FILE_BLOB_URLS[file]) return FILE_BLOB_URLS[file];
+  const hash = FILE_HASHES[file];
+  return hash ? `/ART/resources/${file}?h=${encodeURIComponent(hash)}` : `/ART/resources/${file}`;
+}
+
 /**
  * 各 ClassId 在资源目录中的候选文件名（去扩展名，归一化前）。
  * 优先 class_{id}（fill_class_icons.py 产出），其次 Wowhead classicon_*。
@@ -279,7 +311,7 @@ export function applyArtResourcesToClassAvatars(
   for (const classId of classIds) {
     const matchFile = findMatchingClassArtFile(classId, files);
     if (matchFile) {
-      const url = `/ART/resources/${matchFile}`;
+      const url = resolveArtUrl(matchFile);
       CUSTOM_CLASS_ART_URLS[classId] = url;
       const fallbackSvg = defaultAvatars[classId] || classAvatars[classId];
       classAvatars[classId] = formatArtIconHtml(url, classId, fallbackSvg);
@@ -326,7 +358,7 @@ function applyOneArtIcon(
   matchedSpells: Record<string, ArtResourceMatch>
 ) {
   const spellName = spellTooltips[spellId]?.name;
-  const url = `/ART/resources/${matchFile}`;
+  const url = resolveArtUrl(matchFile);
   CUSTOM_ART_URLS[spellId] = url;
   const fallbackSvg = defaultIcons[spellId] || spellIcons[spellId];
   spellIcons[spellId] = formatArtIconHtml(url, spellName || spellId, fallbackSvg);
@@ -395,8 +427,14 @@ export function applyArtResourcesToIcons(
   return matchedSpells;
 }
 
-async function resolveArtResourceFiles(): Promise<string[]> {
+interface ArtManifest {
+  files: string[];
+  hashes: Record<string, string>;
+}
+
+async function resolveArtResourceManifest(): Promise<ArtManifest> {
   let files: string[] = getInitialArtFiles();
+  let hashes: Record<string, string> = {};
 
   if (typeof window !== 'undefined' && typeof fetch === 'function') {
     try {
@@ -406,27 +444,151 @@ async function resolveArtResourceFiles(): Promise<string[]> {
         if (data && Array.isArray(data.files) && data.files.length > 0) {
           files = data.files;
         }
+        if (data && data.hashes && typeof data.hashes === 'object') {
+          hashes = data.hashes;
+        }
+        return { files, hashes };
       }
     } catch {
+      // fallback to static manifest.json
+    }
+
+    try {
+      const manifestRes = await fetch('/ART/resources/manifest.json', { cache: 'no-cache' });
+      if (manifestRes.ok) {
+        const data = await manifestRes.json();
+        if (data && Array.isArray(data.files) && data.files.length > 0) {
+          files = data.files;
+        }
+        if (data && data.hashes && typeof data.hashes === 'object') {
+          hashes = data.hashes;
+        }
+      }
+    } catch {
+      // keep initial list
+    }
+  }
+  return { files, hashes };
+}
+
+/**
+ * 结合 IndexedDB 本地缓存与服务端文件 Hash，仅下载新增或 Hash 变更的资源。
+ * 命中缓存的资源直接从本地 Blob 生成内存 URL，避免重复发网络请求。
+ */
+async function syncArtFilesWithLocalCache(
+  usedFiles: string[],
+  allServerFiles: string[],
+  hashes: Record<string, string>,
+  onProgress?: ArtLoadProgressCallback,
+  concurrency = 10
+): Promise<{ hitCount: number; downloadedCount: number }> {
+  const uniqueFiles = Array.from(new Set(usedFiles.filter(Boolean)));
+  const total = uniqueFiles.length;
+  if (total === 0) {
+    return { hitCount: 0, downloadedCount: 0 };
+  }
+
+  const cachedMap = await getAllCachedArtEntries();
+  const serverFileSet = new Set(allServerFiles);
+  const staleFiles: string[] = [];
+  for (const cachedFile of cachedMap.keys()) {
+    if (!serverFileSet.has(cachedFile)) {
+      staleFiles.push(cachedFile);
+    }
+  }
+  if (staleFiles.length > 0) {
+    void deleteCachedArtFiles(staleFiles);
+  }
+
+  const toDownload: string[] = [];
+  let hitCount = 0;
+
+  for (const file of uniqueFiles) {
+    const serverHash = hashes[file];
+    const cached = cachedMap.get(file);
+    if (serverHash && cached && cached.hash === serverHash) {
+      setFileBlobUrl(file, URL.createObjectURL(cached.blob));
+      hitCount += 1;
+    } else {
+      toDownload.push(file);
+    }
+  }
+
+  if (toDownload.length === 0) {
+    reportProgress(onProgress, {
+      phase: 'downloading',
+      loaded: hitCount,
+      total,
+      percent: 95,
+      label: `加载资源 ${hitCount} / ${total}`,
+    });
+    return { hitCount, downloadedCount: 0 };
+  }
+
+  let downloaded = 0;
+  const newEntries: CachedArtEntry[] = [];
+  reportProgress(onProgress, {
+    phase: 'downloading',
+    loaded: hitCount,
+    total,
+    percent: 35 + Math.round((hitCount / total) * 60),
+    label: `加载资源 ${hitCount} / ${total}`,
+  });
+
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(concurrency, toDownload.length) }, async () => {
+    while (cursor < toDownload.length) {
+      const i = cursor++;
+      const file = toDownload[i];
+      const serverHash = hashes[file];
+      const url = serverHash
+        ? `/ART/resources/${file}?h=${encodeURIComponent(serverHash)}`
+        : `/ART/resources/${file}`;
+
       try {
-        const manifestRes = await fetch('/ART/resources/manifest.json', { cache: 'no-cache' });
-        if (manifestRes.ok) {
-          const data = await manifestRes.json();
-          if (data && Array.isArray(data.files) && data.files.length > 0) {
-            files = data.files;
+        const res = await fetch(url);
+        if (res.ok) {
+          const blob = await res.blob();
+          setFileBlobUrl(file, URL.createObjectURL(blob));
+          if (serverHash) {
+            newEntries.push({
+              file,
+              hash: serverHash,
+              blob,
+              updatedAt: Date.now(),
+            });
           }
         }
       } catch {
-        // keep initial list
+        // 单个资源下载失败时回退到普通 URL / 自绘图标，不阻塞启动
       }
+
+      downloaded += 1;
+      const done = hitCount + downloaded;
+      const pct = 35 + Math.round((done / total) * 60);
+      reportProgress(onProgress, {
+        phase: 'downloading',
+        loaded: done,
+        total,
+        percent: Math.min(95, pct),
+        label: `加载资源 ${done} / ${total}`,
+      });
     }
+  });
+
+  await Promise.all(workers);
+
+  if (newEntries.length > 0) {
+    await putCachedArtEntries(newEntries);
   }
-  return files;
+
+  return { hitCount, downloadedCount: downloaded };
 }
 
 /**
  * 游戏加载时执行的资源扫描与加载函数
- * 优先从 \ART\resources\ 寻找，存在则覆盖自绘画，否则回退；并预下载图片供加载进度界面使用。
+ * 优先从 \ART\resources\ 寻找，存在则覆盖自绘画，否则回退；
+ * 支持基于 manifest Hash 的本地 IndexedDB 缓存，Hash 未变时跳过网络下载。
  */
 export async function initArtResourceIcons(
   spellIcons: Record<string, string>,
@@ -446,7 +608,11 @@ export async function initArtResourceIcons(
     label: '正在获取资源清单…',
   });
 
-  const files = await resolveArtResourceFiles();
+  const { files, hashes } = await resolveArtResourceManifest();
+  for (const key of Object.keys(FILE_HASHES)) {
+    delete FILE_HASHES[key];
+  }
+  Object.assign(FILE_HASHES, hashes);
 
   reportProgress(onProgress, {
     phase: 'mapping',
@@ -456,15 +622,14 @@ export async function initArtResourceIcons(
     label: `匹配图标（清单 ${files.length} 个文件）…`,
   });
 
-  const matches = applyArtResourcesToIcons(files, spellIcons, defaultIcons, spellTooltips);
+  let matches = applyArtResourcesToIcons(files, spellIcons, defaultIcons, spellTooltips);
   const matchCount = Object.keys(matches).length;
 
-  let classCount = 0;
+  let classMatches: Record<string, ArtResourceMatch> = {};
   if (classAvatars && defaultClassAvatars) {
-    classCount = Object.keys(
-      applyArtResourcesToClassAvatars(files, classAvatars, defaultClassAvatars)
-    ).length;
+    classMatches = applyArtResourcesToClassAvatars(files, classAvatars, defaultClassAvatars);
   }
+  const classCount = Object.keys(classMatches).length;
 
   reportProgress(onProgress, {
     phase: 'mapping',
@@ -474,20 +639,44 @@ export async function initArtResourceIcons(
     label: `已匹配技能 ${matchCount} · 职业头像 ${classCount}`,
   });
 
-  const preloadUrls = [
-    ...Object.values(CUSTOM_ART_URLS),
-    ...Object.values(CUSTOM_CLASS_ART_URLS),
+  const usedFiles = [
+    ...Object.values(matches).map((m) => m.filename),
+    ...Object.values(classMatches).map((m) => m.filename),
   ];
-  await preloadArtUrls(preloadUrls, onProgress);
+
+  const canUseHashCache = isArtCacheSupported() && Object.keys(hashes).length > 0 && typeof fetch === 'function';
+  if (canUseHashCache) {
+    const { hitCount, downloadedCount } = await syncArtFilesWithLocalCache(
+      usedFiles,
+      files,
+      hashes,
+      onProgress
+    );
+    // 将本地 Blob URL 同步回图标字典
+    matches = applyArtResourcesToIcons(files, spellIcons, defaultIcons, spellTooltips);
+    if (classAvatars && defaultClassAvatars) {
+      applyArtResourcesToClassAvatars(files, classAvatars, defaultClassAvatars);
+    }
+    console.log(
+      `[ArtResources] 缓存同步完成：本地命中 ${hitCount} 个，网络下载 ${downloadedCount} 个。`
+    );
+  } else {
+    const preloadUrls = [
+      ...Object.values(CUSTOM_ART_URLS),
+      ...Object.values(CUSTOM_CLASS_ART_URLS),
+    ];
+    await preloadArtUrls(preloadUrls, onProgress);
+  }
 
   console.log(
     `[ArtResources] 扫描完成：技能/Buff ${matchCount} 个，职业头像 ${classCount} 个；缺失回退自绘。`
   );
 
+  const totalUnique = new Set(usedFiles).size;
   reportProgress(onProgress, {
     phase: 'done',
-    loaded: preloadUrls.length,
-    total: preloadUrls.length,
+    loaded: totalUnique,
+    total: totalUnique,
     percent: 100,
     label: '资源就绪',
   });

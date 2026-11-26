@@ -4,6 +4,7 @@ import type {
   ClassId,
 } from '@cata-raid-sim/engine';
 import { CLASS_COLORS, CLASS_NAMES } from './AuthAndCharacterModal.js';
+import { getDungeonRewardIconUrl } from '../assets/pixelIcons.js';
 
 interface Props {
   dungeonName: string;
@@ -127,7 +128,18 @@ export const SummaryPage: React.FC<Props> = ({
         <div className="flex items-center space-x-2">
           {isTrulyCleared ? (
             <div className="px-3.5 py-2 bg-emerald-950/80 border border-emerald-500/60 rounded-xl shadow-lg flex items-center space-x-2">
-              <span className="text-lg">📜</span>
+              {(() => {
+                const rewardUrl = getDungeonRewardIconUrl(dungeonName);
+                return rewardUrl ? (
+                  <img
+                    src={rewardUrl}
+                    alt={dungeonName}
+                    className="w-7 h-7 rounded border border-emerald-400/60 object-cover bg-[#090B14]"
+                  />
+                ) : (
+                  <span className="text-lg">📜</span>
+                );
+              })()}
               <div className="text-left">
                 <div className="text-xs font-extrabold text-emerald-300 flex items-center space-x-1">
                   <span>✓ 通关奖励已自动发放</span>
@@ -218,6 +230,24 @@ export const SummaryPage: React.FC<Props> = ({
       )}
 
       {/* Main Stats Table */}
+      {(() => {
+        const teamTotalDmg = Math.max(
+          1,
+          displayList.reduce((sum, u) => sum + Math.max(0, u.totalDamage), 0)
+        );
+        const teamTotalHeal = Math.max(
+          1,
+          displayList.reduce((sum, u) => sum + Math.max(0, u.totalHealing || 0), 0)
+        );
+        const teamTotalTaken = Math.max(
+          1,
+          displayList.reduce((sum, u) => sum + Math.max(0, u.damageTaken), 0)
+        );
+        const teamTotalInterrupts = displayList.reduce(
+          (sum, u) => sum + Math.max(0, u.interrupts),
+          0
+        );
+        return (
       <div className="bg-[#181832] border border-[#2b2b4c] rounded-xl overflow-hidden shadow">
         <table className="w-full text-xs text-left">
           <thead className="bg-[#101020] text-gray-400 uppercase text-[10px] tracking-wider border-b border-[#242442]">
@@ -226,17 +256,23 @@ export const SummaryPage: React.FC<Props> = ({
               <th className="py-2.5 px-3">职业</th>
               <th className="py-2.5 px-3">职责</th>
               <th className="py-2.5 px-3 text-right">DPS</th>
-              <th className="py-2.5 px-3 text-right">总伤害</th>
+              <th className="py-2.5 px-3 min-w-[125px]">总伤害 / 占比</th>
               <th className="py-2.5 px-3 text-right">HPS</th>
-              <th className="py-2.5 px-3 text-right">总治疗</th>
-              <th className="py-2.5 px-3 text-right">承受伤害</th>
-              <th className="py-2.5 px-3 text-center">打断</th>
+              <th className="py-2.5 px-3 min-w-[125px]">总治疗 / 占全队</th>
+              <th className="py-2.5 px-3 min-w-[125px]">承受伤害 / 占比</th>
+              <th className="py-2.5 px-3 min-w-[90px]">打断 / 占比</th>
               <th className="py-2.5 px-3 text-center">死亡</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-[#20203a]">
             {displayList.map(u => {
               const classColor = CLASS_COLORS[u.classId as any] || '#ccc';
+              const dmgPct = (Math.max(0, u.totalDamage) / teamTotalDmg) * 100;
+              const healPct = (Math.max(0, u.totalHealing || 0) / teamTotalHeal) * 100;
+              const takenPct = (Math.max(0, u.damageTaken) / teamTotalTaken) * 100;
+              const intPct = teamTotalInterrupts > 0
+                ? (Math.max(0, u.interrupts) / teamTotalInterrupts) * 100
+                : 0;
               return (
                 <tr key={u.unitId} className={u.isPlayer ? 'bg-amber-500/10' : 'hover:bg-[#1e1e38]'}>
                   <td className="py-2.5 px-3 font-bold flex items-center space-x-1.5">
@@ -246,11 +282,47 @@ export const SummaryPage: React.FC<Props> = ({
                   <td className="py-2.5 px-3 text-gray-400">{CLASS_NAMES[u.classId as any] || u.classId}</td>
                   <td className="py-2.5 px-3 text-gray-400">{u.role}</td>
                   <td className="py-2.5 px-3 text-right font-mono font-bold text-red-400">{u.dps.toLocaleString()}</td>
-                  <td className="py-2.5 px-3 text-right font-mono text-gray-300">{u.totalDamage.toLocaleString()}</td>
+                  <td className="py-2.5 px-3 font-mono relative overflow-hidden">
+                    <div
+                      className="absolute inset-y-1 left-1 rounded-sm bg-red-500/30 pointer-events-none"
+                      style={{ width: `calc(${Math.min(100, dmgPct).toFixed(1)}% - 8px)` }}
+                    />
+                    <div className="relative z-10 flex items-center justify-between gap-2">
+                      <span className="text-gray-100 font-semibold">{u.totalDamage.toLocaleString()}</span>
+                      <span className="text-[10px] text-red-200">{dmgPct.toFixed(1)}%</span>
+                    </div>
+                  </td>
                   <td className="py-2.5 px-3 text-right font-mono font-bold text-emerald-400">{u.hps.toLocaleString()}</td>
-                  <td className="py-2.5 px-3 text-right font-mono text-gray-300">{u.totalHealing.toLocaleString()}</td>
-                  <td className="py-2.5 px-3 text-right font-mono text-amber-200">{u.damageTaken.toLocaleString()}</td>
-                  <td className="py-2.5 px-3 text-center font-mono text-blue-300">{u.interrupts}</td>
+                  <td className="py-2.5 px-3 font-mono relative overflow-hidden">
+                    <div
+                      className="absolute inset-y-1 left-1 rounded-sm bg-emerald-500/30 pointer-events-none"
+                      style={{ width: `calc(${Math.min(100, healPct).toFixed(1)}% - 8px)` }}
+                    />
+                    <div className="relative z-10 flex items-center justify-between gap-2">
+                      <span className="text-gray-100 font-semibold">{u.totalHealing.toLocaleString()}</span>
+                      <span className="text-[10px] text-emerald-200">{healPct.toFixed(1)}%</span>
+                    </div>
+                  </td>
+                  <td className="py-2.5 px-3 font-mono relative overflow-hidden">
+                    <div
+                      className="absolute inset-y-1 left-1 rounded-sm bg-amber-500/30 pointer-events-none"
+                      style={{ width: `calc(${Math.min(100, takenPct).toFixed(1)}% - 8px)` }}
+                    />
+                    <div className="relative z-10 flex items-center justify-between gap-2">
+                      <span className="text-amber-200 font-semibold">{u.damageTaken.toLocaleString()}</span>
+                      <span className="text-[10px] text-amber-100">{takenPct.toFixed(1)}%</span>
+                    </div>
+                  </td>
+                  <td className="py-2.5 px-3 font-mono relative overflow-hidden">
+                    <div
+                      className="absolute inset-y-1 left-1 rounded-sm bg-sky-500/30 pointer-events-none"
+                      style={{ width: `calc(${Math.min(100, intPct).toFixed(1)}% - 8px)` }}
+                    />
+                    <div className="relative z-10 flex items-center justify-between gap-2">
+                      <span className="text-sky-300 font-semibold">{u.interrupts}</span>
+                      <span className="text-[10px] text-sky-200">{intPct.toFixed(1)}%</span>
+                    </div>
+                  </td>
                   <td className="py-2.5 px-3 text-center font-mono text-gray-400">{u.deaths}</td>
                 </tr>
               );
@@ -258,6 +330,8 @@ export const SummaryPage: React.FC<Props> = ({
           </tbody>
         </table>
       </div>
+        );
+      })()}
 
       {/* Export & Navigation Footer */}
       <div className="flex flex-wrap items-center justify-between border-t border-[#252540] pt-4 gap-2">
@@ -271,7 +345,6 @@ export const SummaryPage: React.FC<Props> = ({
         <button
           onClick={onReturnToLobby}
           className="px-6 py-2.5 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 text-white font-extrabold rounded-xl shadow-lg transition active:scale-95 text-xs"
-          title="按 Esc 也可返回大厅"
         >
           返回大厅
         </button>

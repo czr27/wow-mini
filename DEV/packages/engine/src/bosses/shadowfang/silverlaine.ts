@@ -1,6 +1,7 @@
 import type { BossEncounterModule, BossSkill } from '../core/BossTypes.js';
 import type { Unit } from '../../types.js';
 import { spawnCombatUnit } from '../../engine/UnitSpawn.js';
+import { pickWeightedBossTarget } from '../core/BossTargetPicker.js';
 
 const WORGEN_NAMES = ['盲眼奥杜之灵', '屠夫刃爪之灵', '雷希戈尔之灵', '狼王南杜斯之灵'];
 
@@ -33,7 +34,7 @@ export const SilverlaineEncounter: BossEncounterModule = {
         execute: (boss, engine) => {
           const tank = engine.friendlyUnits.find(u => u.alive && u.role === 'TANK') || engine.friendlyUnits[0];
           const nonTanks = engine.friendlyUnits.filter(u => u.alive && u.role !== 'TANK');
-          const extraTarget = nonTanks[Math.floor(Math.random() * nonTanks.length)];
+          const extraTarget = pickWeightedBossTarget(nonTanks);
           const targets = [tank, extraTarget].filter((t, idx, arr): t is Unit => Boolean(t) && arr.indexOf(t) === idx);
 
           for (const target of targets) {
@@ -103,7 +104,7 @@ export const SilverlaineEncounter: BossEncounterModule = {
           });
           // Immediate swipe on a non-tank to force pickup
           const nonTank = engine.friendlyUnits.filter(u => u.alive && u.role !== 'TANK');
-          const target = nonTank[Math.floor(Math.random() * nonTank.length)] || engine.friendlyUnits[0];
+          const target = pickWeightedBossTarget(nonTank) || pickWeightedBossTarget(engine.friendlyUnits);
           if (target) {
             engine.dealDamage(worgen, target, 12000, 'PHYSICAL', false, '狼人之灵撕咬');
           }

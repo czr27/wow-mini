@@ -586,30 +586,30 @@ function drawCyberDruidEightDir(
   const palette =
     spec === 'RESTORATION'
       ? {
-          chassis: '#0f1f18',
-          armor: '#163828',
+          chassis: '#c2410c',
+          armor: '#FF7D0A',
           neon: '#00FF87',
           neonAlt: '#38BDF8',
-          cloak: '#064e3b',
+          cloak: '#7c2d12',
           eye: '#00FF87',
           eyeLook: 'glow' as EyeLook,
         }
       : spec === 'BALANCE'
         ? {
-            chassis: '#130e26',
-            armor: '#251749',
+            chassis: '#c2410c',
+            armor: '#FF7D0A',
             neon: '#C026D3',
             neonAlt: '#00F0FF',
-            cloak: '#1e1b4b',
+            cloak: '#7c2d12',
             eye: '#00F0FF',
             eyeLook: 'ring' as EyeLook,
           }
         : {
-            chassis: '#1a110d',
-            armor: '#3b1e0e',
-            neon: '#FF7D0A',
-            neonAlt: '#FFE600',
-            cloak: '#451a03',
+            chassis: '#c2410c',
+            armor: '#FF7D0A',
+            neon: '#FFE600',
+            neonAlt: '#FF7D0A',
+            cloak: '#7c2d12',
             eye: '#FFB800',
             eyeLook: 'beast' as EyeLook,
           };
@@ -681,7 +681,7 @@ function drawCyberDruidEightDir(
     ctx.beginPath();
     ctx.arc(sway, -17.5, 8.4, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = spec === 'FERAL' ? '#9a3412' : spec === 'BALANCE' ? '#3b0764' : '#065f46';
+    ctx.fillStyle = '#ea580c';
     ctx.beginPath();
     ctx.arc(sway, -17.5, 7.2, 0, Math.PI * 2);
     ctx.fill();
@@ -912,8 +912,8 @@ function drawCyberClassBodyByClassId(
         : u.role === 'TANK' ? 'BLOOD' : 'FROST';
       const specNeon = s === 'BLOOD' ? '#FF2A55' : s === 'FROST' ? '#00F0FF' : '#39FF14';
       drawCyberHeroWithSpecs(ctx, sway, pose, fx, {
-        chassis: '#161124', armor: '#271e3d', classColor, specNeon, cloak: '#2c0b16',
-        helm: '#271e3d', eye: specNeon, eyeLook: 'rune', plate: true,
+        chassis: '#881337', armor: classColor, classColor, specNeon, cloak: '#4c0519',
+        helm: '#9f1239', eye: specNeon, eyeLook: 'rune', plate: true,
       }, {
         backDetail: () => {
           drawNeonGlowLine(ctx, sway, -10, sway, 8, 2, specNeon, fx);
@@ -940,8 +940,8 @@ function drawCyberClassBodyByClassId(
         : u.role === 'HEALER' ? 'RESTORATION' : 'ELEMENTAL';
       const specNeon = s === 'RESTORATION' ? '#00E5FF' : s === 'ELEMENTAL' ? '#38BDF8' : '#FF5500';
       drawCyberHeroWithSpecs(ctx, sway, pose, fx, {
-        chassis: '#0e1b2e', armor: '#173052', classColor, specNeon, cloak: '#0c2747',
-        helm: '#1e3a5f', eye: specNeon, eyeLook: 'glow', plate: false,
+        chassis: '#0369a1', armor: classColor, classColor, specNeon, cloak: '#075985',
+        helm: '#0284c7', eye: specNeon, eyeLook: 'glow', plate: false,
       }, {
         backDetail: () => {
           // 背面图腾柱
@@ -972,8 +972,8 @@ function drawCyberClassBodyByClassId(
       const s = spec === 'FIRE' || spec === 'FROST' || spec === 'ARCANE' ? spec : 'FIRE';
       const specNeon = s === 'FIRE' ? '#FF6B00' : s === 'FROST' ? '#00F5FF' : '#E879F9';
       drawCyberHeroWithSpecs(ctx, sway, pose, fx, {
-        chassis: '#131836', armor: '#1f2b5c', classColor, specNeon, cloak: '#172554',
-        helm: '#1e3a8a', eye: specNeon, eyeLook: 'glow',
+        chassis: '#0284c7', armor: classColor, classColor, specNeon, cloak: '#0369a1',
+        helm: '#38bdf8', eye: specNeon, eyeLook: 'glow',
       }, {
         backDetail: () => {
           drawNeonGlowCircle(ctx, sway, -2, 3.2, specNeon, fx);
@@ -1005,8 +1005,8 @@ function drawCyberClassBodyByClassId(
       const s = spec === 'COMBAT' || spec === 'ASSASSINATION' || spec === 'SUBTLETY' ? spec : 'COMBAT';
       const specNeon = s === 'COMBAT' ? '#FFE600' : s === 'ASSASSINATION' ? '#4ADE80' : '#C084FC';
       drawCyberHeroWithSpecs(ctx, sway, pose, fx, {
-        chassis: '#141418', armor: '#27272f', classColor, specNeon, cloak: '#18181b',
-        helm: '#27272a', eye: specNeon, eyeLook: 'slit', alpha: s === 'SUBTLETY' ? 0.88 : 1,
+        chassis: '#ca8a04', armor: classColor, classColor, specNeon, cloak: '#713f12',
+        helm: '#eab308', eye: specNeon, eyeLook: 'slit', alpha: s === 'SUBTLETY' ? 0.88 : 1,
       }, {
         backDetail: () => {
           if (s === 'ASSASSINATION') {
@@ -1030,8 +1030,8 @@ function drawCyberClassBodyByClassId(
         : u.role === 'TANK' ? 'PROTECTION' : 'ARMS';
       const specNeon = s === 'PROTECTION' ? '#F8FAFC' : s === 'ARMS' ? '#FF3B30' : '#EF4444';
       drawCyberHeroWithSpecs(ctx, sway, pose, fx, {
-        chassis: '#261b12', armor: '#4a3524', classColor, specNeon, cloak: '#3b1515',
-        helm: '#475569', eye: specNeon, eyeLook: 'visor', plate: true,
+        chassis: '#92400e', armor: classColor, classColor, specNeon, cloak: '#78350f',
+        helm: '#b45309', eye: specNeon, eyeLook: 'visor', plate: true,
       }, {
         backDetail: () => {
           if (s === 'ARMS') {
@@ -1063,8 +1063,8 @@ function drawCyberClassBodyByClassId(
         : u.role === 'HEALER' ? 'HOLY' : u.role === 'TANK' ? 'PROTECTION' : 'RETRIBUTION';
       const specNeon = s === 'HOLY' ? '#FFE047' : s === 'PROTECTION' ? '#FACC15' : '#FDE047';
       drawCyberHeroWithSpecs(ctx, sway, pose, fx, {
-        chassis: '#241522', armor: '#4a2340', classColor, specNeon, cloak: '#422006',
-        helm: '#eab308', eye: specNeon, eyeLook: 'ring', plate: true,
+        chassis: '#be185d', armor: classColor, classColor, specNeon, cloak: '#831843',
+        helm: '#f472b6', eye: specNeon, eyeLook: 'ring', plate: true,
       }, {
         backDetail: () => {
           drawNeonGlowLine(ctx, sway, -10, sway, 8, 2, specNeon, fx);
@@ -1093,8 +1093,8 @@ function drawCyberClassBodyByClassId(
       const s = spec === 'BEAST_MASTERY' || spec === 'MARKSMANSHIP' || spec === 'SURVIVAL' ? spec : 'MARKSMANSHIP';
       const specNeon = s === 'BEAST_MASTERY' ? '#FB923C' : s === 'MARKSMANSHIP' ? '#22C55E' : '#A3E635';
       drawCyberHeroWithSpecs(ctx, sway, pose, fx, {
-        chassis: '#16240a', armor: '#2c4714', classColor, specNeon, cloak: '#1a2e05',
-        helm: '#365314', eye: specNeon, eyeLook: s === 'MARKSMANSHIP' ? 'visor' : 'beast',
+        chassis: '#4d7c0f', armor: classColor, classColor, specNeon, cloak: '#365314',
+        helm: '#65a30d', eye: specNeon, eyeLook: s === 'MARKSMANSHIP' ? 'visor' : 'beast',
       }, {
         backDetail: () => {
           drawCyberBox(ctx, sway + 2, -12, 5, 18, '#78350f', NEON_INK, specNeon, 1.4);
@@ -1117,13 +1117,13 @@ function drawCyberClassBodyByClassId(
       const isShadow = s === 'SHADOW';
       const specNeon = isShadow ? '#D946EF' : s === 'DISCIPLINE' ? '#FEF08A' : '#38BDF8';
       drawCyberHeroWithSpecs(ctx, sway, pose, fx, {
-        chassis: isShadow ? '#240c4d' : '#cbd5e1',
-        armor: isShadow ? '#4c1d95' : '#f8fafc',
-        classColor: isShadow ? '#7e22ce' : classColor,
+        chassis: isShadow ? '#ddd6fe' : '#e2e8f0',
+        armor: isShadow ? '#f3e8ff' : classColor,
+        classColor: classColor,
         specNeon,
-        cloak: isShadow ? '#1e0b38' : '#e2e8f0',
-        helm: isShadow ? '#4c1d95' : '#f8fafc',
-        eye: isShadow ? '#F0ABFC' : '#334155',
+        cloak: isShadow ? '#6b21a8' : '#cbd5e1',
+        helm: isShadow ? '#e9d5ff' : '#f8fafc',
+        eye: isShadow ? '#D946EF' : '#334155',
         eyeLook: isShadow ? 'hollow' : 'cross',
         alpha: isShadow ? 0.9 : 1,
       }, {
@@ -1151,8 +1151,8 @@ function drawCyberClassBodyByClassId(
       const s = spec === 'AFFLICTION' || spec === 'DEMONOLOGY' || spec === 'DESTRUCTION' ? spec : 'AFFLICTION';
       const specNeon = s === 'AFFLICTION' ? '#A855F7' : s === 'DEMONOLOGY' ? '#E879F9' : '#84CC16';
       drawCyberHeroWithSpecs(ctx, sway, pose, fx, {
-        chassis: '#190e2e', armor: '#341c5e', classColor, specNeon, cloak: '#1e1033',
-        helm: '#3b0764', eye: specNeon, eyeLook: 'toxic',
+        chassis: '#5b21b6', armor: classColor, classColor, specNeon, cloak: '#3b0764',
+        helm: '#7c3aed', eye: specNeon, eyeLook: 'toxic',
       }, {
         backDetail: () => {
           if (fx >= 0.5) drawNeonGlowCircle(ctx, sway, -2, 2.8, specNeon, fx);

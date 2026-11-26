@@ -58,8 +58,14 @@
 ```bash
 npx --yes tsx --test DEV/packages/engine/src/__tests__/classes_and_universal_ai.test.ts \
   DEV/packages/engine/src/__tests__/dbm_alerts.test.ts \
+  DEV/packages/engine/src/__tests__/dbm_necessity.test.ts \
   QA/tests/smart_ai_metrics_and_personality.test.ts
 ```
+
+## 强制验收：DBM 双向必要性测试
+每次新增副本/首领或调整 Boss 技能机制时，**必须**同步校验 DBM（参考 `DEV/packages/engine/src/__tests__/dbm_necessity.test.ts`）：
+1. **正向校验（严重后果 → 必须有 DBM）**：在 AI 模拟测试副本中，凡是会导致严重后果的机制（灭团、秒杀、大额掉血、强控、降疗、必须转火/走位/分摊），反过来检查该机制是否已配置 `skill.dbm`、高威胁 `interruptible` 或阶段 `emitDbmAlert`。
+2. **反向校验（已设 DBM → 故意反着做验证必要性）**：对已设置 DBM 的技能，在测试用例中故意**反着做**（如提示「保持移动」却站桩、提示「躲柱子后」却站柱外、提示「注意远离」却贴近、提示「注意打断」却不打断），验证确实会产生严重后果；若反着做毫无痛痒，说明该 DBM 属于无效噪音，应删除以防刷屏。
 
 ## 强制验收：全随机 AI 普通模式通关测试
 每完成一个首领（或机制改动）后，**必须**新增/运行普通模式全随机 AI 通关测试（参考 `DEV/packages/engine/src/__tests__/dungeon_normal_ai_clear.test.ts`）：

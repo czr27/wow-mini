@@ -263,7 +263,6 @@ export const PlayerCastBar: React.FC<PlayerCastBarProps> = ({
         toggleLock();
       }}
       className="absolute -top-1 -right-1 z-40 w-5 h-5 flex items-center justify-center text-[11px] rounded bg-black/70 border border-[#3e3e5c] text-amber-300 opacity-0 pointer-events-none group-hover/castbar:opacity-100 group-hover/castbar:pointer-events-auto transition-opacity hover:bg-black/90"
-      title={isLocked ? '解锁读条位置（可拖动）' : '锁定读条位置'}
     >
       {isLocked ? '🔒' : '🔓'}
     </button>
@@ -391,7 +390,6 @@ export const PlayerCastBar: React.FC<PlayerCastBarProps> = ({
         <div
           style={{ left: `${pos.x + FRAME_WIDTH - 28}px`, top: `${pos.y}px`, width: 28, height: 28 }}
           className={shellClass}
-          title="悬停解锁读条位置"
         >
           {renderLockButton()}
         </div>

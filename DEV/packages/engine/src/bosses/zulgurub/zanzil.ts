@@ -123,7 +123,7 @@ export const ZanzilEncounter: BossEncounterModule = {
             for (let i = 0; i < 3; i++) {
               spawnCombatUnit(engine, {
                 id: `zanzil_zombie_${Date.now()}_${i}`,
-                name: `赞吉利僵尸 ${i + 1}`,
+                name: '赞吉利僵尸',
                 unitKind: 'ADD',
                 role: 'ENEMY',
                 classId: 'NPC',

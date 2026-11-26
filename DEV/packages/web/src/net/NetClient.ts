@@ -4,6 +4,7 @@ import {
   type AuthPayload,
   type CombatBatch,
   type CombatEffect,
+  type GmCommandPayload,
   type LobbyRoom,
   type NetEnvelope,
   type NetMessageType,
@@ -11,6 +12,7 @@ import {
   type OwnerSnapshot,
   type PlayerInputPayload,
   type RoomActionPayload,
+  type RoomChatSendPayload,
   type RoomCreatePayload,
 } from '@cata-raid-sim/engine';
 
@@ -432,6 +434,16 @@ export class NetClient {
     this.send({ type: 'PLAYER_INPUT', roomId, payload: body });
   }
 
+  sendGmCommand(roomId: string, payload: GmCommandPayload) {
+    if (!roomId) return;
+    this.send({
+      type: 'GM_COMMAND',
+      roomId,
+      timeMs: Date.now(),
+      payload,
+    });
+  }
+
   getSrttMs(): number {
     return this.srttMs;
   }
@@ -645,6 +657,15 @@ export class NetClient {
     this.sendPlayerInput(roomId, {
       kind: 'REQUEST_SKIP_TRAVEL',
       playerId,
+    });
+  }
+
+  sendRoomChat(roomId: string, payload: RoomChatSendPayload) {
+    this.send({
+      type: 'ROOM_CHAT',
+      roomId,
+      timeMs: Date.now(),
+      payload,
     });
   }
 }

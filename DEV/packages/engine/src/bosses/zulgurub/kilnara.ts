@@ -81,7 +81,7 @@ export const KilnaraEncounter: BossEncounterModule = {
         for (let i = 0; i < 3; i++) {
           spawnCombatUnit(engine, {
             id: `panther_${pack}_${i}_${Date.now()}`,
-            name: `神殿豹 ${pack + 1}-${i + 1}`,
+            name: '神殿豹',
             unitKind: 'ADD',
             role: 'ENEMY',
             classId: 'NPC',

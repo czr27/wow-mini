@@ -16,7 +16,7 @@ echo   4. 启动联机服务端 + 前端（浏览器打开）
 echo.
 echo ----------------------------------------
 
-:: ---- 检查 Node.js ----
+REM ---- Check Node.js ----
 where node >nul 2>nul
 if errorlevel 1 (
   echo [缺少] 未检测到 Node.js
@@ -50,7 +50,7 @@ if not exist "DEV\package.json" (
   exit /b 1
 )
 
-:: ---- 安装依赖 ----
+REM ---- Install dependencies ----
 echo [1/3] 安装依赖（首次较慢，请耐心等待）...
 cd /d "%~dp0DEV"
 call npm install
@@ -63,7 +63,7 @@ if errorlevel 1 (
 )
 echo.
 
-:: ---- 编译 engine ----
+REM ---- Build engine ----
 echo [2/3] 编译 packages/engine ...
 call npm run build --workspace=packages/engine
 if errorlevel 1 (
@@ -74,7 +74,7 @@ if errorlevel 1 (
 )
 echo.
 
-:: ---- 启动 ----
+REM ---- Start services ----
 echo [3/3] 启动服务...
 echo   - 新窗口：联机 Server（WebSocket / 账号 API）
 echo   - 本窗口：前端 Vite（浏览器）
@@ -84,7 +84,7 @@ echo 关掉窗口即可停止对应服务。
 echo ----------------------------------------
 echo.
 
-:: /D 指定工作目录，避免嵌套引号导致语法错误
+REM Use /D to specify working directory and avoid nested quote issues
 start "Cata Raid Sim - Server" /D "%~dp0DEV" cmd /k "npm run dev --workspace=packages/server"
 timeout /t 2 /nobreak >nul
 

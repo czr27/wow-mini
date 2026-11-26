@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import type {
   CharacterRecord,
   GroundEffect,
@@ -8,11 +8,14 @@ import type {
   Unit,
   UserAccount,
   DbmAlert,
+  RoomChatMessage,
 } from '@cata-raid-sim/engine';
-import { resolveCombatDisplayPrefs } from '@cata-raid-sim/engine';
+import { resolveCombatDisplayPrefs, getUnitCrowdControlInfo } from '@cata-raid-sim/engine';
 import { CombatCanvas } from '../canvas/CombatCanvas.js';
 import { ActionBar, ActionSlot, PlayerCastState, PlayerCastBar } from '../components/ActionBar.js';
+import { BossDefeatedBanner, type BossDefeatedBannerInfo } from '../components/BossDefeatedBanner.js';
 import { BuffFrame } from '../components/BuffFrame.js';
+import { ChatPanel } from '../components/ChatPanel.js';
 import { DbmAlertBanner } from '../components/DbmAlertBanner.js';
 import { FocusUnitFrame } from '../components/FocusUnitFrame.js';
 import { PlayerUnitFrame } from '../components/PlayerUnitFrame.js';
@@ -21,6 +24,8 @@ import { StatsPanel } from '../components/StatsPanel.js';
 import { TargetUnitFrame } from '../components/TargetUnitFrame.js';
 import { TravelRecovery } from '../components/TravelRecovery.js';
 import { dkRunesForHud } from '../combat/dkResources.js';
+import { useGameStore } from '../store/gameStore.js';
+import { playBossDefeatedSfx } from '../utils/combatSfx.js';
 
 export type CombatHudRunPhase =
   | 'LOBBY'
@@ -134,6 +139,8 @@ export type CombatHudScreenProps = {
   /** Guest reports local player position to host */
   onNetworkMoveReport?: (x: number, y: number) => void;
   dbmAlerts?: DbmAlert[];
+  chatMessages?: RoomChatMessage[];
+  onSendChat?: (text: string) => void;
 };
 
 function resolveUnitCastState(
@@ -276,6 +283,53 @@ export function CombatHudScreen(props: CombatHudScreenProps) {
     dbmAlerts = [],
   } = props;
   const dbmEnabled = resolveCombatDisplayPrefs(currentChar?.uiLayout?.combatDisplay).enableDbm;
+  const [bossDefeatedBanner, setBossDefeatedBanner] = useState<BossDefeatedBannerInfo | null>(null);
+  const prevPhaseRef = useRef<CombatHudRunPhase>(runPhase);
+  const lastCombatBossRef = useRef<{ id: string; name: string; index: number } | null>(null);
+  const encounterReports = useGameStore((s) => s.encounterReports);
+
+  useEffect(() => {
+    if (runPhase === 'BOSS_COMBAT' && bossUnit) {
+      lastCombatBossRef.current = {
+        id: bossUnit.id,
+        name: bossUnit.name,
+        index: currentBossIndex,
+      };
+    }
+
+    if (prevPhaseRef.current === 'BOSS_COMBAT' && runPhase === 'TRAVEL_RECOVERY') {
+      const defeated = lastCombatBossRef.current;
+      const latestReport = encounterReports[encounterReports.length - 1];
+      if (defeated) {
+        playBossDefeatedSfx();
+        setBossDefeatedBanner({
+          id: defeated.id,
+          name: defeated.name,
+          stageNumber: defeated.index + 1,
+          durationSec: latestReport?.durationSec,
+          fadingOut: false,
+        });
+      }
+    } else if (runPhase === 'WIPE_VOTE' || runPhase === 'SUMMARY') {
+      setBossDefeatedBanner(null);
+    }
+
+    prevPhaseRef.current = runPhase;
+  }, [runPhase, bossUnit, currentBossIndex, encounterReports]);
+
+  useEffect(() => {
+    if (!bossDefeatedBanner || bossDefeatedBanner.fadingOut) return;
+    const fadeTimer = setTimeout(() => {
+      setBossDefeatedBanner((prev) => (prev ? { ...prev, fadingOut: true } : null));
+    }, 2900);
+    const clearTimer = setTimeout(() => {
+      setBossDefeatedBanner(null);
+    }, 3450);
+    return () => {
+      clearTimeout(fadeTimer);
+      clearTimeout(clearTimer);
+    };
+  }, [bossDefeatedBanner]);
 
   const allUnits = [
     ...friendlyUnits,
@@ -341,7 +395,13 @@ export function CombatHudScreen(props: CombatHudScreenProps) {
       </div>
 
       <div className="absolute inset-0 pointer-events-none z-10">
-        <DbmAlertBanner alerts={dbmAlerts} enabled={dbmEnabled} />
+        <BossDefeatedBanner info={bossDefeatedBanner} />
+        <DbmAlertBanner
+          alerts={dbmAlerts}
+          enabled={dbmEnabled}
+          initialPos={currentChar?.uiLayout?.dbmBanner ?? null}
+          onSavePos={(pos) => onSaveUiLayout({ dbmBanner: pos })}
+        />
         {playerUnit ? (
           <BuffFrame player={playerUnit} allUnits={allUnits} />
         ) : null}
@@ -475,6 +535,7 @@ export function CombatHudScreen(props: CombatHudScreenProps) {
             outOfRangeSpells={outOfRangeSpells}
             insufficientResourceSpells={insufficientResourceSpells}
             spellResourceErrors={spellResourceErrors}
+            crowdControl={getUnitCrowdControlInfo(playerUnit)}
             dkRunes={dkRunesForHud(playerUnit)}
             comboPoints={currentChar?.classId === 'ROGUE' ? 4 : 0}
             holyPower={
@@ -493,6 +554,16 @@ export function CombatHudScreen(props: CombatHudScreenProps) {
             }}
           />
         </div>
+
+        {props.onSendChat && (
+          <div className="pointer-events-auto">
+            <ChatPanel
+              variant="combat"
+              messages={props.chatMessages || []}
+              onSendMessage={props.onSendChat}
+            />
+          </div>
+        )}
       </div>
     </div>
   );

@@ -55,7 +55,7 @@ export const GameLoadingScreen: React.FC<GameLoadingScreenProps> = ({ percent, l
             />
           </div>
           <p className="mt-3 text-center text-[10px] text-gray-500">
-            下载技能图标与界面资源，完成后自动进入
+            下载游戏资源，完成后自动进入
           </p>
         </div>
       </div>

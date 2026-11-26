@@ -1,4 +1,5 @@
 import type { BossEncounterModule, BossSkill } from '../core/BossTypes.js';
+import { pickWeightedBossTarget } from '../core/BossTargetPicker.js';
 
 export type DoanAiState = {
   doanFightMs?: number;
@@ -34,7 +35,7 @@ export const DoanEncounter: BossEncounterModule = {
         execute: (boss, engine) => {
           if ((ai.doanBubbleMs || 0) > 0) return;
           const pool = living(engine).filter((u: any) => u.role !== 'TANK');
-          const t = pool[Math.floor(Math.random() * Math.max(1, pool.length))];
+          const t = pickWeightedBossTarget(pool);
           if (!t) return;
           engine.applyBuff(t, {
             id: `poly_${Date.now()}`,

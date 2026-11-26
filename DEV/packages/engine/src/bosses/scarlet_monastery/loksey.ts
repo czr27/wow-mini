@@ -68,7 +68,7 @@ export const LokseyEncounter: BossEncounterModule = {
     for (let i = 0; i < 4; i++) {
       spawnCombatUnit(engine, {
         id: `hound_${Date.now()}_${i}`,
-        name: `猎犬 ${i + 1}`,
+        name: '猎犬',
         unitKind: 'ADD',
         role: 'ENEMY',
         classId: 'NPC',

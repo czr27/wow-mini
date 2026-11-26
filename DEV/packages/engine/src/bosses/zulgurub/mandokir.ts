@@ -2,6 +2,7 @@ import type { BossEncounterModule, BossSkill } from '../core/BossTypes.js';
 import type { CombatEngine } from '../../engine/CombatEngine.js';
 import type { Unit } from '../../types.js';
 import { spawnCombatUnit } from '../../engine/UnitSpawn.js';
+import { pickWeightedBossTarget } from '../core/BossTargetPicker.js';
 
 export const OHGAN_SUMMON = 'mandokir_ohgan';
 export const SOUL_REVIVE_MAX = 8;
@@ -65,7 +66,7 @@ export const MandokirEncounter: BossEncounterModule = {
         execute: (boss, engine) => {
           if (ai.mandoSoulsLeft == null) ai.mandoSoulsLeft = SOUL_REVIVE_MAX;
           const pool = living(engine).filter(u => u.role !== 'TANK');
-          const t = pool[Math.floor(Math.random() * Math.max(1, pool.length))] || living(engine)[0];
+          const t = pickWeightedBossTarget(pool) || pickWeightedBossTarget(living(engine));
           if (!t) return;
           // 秒杀
           engine.dealDamage(boss, t, 999_999, 'PHYSICAL', true, '斩首');
@@ -111,7 +112,7 @@ export const MandokirEncounter: BossEncounterModule = {
         description: '地面冲击：落点附近重伤',
         execute: (boss, engine) => {
           const fri = living(engine);
-          const t = fri[Math.floor(Math.random() * Math.max(1, fri.length))];
+          const t = pickWeightedBossTarget(fri);
           const pos = t?.position || { x: 400, y: 220 };
           const mult = 1 + 0.08 * (ai.mandoLevelUp || 0);
           engine.effectsManager?.addGroundEffect({

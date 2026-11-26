@@ -2,6 +2,7 @@ import type { BossEncounterModule, BossSkill } from '../core/BossTypes.js';
 import type { CombatEngine } from '../../engine/CombatEngine.js';
 import type { Unit } from '../../types.js';
 import { spawnCombatUnit } from '../../engine/UnitSpawn.js';
+import { pickWeightedBossTarget } from '../core/BossTargetPicker.js';
 
 export const CORRUPTION_SUMMON = 'spine_corruption';
 export const RESIDUE_SUMMON = 'spine_hideous_amalgamation';
@@ -63,7 +64,7 @@ export const SpineEncounter: BossEncounterModule = {
         description: '点名吸收盾/持续灼烧（简化 DoT）',
         execute: (boss, engine) => {
           const pool = living(engine);
-          const t = pool[Math.floor(Math.random() * Math.max(1, pool.length))];
+          const t = pickWeightedBossTarget(pool);
           if (!t) return;
           engine.applyBuff(t, {
             id: `plasma_${Date.now()}_${t.id}`,
@@ -101,7 +102,7 @@ export const SpineEncounter: BossEncounterModule = {
           for (let i = 0; i < n; i++) {
             spawnCombatUnit(engine, {
               id: `corr_${Date.now()}_${i}`,
-              name: `腐蚀 ${i + 1}`,
+              name: '腐蚀',
               unitKind: 'ADD',
               role: 'ENEMY',
               classId: 'NPC',
@@ -178,6 +179,16 @@ export const SpineEncounter: BossEncounterModule = {
       // 每杀死 1 个残渣安排滚转
       if (ai.spineRollAt == null) {
         ai.spineRollAt = (ai.spineFightMs || 0) + 4000;
+        engine.emitDbmAlert?.({
+          title: '即将滚转（4s）',
+          advice: '抓稳防翻',
+          voiceText: '抓稳防翻',
+          replaceKey: 'spine_roll',
+          severity: 'CRITICAL',
+          spellId: 'spine_roll',
+          bossId: boss.id,
+          source: 'ENCOUNTER',
+        });
         // AI 自动抓稳；玩家需自行（测试可手动）
         for (const u of living(engine)) {
           if (!u.isPlayer) applySpineGrip(engine, u);

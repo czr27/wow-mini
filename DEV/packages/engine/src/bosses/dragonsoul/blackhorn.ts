@@ -2,6 +2,7 @@ import type { BossEncounterModule, BossSkill } from '../core/BossTypes.js';
 import type { CombatEngine } from '../../engine/CombatEngine.js';
 import type { Unit } from '../../types.js';
 import { spawnCombatUnit } from '../../engine/UnitSpawn.js';
+import { pickWeightedBossTarget } from '../core/BossTargetPicker.js';
 
 export const SKYFIRE_DRAKE_SUMMON = 'blackhorn_twilight_drake';
 export const SKYFIRE_ASSAULT_SUMMON = 'blackhorn_assault_troop';
@@ -13,6 +14,12 @@ export type BlackhornAiState = {
   blackhornShipMaxHp?: number;
   blackhornWaveAcc?: number;
   blackhornWave?: number;
+  blackhornOnslaughtTarget?: {
+    x: number;
+    y: number;
+    radius: number;
+    resolveAtFightMs: number;
+  };
   skills?: BossSkill[];
 };
 
@@ -46,7 +53,7 @@ export const BlackhornEncounter: BossEncounterModule = {
         execute: (boss, engine) => {
           if (ai.blackhornPhase === 'landed') return;
           const fri = living(engine);
-          const t = fri[Math.floor(Math.random() * Math.max(1, fri.length))];
+          const t = pickWeightedBossTarget(fri);
           const pos = t?.position || { x: 400, y: 220 };
           engine.effectsManager?.addGroundEffect({
             kind: 'DAMAGE_ZONE',
@@ -72,7 +79,7 @@ export const BlackhornEncounter: BossEncounterModule = {
         school: 'SHADOW',
         range: 400,
         targetKind: 'AOE',
-        description: 'P1 对舰船与全团造成伤害',
+        description: 'P1 暮光猛攻落点：须集合分摊伤害，无人/少人分摊将重创或伤舰',
         dbm: {
           advice: '集合分摊暮光弹',
           voiceText: '集合分摊',
@@ -80,16 +87,31 @@ export const BlackhornEncounter: BossEncounterModule = {
         },
         execute: (boss, engine) => {
           if (ai.blackhornPhase === 'landed') return;
-          const shipDmg = living(engine).length >= 15 ? 80_000 : 45_000;
-          ai.blackhornShipHp = Math.max(0, (ai.blackhornShipHp || 0) - shipDmg);
-          for (const u of living(engine)) {
-            engine.dealDamage(boss, u, 12_000, 'SHADOW', false, '暮光猛攻');
-          }
+          const fri = living(engine);
+          const t = pickWeightedBossTarget(fri);
+          const pos = t?.position || { x: 400, y: 220 };
+          const radius = 75;
+          ai.blackhornOnslaughtTarget = {
+            x: pos.x,
+            y: pos.y,
+            radius,
+            resolveAtFightMs: (ai.blackhornFightMs || 0) + 3000,
+          };
+          engine.effectsManager?.addGroundEffect({
+            kind: 'HEAL_ZONE',
+            spellId: 'twilight_onslaught_soak',
+            ownerId: boss.id,
+            x: pos.x,
+            y: pos.y,
+            radius,
+            colorHex: '#A855F7',
+            remainingMs: 3000,
+          });
           engine.effectsManager?.addFloatingText({
             targetId: boss.id,
-            text: `🚢 舰船 ${(ai.blackhornShipHp || 0).toLocaleString()} / ${(ai.blackhornShipMaxHp || 0).toLocaleString()}`,
-            category: 'STATUS',
-            isCrit: false,
+            text: '🟣 暮光猛攻落点！集合分摊！',
+            category: 'CRIT',
+            isCrit: true,
           });
         },
       },
@@ -164,6 +186,46 @@ export const BlackhornEncounter: BossEncounterModule = {
     }
 
     if (ai.blackhornPhase === 'ship') {
+      // 结算暮光猛攻分摊落点
+      const soak = ai.blackhornOnslaughtTarget;
+      if (soak && (ai.blackhornFightMs || 0) >= soak.resolveAtFightMs) {
+        ai.blackhornOnslaughtTarget = undefined;
+        const fri = living(engine);
+        const is20Man = fri.length >= 15;
+        const soakers = fri.filter(
+          u => Math.hypot((u.position?.x || 0) - soak.x, (u.position?.y || 0) - soak.y) <= soak.radius,
+        );
+        if (soakers.length === 0) {
+          // 无人分摊：重创天火号并全团溅射
+          const shipDmg = is20Man ? 160_000 : 90_000;
+          ai.blackhornShipHp = Math.max(0, (ai.blackhornShipHp || 0) - shipDmg);
+          for (const u of fri) {
+            engine.dealDamage(boss, u, 28_000, 'SHADOW', true, '暮光猛攻(无人分摊)');
+          }
+          engine.effectsManager?.addFloatingText({
+            targetId: boss.id,
+            text: '💥 暮光猛攻无人分摊！舰船重创！',
+            category: 'CRIT',
+            isCrit: true,
+          });
+        } else {
+          const totalPool = is20Man ? 240_000 : 120_000;
+          const each = Math.max(1, Math.round(totalPool / soakers.length));
+          for (const u of soakers) {
+            engine.dealDamage(boss, u, each, 'SHADOW', soakers.length === 1, '暮光猛攻分摊');
+          }
+          const baseShipDmg = is20Man ? 80_000 : 45_000;
+          const shipDmg = Math.max(10_000, Math.round(baseShipDmg / Math.max(1, soakers.length * 0.6)));
+          ai.blackhornShipHp = Math.max(0, (ai.blackhornShipHp || 0) - shipDmg);
+          engine.effectsManager?.addFloatingText({
+            targetId: boss.id,
+            text: `🟣 暮光猛攻 ${soakers.length} 人分摊 (舰船 ${(ai.blackhornShipHp || 0).toLocaleString()})`,
+            category: 'STATUS',
+            isCrit: soakers.length === 1,
+          });
+        }
+      }
+
       ai.blackhornWaveAcc = (ai.blackhornWaveAcc || 0) + deltaMs;
       if ((ai.blackhornWaveAcc || 0) >= 18_000) {
         ai.blackhornWaveAcc = 0;

@@ -1,5 +1,6 @@
 import type { BossEncounterModule, BossSkill } from '../core/BossTypes.js';
 import { spawnCombatUnit } from '../../engine/UnitSpawn.js';
+import { pickWeightedBossTarget } from '../core/BossTargetPicker.js';
 
 export const RIFLEMAN_SUMMON = 'willey_scarlet_rifleman';
 
@@ -76,7 +77,7 @@ export const WilleyEncounter: BossEncounterModule = {
         description: '点名射击',
         execute: (boss, engine) => {
           const pool = living(engine);
-          const t = pool[Math.floor(Math.random() * Math.max(1, pool.length))];
+          const t = pickWeightedBossTarget(pool);
           if (t) engine.dealDamage(boss, t, 16_000, 'PHYSICAL', false, '火枪射击');
         },
       },
@@ -95,7 +96,7 @@ export const WilleyEncounter: BossEncounterModule = {
       for (let i = 0; i < n; i++) {
         spawnCombatUnit(engine, {
           id: `rifle_${Date.now()}_${i}`,
-          name: `血色火枪手 ${i + 1}`,
+          name: '血色火枪手',
           unitKind: 'ADD',
           role: 'ENEMY',
           classId: 'NPC',

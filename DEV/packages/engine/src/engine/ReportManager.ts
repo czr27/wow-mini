@@ -4,6 +4,7 @@ import {
   Unit,
   DungeonRunExport,
   DungeonClearCertificate,
+  DungeonDifficulty,
   ClassId,
 } from '../types.js';
 
@@ -109,7 +110,9 @@ export class ReportManager {
     totalDurationSec: number,
     encounters: EncounterReport[],
     /** Multiplayer: prefer this seat id (guest is never isPlayer on host reports) */
-    characterUnitId?: string | null
+    characterUnitId?: string | null,
+    difficulty?: DungeonDifficulty,
+    is20Man?: boolean
   ): DungeonClearCertificate {
     let aggDamage = 0;
     let aggHealing = 0;
@@ -142,6 +145,8 @@ export class ReportManager {
       id: `cert_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
       dungeonId,
       dungeonName,
+      difficulty,
+      is20Man,
       clearedAtIso: new Date().toISOString(),
       characterName,
       characterClass,

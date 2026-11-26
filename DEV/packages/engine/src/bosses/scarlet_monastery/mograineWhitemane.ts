@@ -1,5 +1,6 @@
 import type { BossEncounterModule, BossSkill } from '../core/BossTypes.js';
 import { spawnCombatUnit } from '../../engine/UnitSpawn.js';
+import { pickWeightedBossTarget } from '../core/BossTargetPicker.js';
 
 export const WHITEMANE_SUMMON = 'whitemane';
 export const MOGRAINE_FAKE_DEATH_HP = 0.01;
@@ -62,7 +63,7 @@ export const MograineWhitemaneEncounter: BossEncounterModule = {
         execute: (boss, engine) => {
           if (ai.mwPhase === 'whitemane_cast') return;
           const pool = living(engine);
-          const t = pool[Math.floor(Math.random() * Math.max(1, pool.length))];
+          const t = pickWeightedBossTarget(pool);
           if (!t) return;
           engine.applyBuff(t, {
             id: `hoj_${Date.now()}`,

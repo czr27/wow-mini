@@ -2,6 +2,7 @@ import type { BossEncounterModule, BossSkill } from '../core/BossTypes.js';
 import type { CombatEngine } from '../../engine/CombatEngine.js';
 import type { Unit } from '../../types.js';
 import { spawnCombatUnit } from '../../engine/UnitSpawn.js';
+import { pickWeightedBossTargets } from '../core/BossTargetPicker.js';
 
 export type BloodColor = 'red' | 'green' | 'yellow' | 'blue' | 'purple' | 'black';
 
@@ -60,7 +61,7 @@ function applyFuseEffects(boss: Unit, engine: CombatEngine, colors: BloodColor[]
         }
         break;
       case 'purple':
-        for (const u of fri.filter(x => x.role !== 'TANK').slice(0, 2)) {
+        for (const u of pickWeightedBossTargets(fri.filter(x => x.role !== 'TANK'), 2)) {
           engine.applyBuff(u, {
             id: `mind_${Date.now()}_${u.id}`,
             spellId: 'yorsahj_mind_control',
@@ -202,6 +203,27 @@ export const YorsahjEncounter: BossEncounterModule = {
   onTick(deltaMs, boss, engine, bossAiRaw) {
     const ai = bossAiRaw as YorsahjAiState;
     ai.yorsahjFightMs = (ai.yorsahjFightMs || 0) + deltaMs;
+
+    // 血滴向中心（Boss）缓慢爬行靠近
+    if (ai.yorsahjFuseAt != null && (ai.yorsahjFightMs || 0) < ai.yorsahjFuseAt) {
+      const bPos = boss.position || { x: 500, y: 200 };
+      const remMs = Math.max(deltaMs, ai.yorsahjFuseAt - (ai.yorsahjFightMs || 0));
+      for (const e of engine.enemyUnits) {
+        if (!(e.alive ?? e.isAlive) || (e.hp ?? 0) <= 0) continue;
+        if (!e.summonSpellId?.startsWith(BLOOD_SUMMON_PREFIX)) continue;
+        if (!e.position) continue;
+        const dx = bPos.x - e.position.x;
+        const dy = bPos.y - e.position.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist > 14) {
+          const frac = Math.min(1, deltaMs / remMs);
+          e.position = {
+            x: e.position.x + dx * frac,
+            y: e.position.y + dy * frac,
+          };
+        }
+      }
+    }
 
     if (ai.yorsahjFuseAt != null && (ai.yorsahjFightMs || 0) >= ai.yorsahjFuseAt) {
       const aliveColors: BloodColor[] = [];

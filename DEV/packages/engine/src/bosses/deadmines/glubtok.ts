@@ -1,6 +1,7 @@
 import type { BossEncounterModule, BossSkill } from '../core/BossTypes.js';
 import type { CombatEngine } from '../../engine/CombatEngine.js';
 import type { Unit } from '../../types.js';
+import { pickWeightedBossTarget } from '../core/BossTargetPicker.js';
 
 export type GlubtokAiState = {
   glubtokFightMs?: number;
@@ -105,16 +106,6 @@ export const GlubtokEncounter: BossEncounterModule = {
 
     if (ai.glubtokPhase === 'p1' && boss.maxHp > 0 && boss.hp / boss.maxHp <= 0.5) {
       ai.glubtokPhase = 'p2';
-      engine.emitDbmAlert?.({
-        title: '转阶段：双元素之怒',
-        advice: '避开火焰壁垒扫射',
-        voiceText: '躲避火墙',
-        replaceKey: 'glubtok_p2',
-        severity: 'WARN',
-        spellId: 'glubtok_p2',
-        bossId: boss.id,
-        source: 'ENCOUNTER',
-      });
       engine.effectsManager?.addFloatingText({
         targetId: boss.id,
         text: '💥 半血！火焰/冰霜花瓣与火墙！',
@@ -128,7 +119,7 @@ export const GlubtokEncounter: BossEncounterModule = {
       if ((ai.glubtokBlossomAcc || 0) >= 5000) {
         ai.glubtokBlossomAcc = 0;
         const fri = living(engine);
-        const t = fri[Math.floor(Math.random() * Math.max(1, fri.length))];
+        const t = pickWeightedBossTarget(fri);
         const pos = t?.position || boss.position || { x: 400, y: 200 };
         const isFire = Math.random() < 0.5;
         engine.effectsManager?.addGroundEffect({
@@ -148,6 +139,16 @@ export const GlubtokEncounter: BossEncounterModule = {
       ai.glubtokFirewallAcc = (ai.glubtokFirewallAcc || 0) + deltaMs;
       if ((ai.glubtokFirewallAcc || 0) >= 8000) {
         ai.glubtokFirewallAcc = 0;
+        engine.emitDbmAlert?.({
+          title: '火焰壁垒出现',
+          advice: '绕圈移动，避开火墙',
+          voiceText: '躲避火墙',
+          replaceKey: 'glubtok_firewall',
+          severity: 'WARN',
+          spellId: 'glubtok_firewall',
+          bossId: boss.id,
+          source: 'ENCOUNTER',
+        });
         const bPos = boss.position || { x: 500, y: 200 };
         // 火墙：生成可观测、可躲避的地面火焰区域（环绕 Boss 约 85px 半径的 4 个节点）
         for (let k = 0; k < 4; k++) {

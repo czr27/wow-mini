@@ -5,6 +5,7 @@ import {
   type SfxActorRole,
   type SfxEventKind,
 } from '../utils/combatSfx.js';
+import { playRaidBuffSfx } from '../utils/bgmManager.js';
 import { useGameStore } from '../store/gameStore.js';
 import {
   Unit,
@@ -94,6 +95,10 @@ import {
   drawClassAoePulses,
   type ClassAoePulseState,
 } from '../combat/combatClassAoePulse.js';
+import {
+  resolveBossLinkBeams,
+  drawBossLinkBeams,
+} from '../combat/bossLinkFx.js';
 import { drawUnitSelectionRing } from '../combat/unitSelectionRing.js';
 import { drawFiveManBossModel, drawFiveManBossFallback } from './fiveManBossModels.js';
 import {
@@ -1323,9 +1328,58 @@ function drawEnemyAddModel(
   }
 
   const sid = add.summonSpellId || '';
+  const uid = add.id || '';
+  const uname = add.name || '';
   const sway = Math.sin(tickCount * 0.14 + pos.x * 0.05) * 2.5;
 
-  if (
+  // 约萨希血滴：按颜色绘制对应软泥怪（红/绿/黄/蓝/紫/黑）
+  const bloodColorMatch =
+    sid.startsWith('yorsahj_blood_')
+      ? sid.slice('yorsahj_blood_'.length)
+      : uid.startsWith('blood_')
+        ? uid.split('_')[1]
+        : uname.includes('血红')
+          ? 'red'
+          : uname.includes('酸绿')
+            ? 'green'
+            : uname.includes('暗黄')
+              ? 'yellow'
+              : uname.includes('钴蓝')
+                ? 'blue'
+                : uname.includes('暗紫')
+                  ? 'purple'
+                  : uname.includes('深黑')
+                    ? 'black'
+                    : null;
+
+  if (bloodColorMatch) {
+    const BLOOD_PALETTE: Record<string, { fill: string; stroke: string; glow: string }> = {
+      red: { fill: '#EF4444', stroke: '#FECACA', glow: '#FCA5A5' },
+      green: { fill: '#22C55E', stroke: '#BBF7D0', glow: '#86EFAC' },
+      yellow: { fill: '#EAB308', stroke: '#FEF08A', glow: '#FDE047' },
+      blue: { fill: '#3B82F6', stroke: '#BFDBFE', glow: '#93C5FD' },
+      purple: { fill: '#A855F7', stroke: '#E9D5FF', glow: '#D8B4FE' },
+      black: { fill: '#18181B', stroke: '#94A3B8', glow: '#475569' },
+    };
+    const pal = BLOOD_PALETTE[bloodColorMatch] || BLOOD_PALETTE.red;
+    const squish = Math.sin(tickCount * 0.18 + pos.x * 0.05) * 1.5;
+    // Slime body
+    ctx.fillStyle = pal.fill;
+    ctx.beginPath();
+    ctx.moveTo(-12 - squish * 0.5, 2);
+    ctx.quadraticCurveTo(-11, -15 + squish, 0, -17 + squish);
+    ctx.quadraticCurveTo(11, -15 + squish, 12 + squish * 0.5, 2);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = pal.stroke;
+    ctx.lineWidth = 1.8;
+    ctx.stroke();
+    // Highlight / bubble
+    ctx.fillStyle = pal.glow;
+    ctx.beginPath();
+    ctx.arc(-3, -9 + squish * 0.5, 2.8, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (
     sid.includes('bloodvenom') ||
     sid.includes('tentacle') ||
     sid.includes('limb') ||
@@ -2253,33 +2307,6 @@ function getOrCreateMazeRockPattern(
     }
   }
 
-  // Subtle rock mortar / fissure lines
-  tctx.strokeStyle = is20Man ? 'rgba(239, 68, 68, 0.16)' : 'rgba(0, 0, 0, 0.25)';
-  tctx.lineWidth = 1;
-  for (let y = 0; y < size; y += 35) {
-    tctx.beginPath();
-    tctx.moveTo(0, y + 0.5);
-    tctx.lineTo(size, y + 0.5);
-    tctx.stroke();
-  }
-  for (let x = 0; x < size; x += 35) {
-    tctx.beginPath();
-    tctx.moveTo(x + 0.5, 0);
-    tctx.lineTo(x + 0.5, size);
-    tctx.stroke();
-  }
-
-  // 20-man molten magma hairline veins
-  if (is20Man) {
-    tctx.strokeStyle = 'rgba(249, 115, 22, 0.22)';
-    tctx.lineWidth = 1.5;
-    tctx.beginPath();
-    tctx.moveTo(0, 48);
-    tctx.quadraticCurveTo(45, 62, 88, 36);
-    tctx.quadraticCurveTo(118, 22, 140, 48);
-    tctx.stroke();
-  }
-
   const pattern = ctx.createPattern(tile, 'repeat');
   mazeFloorPatternCache.set(key, pattern);
   return pattern;
@@ -2725,8 +2752,10 @@ export const CombatCanvas: React.FC<Props> = ({
       for (const act of actions) {
         const actorId: string = act.actorId ?? '';
         const isSelf = !!selfUnitId && actorId === selfUnitId;
+        const isSelfHealTarget =
+          !!selfUnitId && act.targetId === selfUnitId && act.visualTone === 'HEAL';
         const isBoss = actorId === 'boss' || actorId.startsWith('boss') || act.visualTone === 'ENEMY';
-        const role: SfxActorRole = isSelf ? 'self' : isBoss ? 'boss' : 'other';
+        const role: SfxActorRole = isSelf || isSelfHealTarget ? 'self' : isBoss ? 'boss' : 'other';
 
         let actorPos = act.x != null && act.y != null ? { x: act.x, y: act.y } : null;
         if (!actorPos) {
@@ -2747,6 +2776,17 @@ export const CombatCanvas: React.FC<Props> = ({
           kind = 'heal';
         }
 
+        // Play raid buff stinger for party/raid-wide buff spells (爪子/奥术光辉/韧/王者/嗜血等)
+        const spText = `${act.spellId ?? ''} ${act.spellName ?? ''}`.toLowerCase();
+        if (
+          act.visualTone === 'FRIENDLY' &&
+          /mark_of_the_wild|arcane_brilliance|power_word_fortitude|blessing_of_kings|blessing_of_might|bloodlust|heroism|time_warp|野性印记|奥术光辉|真言术：韧|王者|嗜血|英勇/.test(
+            spText
+          )
+        ) {
+          playRaidBuffSfx();
+        }
+
         playCombatSfx({
           kind,
           school: inferSpellSchool(act.spellId, act.spellName),
@@ -2760,6 +2800,36 @@ export const CombatCanvas: React.FC<Props> = ({
     window.addEventListener('cata_combat_actions', onActions as EventListener);
     return () => window.removeEventListener('cata_combat_actions', onActions as EventListener);
   }, []);
+
+  // Play heal chime when local player receives healing (direct heals, HoTs, AoE heals)
+  const seenSelfHealFctIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!floatingTexts || floatingTexts.length === 0) return;
+    const storeState = useGameStore.getState();
+    const selfId = storeState.playerUnitId;
+    if (!selfId) return;
+    const seen = seenSelfHealFctIdsRef.current;
+    let shouldPlay = false;
+    for (const fct of floatingTexts) {
+      if (seen.has(fct.id)) continue;
+      seen.add(fct.id);
+      if (fct.category === 'HEAL' && (fct.targetId === selfId || fct.isToPlayer)) {
+        shouldPlay = true;
+      }
+    }
+    if (seen.size > 400) {
+      seen.clear();
+      for (const fct of floatingTexts) seen.add(fct.id);
+    }
+    if (shouldPlay) {
+      playCombatSfx({
+        kind: 'heal',
+        school: 'nature',
+        role: 'self',
+        actorId: `recv_heal_${selfId}`,
+      });
+    }
+  }, [floatingTexts]);
 
   // Keyboard listeners for WASD & Arrow Keys (Alt+1~5 / Tab hostile targeting live in App)
   useEffect(() => {
@@ -4632,16 +4702,16 @@ export const CombatCanvas: React.FC<Props> = ({
           ctx.font = 'bold 13px sans-serif';
           ctx.textAlign = 'center';
           ctx.fillText(
-            `🛡️ 主坦靠近首领，队友随距离落位（${Math.round(progress * 100)}%）· WASD/点击移动开怪`,
+            `🛡️ 主坦靠近首领，队友随距离落位（${Math.round(progress * 100)}%）· WASD 移动开怪`,
             width / 2,
             42
           );
         }
 
         applyCanvasViewTransform(ctx, viewCam);
-        drawArenaFloorWorld(ctx, viewCam, width, height);
+        drawMazeCavernFloorWorld(ctx, viewCam, width, height, mazeTheme, is20Man);
         enterScreenSpaceFromIso(ctx, viewCam);
-        drawArenaVignetteScreen(ctx, width, height);
+        drawMazeCavernVignetteScreen(ctx, width, height);
         ctx.restore();
 
         // Update approach stands, then paint boss+party by camera depth
@@ -4850,9 +4920,9 @@ export const CombatCanvas: React.FC<Props> = ({
       }
 
       applyCanvasViewTransform(ctx, viewCam);
-      drawArenaFloorWorld(ctx, viewCam, width, height);
+      drawMazeCavernFloorWorld(ctx, viewCam, width, height, mazeTheme, is20Man);
       enterScreenSpaceFromIso(ctx, viewCam);
-      drawArenaVignetteScreen(ctx, width, height);
+      drawMazeCavernVignetteScreen(ctx, width, height);
       ctx.restore();
 
       // Active Ground Effects → fill-only AoE rings (no edge stroke) + totem/cone overlays
@@ -5127,6 +5197,60 @@ export const CombatCanvas: React.FC<Props> = ({
           ctx.fillText(label, cx + 1, cy - 13);
           ctx.fillStyle = '#FFFFFF';
           ctx.fillText(label, cx, cy - 14);
+        } else if (effect.spellId === 'zonozz_ball_target') {
+          const zx = effect.x;
+          const zy = effect.y;
+          const zr = effect.radius || 100;
+          const pulse = 0.5 + 0.5 * Math.sin(tickCount * 0.18);
+          ctx.strokeStyle = `rgba(192, 132, 252, ${0.65 + pulse * 0.35})`;
+          ctx.lineWidth = 2.6;
+          ctx.setLineDash([8, 5]);
+          ctx.beginPath();
+          ctx.arc(zx, zy, zr, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          // 4 inward-pointing chevron arrows around the target circle
+          for (let i = 0; i < 4; i++) {
+            const ang = (i * Math.PI) / 2 + (tickCount * 0.02);
+            const ax = zx + Math.cos(ang) * (zr - 6);
+            const ay = zy + Math.sin(ang) * (zr - 6);
+            ctx.save();
+            ctx.translate(ax, ay);
+            ctx.rotate(ang + Math.PI);
+            ctx.fillStyle = '#FDE047';
+            ctx.beginPath();
+            ctx.moveTo(7, 0);
+            ctx.lineTo(-4, -5);
+            ctx.lineTo(-4, 5);
+            ctx.closePath();
+            ctx.fill();
+            ctx.restore();
+          }
+          const sec = Math.max(0, (effect.remainingMs || 0) / 1000).toFixed(1);
+          ctx.font = 'bold 11px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+          ctx.fillText(`⚫ 撞球目标区 (${sec}s)`, zx + 1, zy + zr + 15);
+          ctx.fillStyle = '#E9D5FF';
+          ctx.fillText(`⚫ 撞球目标区 (${sec}s)`, zx, zy + zr + 14);
+        } else if (effect.spellId === 'twilight_onslaught_soak') {
+          const sx = effect.x;
+          const sy = effect.y;
+          const sr = effect.radius || 75;
+          const sec = Math.max(0, (effect.remainingMs || 0) / 1000).toFixed(1);
+          ctx.strokeStyle = 'rgba(216, 180, 254, 0.9)';
+          ctx.lineWidth = 2.4;
+          ctx.setLineDash([6, 4]);
+          ctx.beginPath();
+          ctx.arc(sx, sy, sr, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.font = 'bold 11px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+          ctx.fillText(`🟣 集合分摊 (${sec}s)`, sx + 1, sy - sr - 7);
+          ctx.fillStyle = '#F3E8FF';
+          ctx.fillText(`🟣 集合分摊 (${sec}s)`, sx, sy - sr - 8);
         }
         ctx.restore();
       }
@@ -5630,7 +5754,112 @@ export const CombatCanvas: React.FC<Props> = ({
         for (const s of sprites) s.paint();
       }
 
+      const bossLinkBeams = resolveBossLinkBeams({
+        units,
+        enemyUnits: enemyUnitsRef.current,
+        bossUnit,
+        groundEffects,
+        resolveUnitPos: (unitId) => {
+          const u = unitsById.get(unitId);
+          if (u) {
+            if (u.isPlayer) return { ...playerPosRef.current };
+            const c = companionPositionsRef.current[unitId];
+            if (c) return { ...c };
+            if (bossUnit && unitId === bossUnit.id) return { ...bossPosRef.current };
+            return u.position ? { x: u.position.x, y: u.position.y } : null;
+          }
+          if (bossUnit && unitId === bossUnit.id) return { ...bossPosRef.current };
+          const e = (enemyUnitsRef.current || []).find((x) => x.id === unitId);
+          return e?.position ? { x: e.position.x, y: e.position.y } : null;
+        },
+      });
+      drawBossLinkBeams(ctx, bossLinkBeams, tickCount);
+
+      // Helix 胸弹携带者：随人实时移动的 55px 爆炸警戒圈
+      for (const u of units) {
+        const bombBuff = u.buffs?.find((b) => b.spellId === 'chest_bomb');
+        if (!bombBuff || !(u.isAlive ?? u.alive) || u.hp <= 0) continue;
+        const cPos = u.isPlayer
+          ? playerPosRef.current
+          : companionPositionsRef.current[u.id] || u.position;
+        if (!cPos) continue;
+        const pulse = 0.22 + 0.12 * Math.sin(tickCount * 0.28);
+        ctx.save();
+        ctx.fillStyle = `rgba(239, 68, 68, ${pulse.toFixed(2)})`;
+        ctx.beginPath();
+        ctx.arc(cPos.x, cPos.y, 55, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = 'rgba(248, 113, 113, 0.9)';
+        ctx.lineWidth = 1.6;
+        ctx.setLineDash([5, 4]);
+        ctx.beginPath();
+        ctx.arc(cPos.x, cPos.y, 55, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.font = 'bold 10px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+        ctx.fillText('💣 胸弹范围(远离)', cPos.x + 1, cPos.y - 61);
+        ctx.fillStyle = '#FCA5A5';
+        ctx.fillText('💣 胸弹范围(远离)', cPos.x, cPos.y - 62);
+        ctx.restore();
+      }
+
       drawHitFx(ctx, hitFxRef.current, nowFx, hitFxFilter);
+
+      // Zonozz 黑光球持球者视觉特效：连线指引 + 脚下脉冲圈 + 头顶黑光球
+      for (const u of units) {
+        const ballBuff = u.buffs?.find((b) => b.spellId === 'black_blood_ball_carrier');
+        if (!ballBuff || !(u.isAlive ?? u.alive)) continue;
+        const cPos = u.isPlayer
+          ? playerPosRef.current
+          : companionPositionsRef.current[u.id] || u.position || { x: 200, y: 200 };
+        const bPos = bossPosRef.current;
+        const pulse = 0.5 + 0.5 * Math.sin(tickCount * 0.22);
+
+        ctx.save();
+        // Dashed tether line from carrier to Boss
+        ctx.strokeStyle = `rgba(250, 204, 21, ${0.55 + pulse * 0.35})`;
+        ctx.lineWidth = 2.4;
+        ctx.setLineDash([7, 5]);
+        ctx.beginPath();
+        ctx.moveTo(cPos.x, cPos.y);
+        ctx.lineTo(bPos.x, bPos.y);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Pulsing carrier ring
+        ctx.strokeStyle = '#C084FC';
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.arc(cPos.x, cPos.y, 20 + pulse * 5, 0, Math.PI * 2);
+        ctx.stroke();
+
+        // Floating Void Orb above carrier
+        const orbY = cPos.y - 38 + Math.sin(tickCount * 0.16) * 3;
+        const grad = ctx.createRadialGradient(cPos.x, orbY, 2, cPos.x, orbY, 14);
+        grad.addColorStop(0, '#09090B');
+        grad.addColorStop(0.55, '#6D28D9');
+        grad.addColorStop(1, 'rgba(192, 132, 252, 0)');
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(cPos.x, orbY, 14, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = '#FDE047';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(cPos.x, orbY, 9, 0, Math.PI * 2);
+        ctx.stroke();
+
+        const sec = Math.max(0, (ballBuff.remainingMs || 0) / 1000).toFixed(1);
+        ctx.font = 'bold 11px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+        ctx.fillText(`⚫ 持球！去撞Boss (${sec}s)`, cPos.x + 1, orbY - 15);
+        ctx.fillStyle = '#FDE047';
+        ctx.fillText(`⚫ 持球！去撞Boss (${sec}s)`, cPos.x, orbY - 16);
+        ctx.restore();
+      }
 
       // HP bars overlay — upright billboards above models
       if (bossUnit && prefs.showBossHp) {
@@ -5880,17 +6109,6 @@ export const CombatCanvas: React.FC<Props> = ({
         onPointerUp={handleCanvasPointerUp}
         onPointerCancel={handleCanvasPointerUp}
         className="w-full h-full block"
-        title={
-          groundTargetState
-            ? '单击有效区域释放技能，右键或ESC取消'
-            : runPhase === 'TRAVEL_RECOVERY'
-              ? displayPrefs.canvasViewMode === 'ISO'
-                ? '迷宫自动行军 · 按住右键旋转/俯仰视角 · 滚轮缩放'
-                : '迷宫自动行军 · 滚轮缩放视角'
-              : displayPrefs.canvasViewMode === 'ISO'
-                ? '2.5D：按住右键左右转 / 上下俯仰(20°–垂直) · 按住右键按左键向前走 · 长按 WASD 移动 · 滚轮缩放'
-                : '长按 WASD 移动，单击或双击角色选中目标 · 滚轮缩放视角'
-        }
       />
       {/* Top Center Banner when in Ground Targeting Mode */}
       {groundTargetState && (

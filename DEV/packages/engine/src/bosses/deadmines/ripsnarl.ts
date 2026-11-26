@@ -2,6 +2,7 @@ import type { BossEncounterModule, BossSkill } from '../core/BossTypes.js';
 import type { CombatEngine } from '../../engine/CombatEngine.js';
 import type { Unit } from '../../types.js';
 import { spawnCombatUnit } from '../../engine/UnitSpawn.js';
+import { pickWeightedBossTarget } from '../core/BossTargetPicker.js';
 
 export const VAPOR_SUMMON = 'ripsnarl_vapor';
 
@@ -55,7 +56,7 @@ export const RipsnarlEncounter: BossEncounterModule = {
         description: '冲锋后排并造成恐惧短控',
         execute: (boss, engine) => {
           const pool = living(engine).filter(u => u.role !== 'TANK');
-          const t = pool[Math.floor(Math.random() * Math.max(1, pool.length))];
+          const t = pickWeightedBossTarget(pool);
           if (!t) return;
           engine.dealDamage(boss, t, 18_000, 'PHYSICAL', false, '撕喉冲锋');
           engine.applyBuff(t, {

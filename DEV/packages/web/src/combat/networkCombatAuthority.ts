@@ -329,6 +329,38 @@ export function buildLocalOwnerSnapshot(
   };
 }
 
+function mergeSkillCounterMax(
+  a?: Record<string, number>,
+  b?: Record<string, number>
+): Record<string, number> | undefined {
+  if (!a && !b) return undefined;
+  const out: Record<string, number> = { ...(a || {}) };
+  if (b) {
+    for (const [k, v] of Object.entries(b)) {
+      out[k] = Math.max(out[k] || 0, v || 0);
+    }
+  }
+  return out;
+}
+
+function mergeCombatStatsMonotonic(
+  existing?: NetworkUnitSnapshot['combatStats'],
+  incoming?: NetworkUnitSnapshot['combatStats']
+): NetworkUnitSnapshot['combatStats'] {
+  if (!existing) return incoming ? { ...incoming } : undefined;
+  if (!incoming) return { ...existing };
+  return {
+    damageDealt: Math.max(existing.damageDealt || 0, incoming.damageDealt || 0),
+    healingDone: Math.max(existing.healingDone || 0, incoming.healingDone || 0),
+    overhealDone: Math.max(existing.overhealDone || 0, incoming.overhealDone || 0),
+    damageTaken: Math.max(existing.damageTaken || 0, incoming.damageTaken || 0),
+    interruptCount: Math.max(existing.interruptCount || 0, incoming.interruptCount || 0),
+    skillDamage: mergeSkillCounterMax(existing.skillDamage, incoming.skillDamage),
+    skillHealing: mergeSkillCounterMax(existing.skillHealing, incoming.skillHealing),
+    skillDamageTaken: mergeSkillCounterMax(existing.skillDamageTaken, incoming.skillDamageTaken),
+  };
+}
+
 export function mergeOwnerSnapshotUnits(engine: CombatEngine, snap: OwnerSnapshot) {
   const { isUnitLocalAuthority, localPlayerId } = ctx;
 
@@ -355,15 +387,18 @@ export function mergeOwnerSnapshotUnits(engine: CombatEngine, snap: OwnerSnapsho
     );
     const preservedIds = new Set(preservedLocal.map((u) => u.id));
 
+    const existingById = new Map(existing.map((u) => [u.id, u]));
     // Strip any local-authority seats from foreign owner payload (hp/buffs/pos/alive)
     const fromSnap = snap.units
       .filter((s) => !isPreservedUnit(s.id, s.ownerId, s.isPet, isUnitLocalAuthority, localPlayerId))
-      .map((s) =>
+      .map((s) => {
+        const prev = existingById.get(s.id);
+        const mergedStats = mergeCombatStatsMonotonic(prev?.combatStats, s.combatStats);
         // Snap owner is always a human authority seat — never let flags drop to "AI"
-        s.id === snap.ownerId
-          ? { ...s, isHumanControlled: true, isPlayer: s.id === localPlayerId }
-          : s
-      );
+        return s.id === snap.ownerId
+          ? { ...s, isHumanControlled: true, isPlayer: s.id === localPlayerId, combatStats: mergedStats }
+          : { ...s, combatStats: mergedStats };
+      });
     const snapIds = new Set(fromSnap.map((u) => u.id));
     const rawSnapIds = new Set(snap.units.map((u) => u.id));
 

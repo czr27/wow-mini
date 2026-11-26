@@ -1,0 +1,1072 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>霓虹深渊 OGG 音频评审台 — Cata Raid Sim</title>
+  <style>
+    :root {
+      --bg: #0b0c14;
+      --panel: #141624;
+      --card: #1b1e30;
+      --border: #2b2f4a;
+      --accent: #f59e0b;
+      --accent2: #38bdf8;
+      --ok: #22c55e;
+      --warn: #eab308;
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Microsoft YaHei", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding-bottom: 80px;
+    }
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      background: rgba(15, 17, 28, 0.96);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 20px;
+    }
+    .header-top {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      max-width: 1280px;
+      margin: 0 auto;
+    }
+    .title {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--accent);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .player-bar {
+      max-width: 1280px;
+      margin: 10px auto 0;
+      background: #0d0f1a;
+      border: 1px solid #333856;
+      border-radius: 10px;
+      padding: 8px 14px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 12px;
+    }
+    .now-playing {
+      min-width: 220px;
+      max-width: 320px;
+      font-size: 12px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: #fbbf24;
+      font-weight: 600;
+    }
+    .seek-wrap {
+      flex: 1;
+      min-width: 220px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 12px;
+      font-variant-numeric: tabular-nums;
+      color: var(--muted);
+    }
+    input[type="range"] {
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+    .seek-wrap input[type="range"] { flex: 1; }
+    .btn {
+      background: #23273e;
+      color: var(--text);
+      border: 1px solid #373d5e;
+      border-radius: 6px;
+      padding: 6px 12px;
+      font-size: 12px;
+      cursor: pointer;
+      transition: 0.15s;
+    }
+    .btn:hover { background: #2f3554; border-color: var(--accent); }
+    .btn-primary {
+      background: #b45309;
+      border-color: #f59e0b;
+      color: #fff;
+      font-weight: 600;
+    }
+    .btn-primary:hover { background: #d97706; }
+    .btn-ok { background: #15803d; border-color: #22c55e; color: #fff; }
+    .btn-warn { background: #a16207; border-color: #eab308; color: #fff; }
+    .btn-sm { padding: 4px 9px; font-size: 11px; }
+
+    main {
+      max-width: 1280px;
+      margin: 18px auto;
+      padding: 0 20px;
+      display: grid;
+      gap: 18px;
+    }
+    .tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .tab {
+      padding: 7px 14px;
+      border-radius: 8px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .tab.active {
+      background: #292114;
+      border-color: var(--accent);
+      color: #fbbf24;
+    }
+    .section-card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+    }
+    .section-header {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 12px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid #23263d;
+    }
+    .section-title { font-size: 15px; font-weight: 700; color: #f8fafc; }
+    .section-desc { font-size: 12px; color: var(--muted); margin-top: 2px; }
+
+    .slot-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+      gap: 14px;
+    }
+    .slot-box {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .slot-box.approved { border-color: rgba(34, 197, 94, 0.55); }
+    .slot-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .slot-name { font-size: 13px; font-weight: 700; color: #fbbf24; }
+    .slot-sub { font-size: 11px; color: var(--muted); }
+    .cand-list { display: flex; flex-direction: column; gap: 6px; }
+    .cand-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 9px;
+      border-radius: 7px;
+      background: #121422;
+      border: 1px solid #262a42;
+      font-size: 12px;
+    }
+    .cand-item.selected {
+      border-color: var(--accent);
+      background: rgba(245, 158, 11, 0.1);
+    }
+    .cand-item.playing {
+      box-shadow: 0 0 0 1px var(--accent2);
+    }
+    .cand-meta { flex: 1; min-width: 0; }
+    .cand-title {
+      font-weight: 600;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: #e2e8f0;
+    }
+    .cand-reason { font-size: 11px; color: var(--muted); }
+    .badge {
+      font-size: 10px;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: #252942;
+      color: #cbd5e1;
+      font-variant-numeric: tabular-nums;
+      shrink: 0;
+    }
+    textarea.comment {
+      width: 100%;
+      min-height: 46px;
+      resize: vertical;
+      background: #0f111d;
+      border: 1px solid #2c314d;
+      border-radius: 6px;
+      color: var(--text);
+      padding: 6px 8px;
+      font-size: 12px;
+      font-family: inherit;
+    }
+    textarea.comment:focus { outline: none; border-color: var(--accent); }
+    .slot-actions {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+    }
+    .library-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 8px;
+      max-height: 60vh;
+      overflow-y: auto;
+      padding-right: 4px;
+    }
+    .modal-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.72);
+      z-index: 100;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    }
+    .modal-backdrop.open { display: flex; }
+    .modal {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      width: min(980px, 100%);
+      max-height: 88vh;
+      display: flex;
+      flex-direction: column;
+      padding: 16px;
+      gap: 12px;
+    }
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: #16a34a;
+      color: #fff;
+      padding: 10px 16px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      display: none;
+      z-index: 200;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-top">
+      <div class="title">
+        <span>🎵 霓虹深渊 OGG 音频评审台</span>
+        <span class="badge" id="statsBadge">加载中...</span>
+        <span class="badge" id="saveStatus" style="color:#86efac;">💾 已同步本地</span>
+      </div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button class="btn" onclick="approveAllRecommended()">一键全部采纳推荐</button>
+        <button class="btn btn-primary" onclick="exportApprovals()">📋 复制审批结果给 AI</button>
+        <button class="btn" onclick="downloadJson()">⬇ 导出 JSON</button>
+      </div>
+    </div>
+
+    <div class="player-bar">
+      <button class="btn btn-primary btn-sm" id="playPauseBtn" onclick="togglePlay()">▶ 播放</button>
+      <div class="now-playing" id="nowPlaying">点击任意曲目的 ▶ 开始试听</div>
+      <div class="seek-wrap">
+        <span id="curTime">00:00</span>
+        <input type="range" id="seekBar" min="0" max="100" step="0.1" value="0" />
+        <span id="durTime">00:00</span>
+      </div>
+      <label style="display:flex; align-items:center; gap:4px; font-size:12px; cursor:pointer;">
+        <input type="checkbox" id="loopToggle" checked />
+        <span>循环</span>
+      </label>
+      <label style="display:flex; align-items:center; gap:6px; font-size:12px;">
+        <span>🔊</span>
+        <input type="range" id="volBar" min="0" max="100" value="30" style="width:80px;" />
+        <span id="volLabel" style="width:32px; text-align:right;">30%</span>
+      </label>
+    </div>
+  </header>
+
+  <main>
+    <div class="tabs" id="tabsBar">
+      <button class="tab active" data-tab="review" onclick="switchTab('review')">📋 按攻略槽位评审</button>
+      <button class="tab" data-tab="library" onclick="switchTab('library')">🎵 按 OGG 曲目逐首评审 (93首)</button>
+    </div>
+
+    <div id="reviewView"></div>
+
+    <div id="libraryView" style="display:none;" class="section-card">
+      <div class="section-header">
+        <div>
+          <div class="section-title">按 OGG 曲目逐首评审（共 93 首，自动保存）</div>
+          <div class="section-desc">可逐首试听、标记「⭐精品 / ✅留用 / ❌淘汰」、选择适用场景并填写听感注释</div>
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+          <select id="trackStatusFilter" class="btn" onchange="renderLibrary()">
+            <option value="ALL">全部状态</option>
+            <option value="pending">⏳ 未评审</option>
+            <option value="star">⭐ 精品</option>
+            <option value="keep">✅ 留用</option>
+            <option value="drop">❌ 淘汰</option>
+          </select>
+          <select id="groupFilter" class="btn" onchange="renderLibrary()">
+            <option value="ALL">全部分组 (93)</option>
+          </select>
+          <input id="searchInput" class="btn" placeholder="搜索曲名..." oninput="renderLibrary()" style="text-align:left; width:180px;" />
+        </div>
+      </div>
+      <div id="libraryGrid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(360px, 1fr)); gap:10px; max-height:68vh; overflow-y:auto; padding-right:4px;"></div>
+    </div>
+  </main>
+
+  <!-- Pick from all tracks modal -->
+  <div class="modal-backdrop" id="pickerModal">
+    <div class="modal">
+      <div class="section-header" style="margin:0;">
+        <div>
+          <div class="section-title" id="pickerTitle">为槽位自选曲目</div>
+          <div class="section-desc">试听满意后点击「选定此曲」</div>
+        </div>
+        <button class="btn" onclick="closePicker()">关闭</button>
+      </div>
+      <div style="display:flex; gap:8px;">
+        <select id="pickerGroup" class="btn" onchange="renderPickerList()"></select>
+        <input id="pickerSearch" class="btn" placeholder="搜索曲名..." oninput="renderPickerList()" style="flex:1; text-align:left;" />
+      </div>
+      <div class="library-grid" id="pickerList"></div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast">已复制到剪贴板</div>
+
+  <script>
+    const REVIEW_SLOTS = [
+      {
+        section: "全局场景与结算 / 通用 Boss 节点",
+        desc: "首页大厅、通关结算、Boss 开场过渡与击杀收尾",
+        slots: [
+          {
+            id: "global_lobby",
+            name: "首页 / 集合石大厅",
+            sub: "选角与组队界面背景音乐（建议舒缓/律动感强、不刺耳）",
+            recs: [
+              { match: "Neon Abyss Black Market _Rv201", reason: "黑市电音，轻快有格调，很适合集合石组队" },
+              { match: "Neon Abyss Holy Room _Rv01_", reason: "圣室空灵氛围（30s）" },
+              { match: "dream punk3.2", reason: "梦幻蒸汽波长曲（93s），耐听不吵" },
+              { match: "gameroom_track1", reason: "轻松休闲大厅感（19s）" }
+            ]
+          },
+          {
+            id: "global_summary",
+            name: "副本通关结算 (SUMMARY)",
+            sub: "击败尾王弹出通关证明与统计面板时播放",
+            recs: [
+              { match: "06.Huge Crowd Applause-Cheers, Int", reason: "欢呼掌声+凯旋氛围（32s）" },
+              { match: "Music_final2", reason: "终局凯旋感（38s）" },
+              { match: "Neon Abyss BOSS _Rv01_ OUTRO", reason: "Boss 击杀胜利收尾（9s）" },
+              { match: "滚字幕", reason: "片尾制作人员表抒情曲（22s）" }
+            ]
+          },
+          {
+            id: "global_boss_intro",
+            name: "Boss 战开场过渡 (INTRO)",
+            sub: "Boss 开怪瞬间切入主战斗曲前的 4~7 秒前奏",
+            recs: [
+              { match: "Neon Abyss BOSS _Rv01_ INTRO", reason: "经典 Boss 登场倒计时（7s）" },
+              { match: "Level 4 BOSS _Rv03_ INTRO", reason: "高燃 140bpm 开场（7s）" },
+              { match: "Neon Abyss BOSS 3 Rv03_ INTRO", reason: "压迫感开场（7s）" }
+            ]
+          },
+          {
+            id: "global_wipe",
+            name: "团灭 / 危机提示 (WIPE)",
+            sub: "全员阵亡弹出复活/结束投票时播放",
+            recs: [
+              { match: "恶魔", reason: "暗黑压迫氛围（30s）" },
+              { match: "Rain.", reason: "阴雨悲凉氛围（105s）" },
+              { match: "ambient_forest", reason: "低沉冷寂环境（36s）" }
+            ]
+          }
+        ]
+      },
+      {
+        section: "1. 死亡矿井 (5人本)",
+        desc: "海盗船、矿洞机关、范克里夫与凡妮莎",
+        slots: [
+          {
+            id: "deadmines_travel",
+            name: "死亡矿井 · 迷宫赶路",
+            sub: "矿洞行军与清小怪",
+            recs: [
+              { match: "Level 1 _SEARCH _bpm128", reason: "节奏明快，适合新手 5 人本探索（60s）" },
+              { match: "Test_Searching_1", reason: "轻快电子探索（62s）" },
+              { match: "ambient_lake", reason: "地下暗河水声氛围（36s）" }
+            ]
+          },
+          {
+            id: "deadmines_boss",
+            name: "死亡矿井 · 普通 Boss",
+            sub: "格拉布托克 / 赫利克斯 / 死神5000 / 撕心狼王 / 曲奇",
+            recs: [
+              { match: "Level 1 _FLIGHT _bpm128", reason: "Level 1 战斗曲，节奏紧凑（45s）" },
+              { match: "Test_Fighting_1", reason: "爽快战斗循环（31s）" }
+            ]
+          },
+          {
+            id: "deadmines_final",
+            name: "死亡矿井 · 尾王 (凡妮莎)",
+            sub: "海盗船决战",
+            recs: [
+              { match: "Neon Abyss BOSS _Rv01_ BODY (135bpm)", reason: "标准高燃 Boss 主战曲（50s）" },
+              { match: "Neon Abyss BOSS _Rv01_ BODY EXPLOSION", reason: "爆发变奏版，适合二阶段（44s）" }
+            ]
+          }
+        ]
+      },
+      {
+        section: "2. 影牙城堡 (5人本)",
+        desc: "哥特古堡、狼人、阿鲁高残党与高弗雷勋爵",
+        slots: [
+          {
+            id: "shadowfang_travel",
+            name: "影牙城堡 · 迷宫赶路",
+            sub: "阴森古堡庭院与走廊",
+            recs: [
+              { match: "Level 3 _Rv09_ SEARCHING", reason: "60s 完整探索循环，神秘感强" },
+              { match: "Test_Searching_3", reason: "暗调探索备用（66s）" },
+              { match: "20-4-21-霓虹-bpm100(1)", reason: "慢速 100bpm 暗黑氛围（67s）" }
+            ]
+          },
+          {
+            id: "shadowfang_boss",
+            name: "影牙城堡 · 普通 Boss",
+            sub: "阿什伯里 / 席瓦莱恩 / 斯普林瓦尔 / 沃登",
+            recs: [
+              { match: "Level 3 _Rv09_ FIGHTING", reason: "60s 完整战斗循环，耐听" },
+              { match: "Test_Fighting_3", reason: "紧凑电音战斗（34s）" }
+            ]
+          },
+          {
+            id: "shadowfang_final",
+            name: "影牙城堡 · 尾王 (高弗雷勋爵)",
+            sub: "手枪弹幕与食尸鬼压迫战",
+            recs: [
+              { match: "Neon Abyss BOSS 3 Rv03_ BODY", reason: "57s 重节奏 Boss 战曲" },
+              { match: "Music_athena", reason: "史诗压迫感（60s）" }
+            ]
+          }
+        ]
+      },
+      {
+        section: "3. 血色修道院 (5人本)",
+        desc: "狂热十字军、奥法图书馆与狗男女",
+        slots: [
+          {
+            id: "scarlet_travel",
+            name: "血色修道院 · 迷宫赶路",
+            sub: "大教堂与图书馆长廊",
+            recs: [
+              { match: "Level 4 SEARCH _bpm128", reason: "60s 推进感强，契合修道院" },
+              { match: "Neon Abyss Holy Room _Rv01_", reason: "圣光教堂感（30s）" }
+            ]
+          },
+          {
+            id: "scarlet_boss",
+            name: "血色修道院 · 普通 Boss",
+            sub: "维沙斯 / 洛克希 / 杜安 / 赫洛德",
+            recs: [
+              { match: "Level 4 FIGHT _bpm128", reason: "128bpm 干脆利落（30s）" },
+              { match: "Test_Fighting_4", reason: "40s 高能战斗" }
+            ]
+          },
+          {
+            id: "scarlet_final",
+            name: "血色修道院 · 尾王 (莫格莱尼 & 怀特迈恩)",
+            sub: "复活吧我的勇士！",
+            recs: [
+              { match: "Level 4 BOSS _Rv03_ BODY 140bpm", reason: "140bpm 最快攻速战歌（31s）" },
+              { match: "天使", reason: "圣光与狂热交织（33s）" }
+            ]
+          }
+        ]
+      },
+      {
+        section: "4. 斯坦索姆 (5人本)",
+        desc: "燃烧的亡灵之城与瑞文戴尔男爵",
+        slots: [
+          {
+            id: "stratholme_travel",
+            name: "斯坦索姆 · 迷宫赶路",
+            sub: "亡灵街道行军",
+            recs: [
+              { match: "Level 2 _SEARCH _bpm126", reason: "46s 稳健探索曲" },
+              { match: "Test_Searching_2", reason: "64s 长循环" }
+            ]
+          },
+          {
+            id: "stratholme_boss",
+            name: "斯坦索姆 · 普通 Boss",
+            sub: "巴纳扎尔 / 威利 / 拉姆斯登",
+            recs: [
+              { match: "Level 2 _FIGHT _bpm126", reason: "46s 战斗循环" },
+              { match: "Test_Fighting_2", reason: "32s 战斗" }
+            ]
+          },
+          {
+            id: "stratholme_final",
+            name: "斯坦索姆 · 尾王 (瑞文戴尔男爵)",
+            sub: "死亡骑士 DK 终极对决",
+            recs: [
+              { match: "Neon Abyss BOSS 2 _Rv203_ BODY", reason: "57s 厚重低音 Boss 曲" },
+              { match: "恶魔", reason: "黑暗死亡骑士氛围（30s）" }
+            ]
+          }
+        ]
+      },
+      {
+        section: "5. 祖尔格拉布 (5人本)",
+        desc: "巨魔丛林神庙与碎神者金度",
+        slots: [
+          {
+            id: "zulgurub_travel",
+            name: "祖尔格拉布 · 迷宫赶路",
+            sub: "热带丛林与神庙遗迹",
+            recs: [
+              { match: "Neon Aybss - Level 5 Seach bpm127", reason: "61s 律动探索" },
+              { match: "ambient_forest", reason: "丛林氛围（36s）" }
+            ]
+          },
+          {
+            id: "zulgurub_boss",
+            name: "祖尔格拉布 · 普通 Boss",
+            sub: "温诺希斯 / 曼多基尔 / 基尔娜拉 / 赞吉尔",
+            recs: [
+              { match: "Neon Aybss - Level 5 Fight bpm127", reason: "30s 鼓点鲜明" },
+              { match: "Neon Abyss - Level 6 _Fight _bpm129", reason: "129bpm 备选战曲（30s）" }
+            ]
+          },
+          {
+            id: "zulgurub_final",
+            name: "祖尔格拉布 · 尾王 (金度)",
+            sub: "灵魂领域碎神之战",
+            recs: [
+              { match: "Neon Abyss Boss 5 _Rv04_ bpm135 _BODY", reason: "135bpm 灵异压迫感（28s）" },
+              { match: "Music_final", reason: "终局史诗感（29s）" }
+            ]
+          }
+        ]
+      },
+      {
+        section: "6. 巨龙之魂 (20人团队副本)",
+        desc: "龙眠神殿守卫战、奥卓克希昂与死亡之翼的狂乱",
+        slots: [
+          {
+            id: "dragonsoul_travel",
+            name: "巨龙之魂 · 迷宫赶路",
+            sub: "20人团本行军与转场",
+            recs: [
+              { match: "Neon Aybss - Level 7 _Search bpm124", reason: "62s 大气探索" },
+              { match: "Neon Abyss - Level 6 _Search _bpm129", reason: "45s 紧迫行军" },
+              { match: "普通", reason: "128s 超长耐听主旋律" }
+            ]
+          },
+          {
+            id: "dragonsoul_boss",
+            name: "巨龙之魂 · 普通 Boss (1~7号)",
+            sub: "莫卓克 / 佐诺兹 / 约萨希 / 哈格拉 / 奥卓克希昂 / 黑角 / 脊椎",
+            recs: [
+              { match: "Neon Aybss - Level 7 _Fight bpm124", reason: "史诗团战稳健节奏（31s）" },
+              { match: "normal", reason: "96s 超长循环，团本不腻" },
+              { match: "Neon Abyss BOSS _Rv01_ BODY EXPLOSION", reason: "高爆燃战曲（44s）" }
+            ]
+          },
+          {
+            id: "dragonsoul_final",
+            name: "巨龙之魂 · 尾王 (死亡之翼的狂乱)",
+            sub: "大灾变最高潮决战",
+            recs: [
+              { match: "Music_athena_02", reason: "73s 最长神战史诗曲！" },
+              { match: "Music_athena", reason: "60s 女神主战变奏" },
+              { match: "Music_final2", reason: "38s 终极决战感" }
+            ]
+          }
+        ]
+      }
+    ];
+
+    let catalog = [];
+    let store = { slots: {}, tracks: {} };
+    try {
+      const localRaw = JSON.parse(localStorage.getItem("neon_ogg_review_v2") || localStorage.getItem("neon_ogg_review_v1") || "{}");
+      if (localRaw && (localRaw.slots || localRaw.tracks)) {
+        store = { slots: localRaw.slots || {}, tracks: localRaw.tracks || {} };
+      } else if (localRaw && typeof localRaw === "object") {
+        store = { slots: localRaw, tracks: {} };
+      }
+    } catch {}
+    const TRACK_TAGS = ["未指定", "大厅", "迷宫赶路", "普通Boss", "关底尾王", "结算/胜利", "团灭/危机", "开场/收尾", "特效/动作"];
+    let saveTimer = null;
+
+    const audio = new Audio();
+    audio.loop = true;
+    audio.volume = 0.3;
+    let currentPlayingId = null;
+    let pickerSlotId = null;
+
+    const seekBar = document.getElementById("seekBar");
+    const curTimeEl = document.getElementById("curTime");
+    const durTimeEl = document.getElementById("durTime");
+    const playPauseBtn = document.getElementById("playPauseBtn");
+    const nowPlayingEl = document.getElementById("nowPlaying");
+    const volBar = document.getElementById("volBar");
+    const volLabel = document.getElementById("volLabel");
+    const loopToggle = document.getElementById("loopToggle");
+
+    function fmtTime(sec) {
+      if (!Number.isFinite(sec)) return "00:00";
+      const m = Math.floor(sec / 60);
+      const s = Math.floor(sec % 60);
+      return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+    }
+
+    audio.addEventListener("timeupdate", () => {
+      if (!seekBar.matches(":active") && audio.duration) {
+        seekBar.max = audio.duration;
+        seekBar.value = audio.currentTime;
+        curTimeEl.textContent = fmtTime(audio.currentTime);
+        durTimeEl.textContent = fmtTime(audio.duration);
+      }
+    });
+    audio.addEventListener("loadedmetadata", () => {
+      seekBar.max = audio.duration || 100;
+      durTimeEl.textContent = fmtTime(audio.duration);
+    });
+    audio.addEventListener("play", () => { playPauseBtn.textContent = "⏸ 暂停"; });
+    audio.addEventListener("pause", () => { playPauseBtn.textContent = "▶ 播放"; });
+
+    seekBar.addEventListener("input", () => {
+      curTimeEl.textContent = fmtTime(Number(seekBar.value));
+    });
+    seekBar.addEventListener("change", () => {
+      audio.currentTime = Number(seekBar.value);
+    });
+    volBar.addEventListener("input", () => {
+      const pct = Number(volBar.value);
+      audio.volume = pct / 100;
+      volLabel.textContent = pct + "%";
+    });
+    loopToggle.addEventListener("change", () => {
+      audio.loop = loopToggle.checked;
+    });
+
+    function togglePlay() {
+      if (!audio.src) return;
+      if (audio.paused) audio.play();
+      else audio.pause();
+    }
+
+    function playTrack(trackId) {
+      const t = catalog.find(x => x.id === trackId);
+      if (!t) return;
+      if (currentPlayingId === trackId) {
+        togglePlay();
+        return;
+      }
+      currentPlayingId = trackId;
+      audio.src = t.url;
+      audio.currentTime = 0;
+      audio.play().catch(() => {});
+      nowPlayingEl.textContent = `▶ [${t.durationSec}s] ${t.title}`;
+      renderReview();
+      renderLibrary();
+      if (pickerSlotId) renderPickerList();
+    }
+
+    function saveState() {
+      localStorage.setItem("neon_ogg_review_v2", JSON.stringify(store));
+      updateStats();
+      const statusEl = document.getElementById("saveStatus");
+      if (statusEl) {
+        statusEl.textContent = "⏳ 保存中...";
+        statusEl.style.color = "#fde047";
+      }
+      clearTimeout(saveTimer);
+      saveTimer = setTimeout(() => {
+        fetch("/api/reviews", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(store),
+        })
+          .then(r => {
+            if (r.ok && statusEl) {
+              statusEl.textContent = "💾 已自动保存";
+              statusEl.style.color = "#86efac";
+            }
+          })
+          .catch(() => {
+            if (statusEl) {
+              statusEl.textContent = "⚠ 仅存浏览器";
+              statusEl.style.color = "#fca5a5";
+            }
+          });
+      }, 250);
+    }
+
+    function findTrackByMatch(matchStr) {
+      return catalog.find(t => t.filename.includes(matchStr) || t.title.includes(matchStr));
+    }
+
+    function ensureSlotState(slot) {
+      if (!store.slots[slot.id]) {
+        const firstMatch = slot.recs[0] ? findTrackByMatch(slot.recs[0].match) : null;
+        store.slots[slot.id] = {
+          trackId: firstMatch ? firstMatch.id : "",
+          status: "pending",
+          comment: ""
+        };
+      }
+      return store.slots[slot.id];
+    }
+
+    function ensureTrackState(trackId) {
+      if (!store.tracks[trackId]) {
+        store.tracks[trackId] = { status: "pending", tag: "未指定", comment: "" };
+      }
+      return store.tracks[trackId];
+    }
+
+    function selectTrackForSlot(slotId, trackId) {
+      if (!store.slots[slotId]) store.slots[slotId] = { trackId: "", status: "pending", comment: "" };
+      store.slots[slotId].trackId = trackId;
+      saveState();
+      renderReview();
+    }
+
+    function setSlotStatus(slotId, status) {
+      if (!store.slots[slotId]) store.slots[slotId] = { trackId: "", status: "pending", comment: "" };
+      store.slots[slotId].status = store.slots[slotId].status === status ? "pending" : status;
+      saveState();
+      renderReview();
+    }
+
+    function setSlotComment(slotId, val) {
+      if (!store.slots[slotId]) store.slots[slotId] = { trackId: "", status: "pending", comment: "" };
+      store.slots[slotId].comment = val;
+      saveState();
+    }
+
+    function setTrackStatus(trackId, status) {
+      const ts = ensureTrackState(trackId);
+      ts.status = ts.status === status ? "pending" : status;
+      saveState();
+      renderLibrary();
+    }
+
+    function setTrackTag(trackId, tag) {
+      const ts = ensureTrackState(trackId);
+      ts.tag = tag;
+      saveState();
+    }
+
+    function setTrackComment(trackId, comment) {
+      const ts = ensureTrackState(trackId);
+      ts.comment = comment;
+      saveState();
+    }
+
+    function approveAllRecommended() {
+      REVIEW_SLOTS.forEach(sec => sec.slots.forEach(slot => {
+        const s = ensureSlotState(slot);
+        s.status = "approved";
+      }));
+      saveState();
+      renderReview();
+      showToast("已将所有槽位标记为「通过」并自动保存");
+    }
+
+    function updateStats() {
+      let total = 0, approved = 0;
+      REVIEW_SLOTS.forEach(sec => sec.slots.forEach(slot => {
+        total++;
+        if (store.slots[slot.id]?.status === "approved") approved++;
+      }));
+      const reviewedTracks = Object.values(store.tracks || {}).filter(t => t && (t.status !== "pending" || (t.comment && t.comment.trim()) || (t.tag && t.tag !== "未指定"))).length;
+      document.getElementById("statsBadge").textContent = `共 ${catalog.length} 首 | 槽位 ${approved}/${total} | OGG已评 ${reviewedTracks}/${catalog.length}`;
+    }
+
+    function renderReview() {
+      const container = document.getElementById("reviewView");
+      container.innerHTML = "";
+      REVIEW_SLOTS.forEach(sec => {
+        const card = document.createElement("div");
+        card.className = "section-card";
+        card.style.marginBottom = "16px";
+        card.innerHTML = `
+          <div class="section-header">
+            <div>
+              <div class="section-title">${sec.section}</div>
+              <div class="section-desc">${sec.desc}</div>
+            </div>
+          </div>
+          <div class="slot-grid"></div>
+        `;
+        const grid = card.querySelector(".slot-grid");
+        sec.slots.forEach(slot => {
+          const st = ensureSlotState(slot);
+          const box = document.createElement("div");
+          box.className = `slot-box ${st.status === "approved" ? "approved" : ""}`;
+
+          const recTrackIds = new Set();
+          let candsHtml = "";
+          slot.recs.forEach(r => {
+            const t = findTrackByMatch(r.match);
+            if (!t) return;
+            recTrackIds.add(t.id);
+            const isSel = st.trackId === t.id;
+            const isPlay = currentPlayingId === t.id;
+            candsHtml += `
+              <div class="cand-item ${isSel ? "selected" : ""} ${isPlay ? "playing" : ""}">
+                <input type="radio" name="pick_${slot.id}" ${isSel ? "checked" : ""} onchange="selectTrackForSlot('${slot.id}', '${t.id.replace(/'/g, "\\'")}')" style="cursor:pointer;" />
+                <button class="btn btn-sm" onclick="playTrack('${t.id.replace(/'/g, "\\'")}')">${isPlay ? "🔊" : "▶"}</button>
+                <div class="cand-meta" onclick="selectTrackForSlot('${slot.id}', '${t.id.replace(/'/g, "\\'")}')" style="cursor:pointer;">
+                  <div class="cand-title">${t.title}</div>
+                  <div class="cand-reason">${r.reason}</div>
+                </div>
+                <span class="badge">${t.durationSec}s</span>
+              </div>
+            `;
+          });
+
+          // If user picked a custom track outside recs, show it too
+          if (st.trackId && !recTrackIds.has(st.trackId)) {
+            const ct = catalog.find(x => x.id === st.trackId);
+            if (ct) {
+              const isPlay = currentPlayingId === ct.id;
+              candsHtml += `
+                <div class="cand-item selected ${isPlay ? "playing" : ""}">
+                  <input type="radio" name="pick_${slot.id}" checked />
+                  <button class="btn btn-sm" onclick="playTrack('${ct.id.replace(/'/g, "\\'")}')">${isPlay ? "🔊" : "▶"}</button>
+                  <div class="cand-meta">
+                    <div class="cand-title">⭐ 自选：${ct.title}</div>
+                    <div class="cand-reason">${ct.group}</div>
+                  </div>
+                  <span class="badge">${ct.durationSec}s</span>
+                </div>
+              `;
+            }
+          }
+
+          box.innerHTML = `
+            <div class="slot-head">
+              <div>
+                <div class="slot-name">${slot.name}</div>
+                <div class="slot-sub">${slot.sub}</div>
+              </div>
+              <button class="btn btn-sm" onclick="openPicker('${slot.id}', '${slot.name.replace(/'/g, "\\'")}')">🗂 93首自选</button>
+            </div>
+            <div class="cand-list">${candsHtml}</div>
+            <textarea class="comment" placeholder="填写审批注释（例如：这首很搭 / 换另外一首 / 音量需微调）..." oninput="setSlotComment('${slot.id}', this.value)">${st.comment || ""}</textarea>
+            <div class="slot-actions">
+              <div style="display:flex; gap:6px;">
+                <button class="btn btn-sm ${st.status === "approved" ? "btn-ok" : ""}" onclick="setSlotStatus('${slot.id}', 'approved')">✅ 通过</button>
+                <button class="btn btn-sm ${st.status === "rejected" ? "btn-warn" : ""}" onclick="setSlotStatus('${slot.id}', 'rejected')">🔄 需调整</button>
+              </div>
+              <span class="badge">${st.status === "approved" ? "已通过" : st.status === "rejected" ? "需调整" : "待审批"}</span>
+            </div>
+          `;
+          grid.appendChild(box);
+        });
+        container.appendChild(card);
+      });
+    }
+
+    function switchTab(tab) {
+      document.querySelectorAll(".tab").forEach(el => el.classList.toggle("active", el.dataset.tab === tab));
+      document.getElementById("reviewView").style.display = tab === "review" ? "block" : "none";
+      document.getElementById("libraryView").style.display = tab === "library" ? "block" : "none";
+    }
+
+    function renderLibrary() {
+      const group = document.getElementById("groupFilter").value;
+      const stFilter = document.getElementById("trackStatusFilter")?.value || "ALL";
+      const q = document.getElementById("searchInput").value.trim().toLowerCase();
+      const grid = document.getElementById("libraryGrid");
+      const filtered = catalog.filter(t => {
+        if (group !== "ALL" && t.group !== group) return false;
+        if (q && !t.title.toLowerCase().includes(q)) return false;
+        const ts = ensureTrackState(t.id);
+        if (stFilter !== "ALL" && ts.status !== stFilter) return false;
+        return true;
+      });
+      grid.innerHTML = filtered.map(t => {
+        const isPlay = currentPlayingId === t.id;
+        const ts = ensureTrackState(t.id);
+        const safeId = t.id.replace(/'/g, "\\'");
+        const tagOptions = TRACK_TAGS.map(tg => `<option value="${tg}" ${ts.tag === tg ? "selected" : ""}>${tg}</option>`).join("");
+        const borderCol = ts.status === "star" ? "rgba(245,158,11,0.75)" : ts.status === "keep" ? "rgba(34,197,94,0.65)" : ts.status === "drop" ? "rgba(239,68,68,0.45)" : "#2b2f4a";
+        return `
+          <div class="slot-box ${isPlay ? "playing" : ""}" style="border-color:${borderCol}; padding:10px; gap:8px;">
+            <div class="cand-item ${isPlay ? "playing" : ""}" style="border:none; background:transparent; padding:0;">
+              <button class="btn btn-sm" onclick="playTrack('${safeId}')">${isPlay ? "🔊" : "▶"}</button>
+              <div class="cand-meta">
+                <div class="cand-title" title="${t.filename}">${t.title}</div>
+                <div class="cand-reason">${t.group}</div>
+              </div>
+              <span class="badge">${t.durationSec}s</span>
+            </div>
+            <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center; justify-content:space-between;">
+              <div style="display:flex; gap:4px;">
+                <button class="btn btn-sm ${ts.status === "star" ? "btn-primary" : ""}" onclick="setTrackStatus('${safeId}', 'star')">⭐ 精品</button>
+                <button class="btn btn-sm ${ts.status === "keep" ? "btn-ok" : ""}" onclick="setTrackStatus('${safeId}', 'keep')">✅ 留用</button>
+                <button class="btn btn-sm ${ts.status === "drop" ? "btn-warn" : ""}" onclick="setTrackStatus('${safeId}', 'drop')">❌ 淘汰</button>
+              </div>
+              <select class="btn btn-sm" onchange="setTrackTag('${safeId}', this.value)">${tagOptions}</select>
+            </div>
+            <input class="btn btn-sm" style="width:100%; text-align:left; background:#0f111d;" placeholder="输入该 OGG 听感/用途注释（自动保存）..." value="${(ts.comment || "").replace(/"/g, "&quot;")}" oninput="setTrackComment('${safeId}', this.value)" />
+          </div>
+        `;
+      }).join("");
+    }
+
+    function openPicker(slotId, slotName) {
+      pickerSlotId = slotId;
+      document.getElementById("pickerTitle").textContent = `为「${slotName}」自选曲目`;
+      document.getElementById("pickerModal").classList.add("open");
+      renderPickerList();
+    }
+    function closePicker() {
+      pickerSlotId = null;
+      document.getElementById("pickerModal").classList.remove("open");
+    }
+    function renderPickerList() {
+      if (!pickerSlotId) return;
+      const group = document.getElementById("pickerGroup").value;
+      const q = document.getElementById("pickerSearch").value.trim().toLowerCase();
+      const filtered = catalog.filter(t => (group === "ALL" || t.group === group) && (!q || t.title.toLowerCase().includes(q)));
+      document.getElementById("pickerList").innerHTML = filtered.map(t => {
+        const isPlay = currentPlayingId === t.id;
+        return `
+          <div class="cand-item ${isPlay ? "playing" : ""}">
+            <button class="btn btn-sm" onclick="playTrack('${t.id.replace(/'/g, "\\'")}')">${isPlay ? "🔊" : "▶"}</button>
+            <div class="cand-meta">
+              <div class="cand-title" title="${t.filename}">${t.title}</div>
+              <div class="cand-reason">${t.group}</div>
+            </div>
+            <span class="badge">${t.durationSec}s</span>
+            <button class="btn btn-sm btn-primary" onclick="selectTrackForSlot('${pickerSlotId}', '${t.id.replace(/'/g, "\\'")}'); closePicker();">选定</button>
+          </div>
+        `;
+      }).join("");
+    }
+
+    function buildExportMarkdown() {
+      const lines = ["# 霓虹深渊 OGG 音频审批结果\n"];
+      REVIEW_SLOTS.forEach(sec => {
+        lines.push(`## ${sec.section}`);
+        sec.slots.forEach(slot => {
+          const st = ensureSlotState(slot);
+          const t = catalog.find(x => x.id === st.trackId);
+          const statusLabel = st.status === "approved" ? "✅通过" : st.status === "rejected" ? "🔄需调整" : "⏳待审";
+          lines.push(`- **${slot.name}** (${slot.id}) [${statusLabel}]`);
+          lines.push(`  - 选定曲目: \`${t ? t.id : "未选"}\``);
+          if (st.comment && st.comment.trim()) {
+            lines.push(`  - 审批注释: ${st.comment.trim()}`);
+          }
+        });
+        lines.push("");
+      });
+
+      const reviewedTracks = catalog.filter(t => {
+        const ts = store.tracks[t.id];
+        return ts && (ts.status !== "pending" || (ts.comment && ts.comment.trim()) || (ts.tag && ts.tag !== "未指定"));
+      });
+      if (reviewedTracks.length > 0) {
+        lines.push("## 按 OGG 曲目逐首评审记录");
+        reviewedTracks.forEach(t => {
+          const ts = store.tracks[t.id];
+          const stLabel = ts.status === "star" ? "⭐精品" : ts.status === "keep" ? "✅留用" : ts.status === "drop" ? "❌淘汰" : "⏳待审";
+          lines.push(`- \`${t.id}\` [${stLabel}] (用途: ${ts.tag || "未指定"})${ts.comment ? ` — ${ts.comment.trim()}` : ""}`);
+        });
+        lines.push("");
+      }
+      return lines.join("\n");
+    }
+
+    function exportApprovals() {
+      const md = buildExportMarkdown();
+      navigator.clipboard.writeText(md).then(() => {
+        showToast("已复制审批结果！可直接粘贴发送给 AI 落地");
+      }).catch(() => {
+        prompt("请复制以下审批结果：", md);
+      });
+    }
+
+    function downloadJson() {
+      const blob = new Blob([JSON.stringify(store, null, 2)], { type: "application/json" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "neon_ogg_approvals.json";
+      a.click();
+    }
+
+    function showToast(msg) {
+      const el = document.getElementById("toast");
+      el.textContent = msg;
+      el.style.display = "block";
+      setTimeout(() => { el.style.display = "none"; }, 2600);
+    }
+
+    Promise.all([
+      fetch("/catalog.json").then(r => r.json()),
+      fetch("/api/reviews").then(r => r.json()).catch(() => ({ slots: {}, tracks: {} })),
+    ]).then(([data, diskReviews]) => {
+      catalog = data;
+      if (diskReviews && typeof diskReviews === "object") {
+        store.slots = { ...store.slots, ...(diskReviews.slots || {}) };
+        store.tracks = { ...store.tracks, ...(diskReviews.tracks || {}) };
+      }
+      const groups = Array.from(new Set(catalog.map(t => t.group))).sort();
+      const gf = document.getElementById("groupFilter");
+      const pg = document.getElementById("pickerGroup");
+      pg.innerHTML = `<option value="ALL">全部分组 (${catalog.length})</option>`;
+      groups.forEach(g => {
+        const cnt = catalog.filter(t => t.group === g).length;
+        gf.innerHTML += `<option value="${g}">${g} (${cnt})</option>`;
+        pg.innerHTML += `<option value="${g}">${g} (${cnt})</option>`;
+      });
+      updateStats();
+      renderReview();
+      renderLibrary();
+    });
+  </script>
+</body>
+</html>

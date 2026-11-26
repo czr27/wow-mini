@@ -1,4 +1,17 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { GmPanel } from './components/GmPanel.js';
+import { executeGmCommand } from './combat/executeGmCommand.js';
+import { enqueueHostDbmAlerts } from './combat/runCombatTick.js';
+import {
+  playBgm,
+  resolveBgmTrackInfo,
+  playEnterDungeonStinger,
+  playMidBossClearStinger,
+  preloadDungeonAudio,
+  startIdleAudioPreload,
+  ensureMinimumBootAudio,
+  type BgmPhase,
+} from './utils/bgmManager.js';
 import { speakDbmVoice } from './utils/dbmVoice.js';
 import {
   CombatEngine,
@@ -16,6 +29,7 @@ import {
   GroundEffect,
   FloatingCombatText,
   DbmAlert,
+  GmCommandPayload,
   DungeonClearCertificate,
   DungeonDifficulty,
   CustomDifficultySettings,
@@ -26,6 +40,7 @@ import {
   GroundTargetState,
   roomManager,
   type LobbyRoom,
+  type RoomChatMessage,
   getRoleBySpec,
   DUNGEON_ROLE_QUOTAS,
   LEVEL_80_MAX_HASTE,
@@ -41,7 +56,7 @@ import {
 } from './hooks/usePlayerCastController.js';
 import { useRoomLobby } from './hooks/useRoomLobby.js';
 import { useCombatTick } from './hooks/useCombatTick.js';
-import { useNetworkRoomSync } from './hooks/useNetworkRoomSync.js';
+import { markRoomRecentlyLeft, useNetworkRoomSync } from './hooks/useNetworkRoomSync.js';
 import {
   encountersForCertificateClaim,
   getLocalEncounterRecorder,
@@ -191,6 +206,10 @@ export function App() {
   /** 别处登录 / 心跳踢下线：立刻展示，不依赖 window.alert */
   const [sessionKickNotice, setSessionKickNotice] = useState<string | null>(null);
   const [isCertClaimed, setIsCertClaimed] = useState(false);
+  const [roomChatMessages, setRoomChatMessages] = useState<RoomChatMessage[]>([]);
+  const bossChatSpokenRef = useRef<Set<string>>(new Set());
+  const prevChatRunPhaseRef = useRef<string>('LOBBY');
+  const lastChatBossRef = useRef<{ id: string; name: string; index: number } | null>(null);
 
   // Combat runtime state
   const [runPhase, setRunPhase] = useState<'LOBBY' | 'TRAVEL_RECOVERY' | 'BOSS_COMBAT' | 'WIPE_VOTE' | 'SUMMARY'>('LOBBY');
@@ -247,12 +266,25 @@ export function App() {
   const [corpseRunTimerMs, setCorpseRunTimerMs] = useState(0);
   const [groundTargetState, setGroundTargetState] = useState<GroundTargetState | null>(null);
   const [dbmAlerts, setDbmAlerts] = useState<DbmAlert[]>([]);
+  const [showGmPanel, setShowGmPanel] = useState<boolean>(true);
+  const gmRoleClickRef = useRef<{ count: number; lastAt: number }>({ count: 0, lastAt: 0 });
   const dbmVoiceEnabledRef = useRef<boolean>(true);
+  const dbmRecentTitlesRef = useRef<Map<string, number>>(new Map());
   const pushDbmAlerts = useCallback((incoming: DbmAlert[]) => {
     if (!incoming || incoming.length === 0) return;
     const now = Date.now();
+    const filtered = incoming.filter((item) => {
+      const key = item.title.replace(/\s*\(\d+s\)\s*$/, '').trim();
+      const isCountMerge = /×\d+$/.test(key);
+      if (isCountMerge) return true;
+      const lastAt = dbmRecentTitlesRef.current.get(key);
+      if (lastAt !== undefined && now - lastAt < 7000) return false;
+      dbmRecentTitlesRef.current.set(key, now);
+      return true;
+    });
+    if (filtered.length === 0) return;
     // React 18 defers setState updater callbacks, so resolve voicePhrase synchronously from incoming
-    const lastIncoming = incoming[incoming.length - 1];
+    const lastIncoming = filtered[filtered.length - 1];
     const voicePhrase = (lastIncoming?.voiceText || lastIncoming?.advice || '').trim();
     if (dbmVoiceEnabledRef.current && voicePhrase) {
       speakDbmVoice(voicePhrase);
@@ -261,7 +293,7 @@ export function App() {
       const alive = prev.filter((a) => now - a.atMs < (a.ttlMs || 3500));
       const seen = new Set(alive.map((a) => a.id));
       const next = [...alive];
-      for (const item of incoming) {
+      for (const item of filtered) {
         if (seen.has(item.id)) continue;
         seen.add(item.id);
         const stamped: DbmAlert = { ...item, atMs: now };
@@ -447,6 +479,28 @@ export function App() {
     roomManager.cleanupAiOnlyRooms();
   }, []);
 
+  const runGmCommand = useCallback((cmd: GmCommandPayload): string => {
+    return executeGmCommand(cmd, {
+      engine: engineRef.current,
+      bossAi: bossAiRef.current,
+      rsm: rsmRef.current,
+      onSyncHud: () => {
+        const eng = engineRef.current;
+        setFriendlyUnits([...eng.friendlyUnits]);
+        setBossUnit(eng.bossUnit ? { ...eng.bossUnit } : undefined);
+        setGroundEffects([...(eng.effectsManager?.groundEffects || [])]);
+        setFloatingTexts([...(eng.effectsManager?.floatingTexts || [])]);
+        const fresh = eng.drainDbmAlerts();
+        if (fresh.length > 0) {
+          pushDbmAlerts(fresh);
+          if (isNetworkHostRef.current && activeRoomIdRef.current && netClient.connected) {
+            enqueueHostDbmAlerts(fresh);
+          }
+        }
+      },
+    });
+  }, [pushDbmAlerts]);
+
   useNetworkRoomSync({
     currentChar,
     account,
@@ -500,6 +554,7 @@ export function App() {
     setFloatingTexts,
     setGuestBossCasting,
     onDbmAlerts: pushDbmAlerts,
+    onGmCommand: runGmCommand,
   });
 
   // ── [Game Load] 启动：下载 ART 图标 + 拉取账号，显示加载进度界面 ──
@@ -528,14 +583,22 @@ export function App() {
 
         await initArtResourceIcons((p) => {
           if (cancelled) return;
-          // Reserve top ~8% for account sync after art download
-          setBootPercent(Math.min(92, p.percent * 0.92));
+          // Reserve top ~12% for minimum audio cache + account sync
+          setBootPercent(Math.min(88, p.percent * 0.88));
           setBootLabel(p.label);
         });
 
         if (!cancelled) {
+          setBootLabel('缓存基础背景音乐…');
+          setBootPercent(90);
+        }
+        await ensureMinimumBootAudio((label) => {
+          if (!cancelled) setBootLabel(label);
+        });
+
+        if (!cancelled) {
           setBootLabel('同步账号数据…');
-          setBootPercent(94);
+          setBootPercent(95);
         }
         await accountPromise;
 
@@ -1354,6 +1417,117 @@ export function App() {
     };
   }, [groundTargetState, runPhase]);
 
+  // Room chat: clear when room changes, subscribe to server-relayed ROOM_CHAT messages
+  useEffect(() => {
+    setRoomChatMessages([]);
+    bossChatSpokenRef.current.clear();
+  }, [activeRoomId]);
+
+  useEffect(() => {
+    return netClient.subscribe((msg) => {
+      if (msg.type !== 'ROOM_CHAT') return;
+      const chat = msg.payload as RoomChatMessage | undefined;
+      if (!chat?.id || !chat.text) return;
+      if (activeRoomIdRef.current && chat.roomId && chat.roomId !== activeRoomIdRef.current) return;
+      setRoomChatMessages((prev) => {
+        if (prev.some((m) => m.id === chat.id)) return prev;
+        const next = [...prev, chat];
+        return next.length > 120 ? next.slice(next.length - 120) : next;
+      });
+    });
+  }, []);
+
+  const handleSendChat = useCallback((text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    const roomId = activeRoomIdRef.current;
+    if (netClient.connected && roomId) {
+      netClient.sendRoomChat(roomId, { text: trimmed });
+      return;
+    }
+    // Offline/solo fallback
+    if (currentChar) {
+      const localMsg: RoomChatMessage = {
+        id: `chat_local_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+        roomId: roomId || 'local',
+        senderId: currentChar.id,
+        senderName: currentChar.name,
+        senderKind: 'PLAYER',
+        classId: currentChar.classId,
+        text: trimmed,
+        atMs: Date.now(),
+      };
+      setRoomChatMessages((prev) => [...prev.slice(-119), localMsg]);
+    }
+  }, [currentChar]);
+
+  const emitBossChat = useCallback((bossId: string, bossName: string, text: string) => {
+    const roomId = activeRoomIdRef.current;
+    if (netClient.connected && roomId) {
+      netClient.sendRoomChat(roomId, {
+        senderKind: 'BOSS',
+        senderId: bossId,
+        senderName: bossName,
+        text,
+      });
+      return;
+    }
+    const localMsg: RoomChatMessage = {
+      id: `chat_boss_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      roomId: roomId || 'local',
+      senderId: bossId,
+      senderName: bossName,
+      senderKind: 'BOSS',
+      text,
+      atMs: Date.now(),
+    };
+    setRoomChatMessages((prev) => [...prev.slice(-119), localMsg]);
+  }, []);
+
+  // Boss red-text yells under specific combat conditions (host-authoritative)
+  useEffect(() => {
+    if (isNetworkGuestRef.current) return;
+    const bossIdx = rsmRef.current?.currentBossIndex ?? 0;
+
+    if (runPhase === 'BOSS_COMBAT' && bossUnit) {
+      lastChatBossRef.current = { id: bossUnit.id, name: bossUnit.name, index: bossIdx };
+      const pullKey = `pull_${bossIdx}_${bossUnit.id}`;
+      if (!bossChatSpokenRef.current.has(pullKey)) {
+        bossChatSpokenRef.current.add(pullKey);
+        emitBossChat(bossUnit.id, bossUnit.name, '你们竟敢闯入我的领地，受死吧！');
+      }
+      if (bossUnit.maxHp > 0 && bossUnit.hp > 0 && bossUnit.hp / bossUnit.maxHp <= 0.35) {
+        const lowHpKey = `lowhp_${bossIdx}_${bossUnit.id}`;
+        if (!bossChatSpokenRef.current.has(lowHpKey)) {
+          bossChatSpokenRef.current.add(lowHpKey);
+          emitBossChat(bossUnit.id, bossUnit.name, '够了！见识一下真正的力量吧！');
+        }
+      }
+    } else if (
+      prevChatRunPhaseRef.current === 'BOSS_COMBAT' &&
+      (runPhase === 'TRAVEL_RECOVERY' || runPhase === 'SUMMARY')
+    ) {
+      const defeated = lastChatBossRef.current;
+      if (defeated) {
+        const killKey = `kill_${defeated.index}_${defeated.id}`;
+        if (!bossChatSpokenRef.current.has(killKey)) {
+          bossChatSpokenRef.current.add(killKey);
+          emitBossChat(defeated.id, defeated.name, '这……不可能……');
+        }
+      }
+    } else if (prevChatRunPhaseRef.current === 'BOSS_COMBAT' && runPhase === 'WIPE_VOTE') {
+      const victor = lastChatBossRef.current;
+      if (victor) {
+        emitBossChat(victor.id, victor.name, '不过如此，全都化为尘埃吧！');
+        // Clear pull/lowhp flags so a retry will yell again
+        bossChatSpokenRef.current.delete(`pull_${victor.index}_${victor.id}`);
+        bossChatSpokenRef.current.delete(`lowhp_${victor.index}_${victor.id}`);
+      }
+    }
+
+    prevChatRunPhaseRef.current = runPhase;
+  }, [runPhase, bossUnit?.id, bossUnit?.hp, bossUnit?.maxHp, emitBossChat]);
+
   // Claim Clear Certificate & Submit to World Leaderboards (Strictly requires full clear).
   // Guests register from local encounter records — do not require host-broadcast reports.
   const handleClaimCertificate = useCallback(() => {
@@ -1377,7 +1551,9 @@ export function App() {
       currentChar.lastSpec,
       rsm.totalRunDurationSec,
       encounters,
-      currentChar.id
+      currentChar.id,
+      engine.difficulty,
+      rsm.dungeon.tier === '20man'
     );
 
     // 1. Add to character records → account sync to server
@@ -1398,6 +1574,61 @@ export function App() {
       }
     }
   }, [runPhase, isCertClaimed, handleClaimCertificate]);
+
+  // BGM playback synced with account login, lobby view, run phase, dungeon, and boss
+  const prevBgmRunPhaseRef = useRef<RunPhase>('LOBBY');
+  useEffect(() => {
+    const rsm = rsmRef.current;
+    const dungeonId = rsm?.dungeon?.id || selectedDungeonId;
+    const bossIndex = rsm?.currentBossIndex ?? 0;
+    const totalBosses = rsm?.dungeon?.bosses?.length ?? 1;
+    const bossId = rsm?.dungeon?.bosses?.[bossIndex]?.id;
+
+    // One-shot stingers on key transitions
+    if (prevBgmRunPhaseRef.current === 'LOBBY' && runPhase === 'TRAVEL_RECOVERY') {
+      playEnterDungeonStinger();
+    } else if (prevBgmRunPhaseRef.current === 'BOSS_COMBAT' && runPhase === 'TRAVEL_RECOVERY') {
+      playMidBossClearStinger(dungeonId);
+    }
+    prevBgmRunPhaseRef.current = runPhase;
+
+    let bgmPhase: BgmPhase = runPhase;
+    if (runPhase === 'LOBBY') {
+      const isLoggedOut = !account || account.username === '未登录';
+      if (isLoggedOut) {
+        bgmPhase = 'AUTH_UNLOGGED';
+      } else if (lobbySubView === 'ROOM_DETAIL') {
+        bgmPhase = 'ROOM_WAITING';
+      } else {
+        bgmPhase = 'LOBBY_OUTSIDE';
+      }
+    }
+
+    const trackInfo = resolveBgmTrackInfo({
+      phase: bgmPhase,
+      dungeonId,
+      bossIndex,
+      totalBosses,
+      bossId,
+    });
+    playBgm(trackInfo);
+  }, [runPhase, selectedDungeonId, lobbySubView, account]);
+
+  // Idle background audio preload + prioritize current room's dungeon tracks
+  useEffect(() => {
+    const t = setTimeout(() => {
+      startIdleAudioPreload();
+    }, 2000);
+    return () => clearTimeout(t);
+  }, []);
+
+  useEffect(() => {
+    const roomDungeonId = activeRoomId ? roomManager.getRoom(activeRoomId)?.dungeonId : undefined;
+    const targetDungeonId = roomDungeonId || rsmRef.current?.dungeon?.id || selectedDungeonId;
+    if (targetDungeonId && (lobbySubView === 'ROOM_DETAIL' || runPhase !== 'LOBBY')) {
+      preloadDungeonAudio(targetDungeonId);
+    }
+  }, [activeRoomId, lobbySubView, runPhase, selectedDungeonId]);
 
   // 离开行军阶段时清掉跳过投票面板，避免下一轮 TRAVEL 残留上一轮投票 UI
   useEffect(() => {
@@ -1438,6 +1669,12 @@ export function App() {
     setWipeNetworkVote(null);
     setMyWipeVote(null);
     // 房主先广播 ROOM_CLOSED（客人离房）；客人只 ROOM_LEAVE
+    if (activeRoomId) {
+      markRoomRecentlyLeft(activeRoomId);
+    }
+    if (waitingQueueRoomId) {
+      markRoomRecentlyLeft(waitingQueueRoomId);
+    }
     if (activeRoomId && currentChar) {
       if (isNetworkHostRef.current || (!netClient.connected && roomManager.getRoom(activeRoomId)?.hostId === currentChar.id)) {
         roomFacadeRef.current.closeRoom(activeRoomId, 'host_left');
@@ -1450,7 +1687,10 @@ export function App() {
     roomManager.cleanupAiOnlyRooms();
     isNetworkGuestRef.current = false;
     isNetworkHostRef.current = false;
+    activeRoomIdRef.current = null;
+    waitingQueueRoomIdRef.current = null;
     setActiveRoomId(null);
+    setWaitingQueueRoomId(null);
     setLobbySubView('ROOM_LIST');
     setRoomsTick(t => t + 1);
 
@@ -1493,6 +1733,7 @@ export function App() {
     if (choice === 'FINISH') {
       // Wipe finish: destroy room for everyone (host leave / close)
       if (activeRoomId) {
+        markRoomRecentlyLeft(activeRoomId);
         if (isNetworkHostRef.current || !netClient.connected) {
           roomFacadeRef.current.closeRoom(activeRoomId, 'wipe_finish');
         } else {
@@ -1502,6 +1743,7 @@ export function App() {
       roomManager.cleanupAiOnlyRooms();
       isNetworkGuestRef.current = false;
       isNetworkHostRef.current = false;
+      activeRoomIdRef.current = null;
       setActiveRoomId(null);
       setLobbySubView('ROOM_LIST');
       setRoomsTick(t => t + 1);
@@ -1766,11 +2008,6 @@ export function App() {
                 ? 'border-emerald-600/60 text-emerald-300 bg-emerald-950/40'
                 : 'border-amber-700/60 text-amber-200 bg-amber-950/40'
             }`}
-            title={
-              netConnected
-                ? '已连接游戏服务器（账号/房间/战斗均由服务端管理，含 localhost）'
-                : '未连接游戏服务器。请用启动脚本打开服务端（:3001）；不存在单机本地模式'
-            }
           >
             {netConnected ? '服务器已连接' : '未连接服务器'}
           </div>
@@ -1789,15 +2026,49 @@ export function App() {
                   setLobbySubView('AUTH_CHAR');
                 }}
                 className="h-8 inline-flex items-center space-x-1.5 bg-[#1b1b34] border border-[#3b3b5c] px-3 rounded-lg text-xs font-bold cursor-pointer hover:border-amber-400 transition"
-                title={`点击返回主页与角色切换（${roleLabel}）`}
               >
                 <span className="text-gray-400">当前角色:</span>
                 <span style={{ color: CLASS_COLORS[currentChar.classId] || '#fbbf24' }}>
                   {currentChar.name}
                 </span>
-                <span className="text-[11px] leading-none" aria-label={roleLabel}>
+                <span
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const now = Date.now();
+                    const nextCount =
+                      now - gmRoleClickRef.current.lastAt <= 1500
+                        ? gmRoleClickRef.current.count + 1
+                        : 1;
+                    gmRoleClickRef.current = { count: nextCount, lastAt: now };
+                    if (nextCount >= 12) {
+                      gmRoleClickRef.current = { count: 0, lastAt: 0 };
+                      const nextGm = !currentChar.isGm;
+                      accountMgrRef.current.setCharacterGm(currentChar.id, nextGm);
+                      const updatedAcc = accountMgrRef.current.getCurrentAccount();
+                      if (updatedAcc) setAccount({ ...updatedAcc });
+                      if (nextGm) setShowGmPanel(true);
+                    }
+                  }}
+                  className="text-[11px] leading-none cursor-pointer"
+                  aria-label={roleLabel}
+                  data-testid="top-char-role-icon"
+                >
                   {roleIcon}
                 </span>
+                {currentChar.isGm && (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setShowGmPanel((v) => !v);
+                    }}
+                    title="显示/隐藏 GM 测试面板"
+                    className="ml-1 px-1.5 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/35 border border-amber-400/60 text-amber-300 text-[10px] font-extrabold leading-none"
+                    data-testid="gm-toggle-badge"
+                  >
+                    GM
+                  </button>
+                )}
               </div>
             );
           })()}
@@ -1814,7 +2085,6 @@ export function App() {
             return (
               <div
                 className="h-8 inline-flex items-center space-x-1.5 px-3 text-xs rounded-lg font-bold shadow border bg-black/60 border-amber-500/50 text-amber-200 pointer-events-none select-none opacity-90"
-                title="副本进行中，模式与难度已锁定，不可切换"
                 aria-disabled="true"
               >
                 <span aria-hidden>🔒</span>
@@ -1834,7 +2104,6 @@ export function App() {
                   setAuthOpenRequest({ mode: 'login', id: Date.now() });
                 }}
                 className="h-8 inline-flex items-center px-3 text-xs bg-[#1e2a44] hover:bg-[#263556] rounded-lg transition border border-sky-700/50 text-sky-200 font-semibold"
-                title="登录账号"
               >
                 登录
               </button>
@@ -1845,7 +2114,6 @@ export function App() {
                   setAuthOpenRequest({ mode: 'register', id: Date.now() });
                 }}
                 className="h-8 inline-flex items-center px-3 text-xs bg-emerald-800/80 hover:bg-emerald-700 rounded-lg transition border border-emerald-500/40 text-emerald-100 font-semibold"
-                title="注册新账号"
               >
                 注册
               </button>
@@ -1865,7 +2133,6 @@ export function App() {
                   setRunPhase('LOBBY');
                 }}
                 className="h-8 inline-flex items-center px-3 text-xs bg-slate-700 hover:bg-slate-600 rounded-lg transition border border-slate-500 text-slate-200 font-semibold"
-                title="注销当前登录会话"
               >
                 注销
               </button>
@@ -1877,7 +2144,6 @@ export function App() {
                   setShowHeaderDeleteConfirm(true);
                 }}
                 className="h-8 inline-flex items-center px-3 text-xs bg-red-950/70 hover:bg-red-900 rounded-lg transition border border-red-700/50 text-red-200 font-semibold"
-                title="从服务器永久删除此账号"
               >
                 删除账号
               </button>
@@ -1934,6 +2200,8 @@ export function App() {
             onStartGame={handleStartGameFromRoom}
             onRefreshRoom={() => setRoomsTick(t => t + 1)}
             onBackToCharacterSelect={() => setLobbySubView('AUTH_CHAR')}
+            chatMessages={roomChatMessages}
+            onSendChat={handleSendChat}
             authPanel={(
               <AuthAndCharacterModal
             currentAccountName={account?.username || '未登录'}
@@ -2223,6 +2491,8 @@ export function App() {
               }
             }}
             onConfirmGroundTarget={handleConfirmGroundTarget}
+            chatMessages={roomChatMessages}
+            onSendChat={handleSendChat}
             onCancelGroundTarget={() => setGroundTargetState(null)}
             onPlayerRevive={() => {
               if (deadUnits.length > 0) {
@@ -2265,7 +2535,21 @@ export function App() {
             : wipeVoteTimerMs
         }
         bossName={targetBossName}
-        wipeReport={rsmRef.current?.latestWipeReport}
+        wipeReport={
+          rsmRef.current?.latestWipeReport ??
+          (bossUnit && bossUnit.maxHp > 0
+            ? {
+                bossIndex: rsmRef.current?.currentBossIndex ?? 0,
+                bossId: bossUnit.id,
+                bossName: bossUnit.name || targetBossName,
+                result: 'WIPE',
+                durationSec: Math.max(1, totalDurationSec),
+                wipesBeforeKill: 1,
+                bossRemainingHpPct: parseFloat(((bossUnit.hp / bossUnit.maxHp) * 100).toFixed(1)),
+                unitStats: [],
+              }
+            : null)
+        }
         onVote={handleWipeVote}
         networkVote={wipeNetworkVote}
         myVote={myWipeVote}
@@ -2413,6 +2697,33 @@ export function App() {
             roomManager.leaveWaitingQueue(waitingQueueRoomId, currentChar.id);
             setWaitingQueueRoomId(null);
             setRoomsTick(t => t + 1);
+          }}
+        />
+      )}
+
+      {currentChar?.isGm && showGmPanel && runPhase !== 'LOBBY' && runPhase !== 'SUMMARY' && (
+        <GmPanel
+          engine={engineRef.current}
+          bossAi={bossAiRef.current}
+          runPhase={runPhase}
+          initialPos={currentChar.uiLayout?.gmPanel ?? null}
+          onSavePos={(pos) => {
+            accountMgrRef.current.saveCharacterUiLayout(currentChar.id, { gmPanel: pos });
+            const updatedAcc = accountMgrRef.current.getCurrentAccount();
+            if (updatedAcc) setAccount({ ...updatedAcc });
+          }}
+          onIssueGmCommand={(cmd) => {
+            const payload: GmCommandPayload = { ...cmd, playerId: currentChar.id };
+            if (netClient.connected && activeRoomId) {
+              netClient.sendGmCommand(activeRoomId, payload);
+              return '已发送 GM 指令至服务器广播';
+            }
+            return runGmCommand(payload);
+          }}
+          onDisableGm={() => {
+            accountMgrRef.current.setCharacterGm(currentChar.id, false);
+            const updatedAcc = accountMgrRef.current.getCurrentAccount();
+            if (updatedAcc) setAccount({ ...updatedAcc });
           }}
         />
       )}

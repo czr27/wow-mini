@@ -85,6 +85,11 @@ const addLastAttackMs = new Map<string, number>();
 /** Host: pending DBM alerts buffered between 20Hz sim ticks and 10Hz COMBAT_STATE broadcasts */
 const pendingHostDbmAlerts: DbmAlert[] = [];
 
+/** Enqueue host-originated DBM alerts (e.g. GM skill trigger) for the next 10Hz broadcast */
+export function enqueueHostDbmAlerts(alerts: DbmAlert[]): void {
+  if (alerts.length > 0) pendingHostDbmAlerts.push(...alerts);
+}
+
 export type CombatTickMutableState = {
   tickCount: number;
   reviveTimerMs: number;
@@ -1148,6 +1153,14 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
                 spellName: '首领普通攻击',
                 kind: 'INSTANT',
                 targetId: targetUnit.id,
+                visualTone: 'ENEMY',
+              });
+              publishCastLand({
+                unitId: boss.id,
+                spellId: 'auto_attack',
+                spellName: '首领普通攻击',
+                targetId: targetUnit.id,
+                isHarmful: true,
               });
             }
           }

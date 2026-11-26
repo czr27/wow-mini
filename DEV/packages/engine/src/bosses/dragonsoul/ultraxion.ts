@@ -1,6 +1,7 @@
 import type { BossEncounterModule, BossSkill } from '../core/BossTypes.js';
 import type { CombatEngine } from '../../engine/CombatEngine.js';
 import type { Unit } from '../../types.js';
+import { pickWeightedBossTarget } from '../core/BossTargetPicker.js';
 
 /** 暮光领域 buff id */
 export const TWILIGHT_REALM_SPELL_ID = 'twilight_realm';
@@ -220,7 +221,7 @@ export const UltraxionEncounter: BossEncounterModule = {
           advice: '分摊或点英勇意志离开领域',
           voiceText: '暮光时刻',
           severity: 'CRITICAL',
-          preWarnMs: 3000,
+          preWarnMs: 0,
         },
         execute: (boss, engine) => {
           const living = livingFriendlies(engine);
@@ -359,9 +360,9 @@ export const UltraxionEncounter: BossEncounterModule = {
     if ((ai.ultraxFadingAcc || 0) >= 40_000) {
       ai.ultraxFadingAcc = 0;
       const living = livingFriendlies(engine);
-      const tank = living.find(u => u.role === 'TANK');
+      const tank = pickWeightedBossTarget(living.filter(u => u.role === 'TANK'));
       const others = living.filter(u => u.id !== tank?.id);
-      const random = others[Math.floor(Math.random() * Math.max(1, others.length))];
+      const random = pickWeightedBossTarget(others);
       const duration = 8000;
       if (tank) applyFadingLight(engine, boss, ai, tank, duration);
       if (random) applyFadingLight(engine, boss, ai, random, duration);

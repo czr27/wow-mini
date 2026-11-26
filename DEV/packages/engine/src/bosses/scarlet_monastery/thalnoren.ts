@@ -1,4 +1,5 @@
 import type { BossEncounterModule, BossSkill } from '../core/BossTypes.js';
+import { pickWeightedBossTarget } from '../core/BossTargetPicker.js';
 
 function living(engine: any) {
   return engine.friendlyUnits.filter((u: any) => (u.alive ?? u.isAlive) && (u.hp ?? 0) > 0);
@@ -43,7 +44,7 @@ export const ThalnorenEncounter: BossEncounterModule = {
         description: '点名火焰箭',
         execute: (boss, engine) => {
           const pool = living(engine).filter((u: any) => u.role !== 'TANK');
-          const t = pool[Math.floor(Math.random() * Math.max(1, pool.length))];
+          const t = pickWeightedBossTarget(pool);
           if (t) engine.dealDamage(boss, t, 18_000, 'FIRE', false, '烈焰尖刺');
         },
       },

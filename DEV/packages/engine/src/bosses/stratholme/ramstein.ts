@@ -69,7 +69,7 @@ export const RamsteinEncounter: BossEncounterModule = {
       for (let i = 0; i < 2; i++) {
         spawnCombatUnit(engine, {
           id: `undead_${Date.now()}_${i}`,
-          name: `屠宰场亡灵 ${i + 1}`,
+          name: '屠宰场亡灵',
           unitKind: 'ADD',
           role: 'ENEMY',
           classId: 'NPC',

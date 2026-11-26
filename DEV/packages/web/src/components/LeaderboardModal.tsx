@@ -68,11 +68,8 @@ export const LeaderboardModal: React.FC<Props> = ({ isOpen, onClose, entries }) 
           <div className="flex items-center space-x-3">
             <span className="text-3xl">🏆</span>
             <div>
-              <h2 className="text-lg font-extrabold text-amber-300 tracking-wide flex items-center space-x-2">
-                <span>大地的裂变 — 世界史诗战力榜</span>
-                <span className="text-[10px] bg-red-600/30 text-red-300 border border-red-500/40 px-2 py-0.5 rounded-full font-bold">
-                  全球实时天梯
-                </span>
+              <h2 className="text-lg font-extrabold text-amber-300 tracking-wide">
+                大地的裂变 — 世界史诗战力榜
               </h2>
               <p className="text-xs text-amber-200/70">记录各副本首领速杀、伤害与治疗排名</p>
             </div>
@@ -85,44 +82,8 @@ export const LeaderboardModal: React.FC<Props> = ({ isOpen, onClose, entries }) 
           </button>
         </div>
 
-        {/* Dungeon Selector Bar (scales for many dungeons) */}
-        <div className="bg-[#111122] border-b border-[#252540] px-6 py-2.5 flex items-center gap-2 overflow-x-auto">
-          <span className="text-[11px] text-gray-400 font-bold flex-shrink-0">副本:</span>
-          {activeMetric !== 'FAST_KILL' && (
-            <button
-              onClick={() => handleSelectDungeon('ALL')}
-              className={`px-2.5 py-1 rounded-md text-xs font-bold flex-shrink-0 transition ${
-                selectedDungeonId === 'ALL'
-                  ? 'bg-amber-500 text-black shadow'
-                  : 'bg-[#1b1b34] text-gray-400 hover:text-gray-200 hover:bg-[#232344]'
-              }`}
-            >
-              全部副本
-            </button>
-          )}
-          {dungeons.map(d => {
-            const isSelected =
-              selectedDungeonId === d.id ||
-              (activeMetric === 'FAST_KILL' && selectedDungeonId === 'ALL' && d.id === activeDungeon?.id);
-            return (
-              <button
-                key={d.id}
-                onClick={() => handleSelectDungeon(d.id)}
-                className={`px-2.5 py-1 rounded-md text-xs font-bold flex-shrink-0 transition flex items-center space-x-1 ${
-                  isSelected
-                    ? 'bg-amber-500/25 text-amber-300 border border-amber-500/60 shadow-sm'
-                    : 'bg-[#1b1b34] text-gray-400 hover:text-gray-200 hover:bg-[#232344] border border-transparent'
-                }`}
-              >
-                <span>{cleanDungeonName(d.name)}</span>
-                <span className="text-[10px] opacity-70 font-mono">({d.bosses.length})</span>
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Metric Selector Tabs */}
-        <div className="flex flex-wrap items-center justify-between border-b border-[#252540] px-6 bg-[#16162c] gap-2 py-2">
+        {/* Metric Selector Tabs + Scalable Dungeon & Class Filters */}
+        <div className="flex flex-wrap items-center justify-between border-b border-[#252540] px-6 bg-[#16162c] gap-2 py-2.5">
           <div className="flex space-x-2">
             <button
               onClick={() => {
@@ -167,26 +128,50 @@ export const LeaderboardModal: React.FC<Props> = ({ isOpen, onClose, entries }) 
             </button>
           </div>
 
-          {/* Class Filter */}
-          <div className="flex items-center space-x-2 text-xs">
-            <span className="text-gray-400">职业筛选:</span>
-            <select
-              value={filterClass}
-              onChange={(e) => setFilterClass(e.target.value as any)}
-              className="bg-[#1b1b34] border border-[#3b3b5c] rounded px-2 py-1 text-xs text-amber-300 outline-none"
-            >
-              <option value="ALL">全部职业</option>
-              <option value="DK">死亡骑士</option>
-              <option value="DRUID">德鲁伊</option>
-              <option value="SHAMAN">萨满祭司</option>
-              <option value="MAGE">法师</option>
-              <option value="ROGUE">潜行者</option>
-              <option value="WARRIOR">战士</option>
-              <option value="PALADIN">圣骑士</option>
-              <option value="HUNTER">猎人</option>
-              <option value="PRIEST">牧师</option>
-              <option value="WARLOCK">术士</option>
-            </select>
+          {/* Dungeon Selector (Dropdown scales cleanly to any number of dungeons) & Class Filter */}
+          <div className="flex flex-wrap items-center gap-3 text-xs">
+            <div className="flex items-center space-x-1.5">
+              <span className="text-gray-400">副本:</span>
+              <select
+                value={
+                  activeMetric === 'FAST_KILL' && selectedDungeonId === 'ALL'
+                    ? activeDungeon?.id || ''
+                    : selectedDungeonId
+                }
+                onChange={(e) => handleSelectDungeon(e.target.value)}
+                className="bg-[#1b1b34] border border-[#3b3b5c] rounded px-2.5 py-1 text-xs font-bold text-amber-300 outline-none max-w-[180px]"
+              >
+                {activeMetric !== 'FAST_KILL' && (
+                  <option value="ALL">全部副本</option>
+                )}
+                {dungeons.map(d => (
+                  <option key={d.id} value={d.id}>
+                    {cleanDungeonName(d.name)}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="flex items-center space-x-1.5">
+              <span className="text-gray-400">职业:</span>
+              <select
+                value={filterClass}
+                onChange={(e) => setFilterClass(e.target.value as any)}
+                className="bg-[#1b1b34] border border-[#3b3b5c] rounded px-2 py-1 text-xs text-amber-300 outline-none"
+              >
+                <option value="ALL">全部职业</option>
+                <option value="DK">死亡骑士</option>
+                <option value="DRUID">德鲁伊</option>
+                <option value="SHAMAN">萨满祭司</option>
+                <option value="MAGE">法师</option>
+                <option value="ROGUE">潜行者</option>
+                <option value="WARRIOR">战士</option>
+                <option value="PALADIN">圣骑士</option>
+                <option value="HUNTER">猎人</option>
+                <option value="PRIEST">牧师</option>
+                <option value="WARLOCK">术士</option>
+              </select>
+            </div>
           </div>
         </div>
 

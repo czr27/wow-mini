@@ -133,17 +133,23 @@ export function spawnCombatUnit(engine: CombatEngine, opts: SpawnUnitOpts): Unit
   const unit = createSpawnedUnit(opts);
   engine.addUnit(unit);
   if (unit.unitKind === 'ADD' && unit.role === 'ENEMY') {
+    const baseAddName =
+      unit.name
+        .replace(/\s*\d+(\/\d+)?$/, '')
+        .replace(/\(.*?\)$/, '')
+        .trim() || unit.name;
     engine.emitDbmAlert?.({
-      title: `增援：${unit.name}`,
+      title: `增援：${baseAddName}`,
       advice: '先杀小怪',
       voiceText: '先杀小怪',
-      replaceKey: `add_${unit.name}`,
+      replaceKey: 'runtime_add_wave',
+      mergeWindowMs: 1200,
+      mergeItemName: baseAddName,
+      mergeTitlePrefix: '增援：',
       severity: 'WARN',
       roleHint: 'DPS',
       spellId: opts.summonSpellId,
       source: 'RUNTIME',
-      dedupeKey: `add_${unit.name}`,
-      cooldownMs: 8000,
     });
   }
   return unit;

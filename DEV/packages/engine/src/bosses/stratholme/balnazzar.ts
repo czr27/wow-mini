@@ -1,4 +1,5 @@
 import type { BossEncounterModule, BossSkill } from '../core/BossTypes.js';
+import { pickWeightedBossTarget } from '../core/BossTargetPicker.js';
 
 export type BalnazzarAiState = {
   balFightMs?: number;
@@ -32,7 +33,7 @@ export const BalnazzarEncounter: BossEncounterModule = {
         description: '支配队友（可驱散/控场）',
         execute: (boss, engine) => {
           const pool = living(engine).filter((u: any) => u.role !== 'TANK');
-          const t = pool[Math.floor(Math.random() * Math.max(1, pool.length))];
+          const t = pickWeightedBossTarget(pool);
           if (!t) return;
           engine.applyBuff(t, {
             id: `mc_${Date.now()}`,

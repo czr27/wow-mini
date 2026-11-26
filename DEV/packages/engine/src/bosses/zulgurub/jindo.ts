@@ -2,6 +2,7 @@ import type { BossEncounterModule, BossSkill } from '../core/BossTypes.js';
 import type { CombatEngine } from '../../engine/CombatEngine.js';
 import type { Unit } from '../../types.js';
 import { spawnCombatUnit } from '../../engine/UnitSpawn.js';
+import { pickWeightedBossTarget } from '../core/BossTargetPicker.js';
 
 export const BRITTLE_BARRIER_SUMMON = 'jindo_brittle_barrier';
 export const SPIRIT_SUMMON = 'jindo_gurubashi_spirit';
@@ -22,7 +23,7 @@ function spawnBarrier(engine: CombatEngine, boss: Unit, index: number) {
   const bPos = boss.position || { x: 500, y: 200 };
   spawnCombatUnit(engine, {
     id: `barrier_${index}_${Date.now()}`,
-    name: `脆弱屏障 ${index + 1}/3`,
+    name: '脆弱屏障',
     unitKind: 'ADD',
     role: 'ENEMY',
     classId: 'NPC',
@@ -72,7 +73,7 @@ export const JindoEncounter: BossEncounterModule = {
         description: '屏障阶段砸向落点（也可伤屏障旁玩家）',
         execute: (boss, engine) => {
           const fri = living(engine);
-          const t = fri[Math.floor(Math.random() * Math.max(1, fri.length))];
+          const t = pickWeightedBossTarget(fri);
           const pos = t?.position || { x: 400, y: 220 };
           engine.effectsManager?.addGroundEffect({
             kind: 'DAMAGE_ZONE',

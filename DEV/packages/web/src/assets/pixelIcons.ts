@@ -2081,6 +2081,23 @@ export function getClassAvatarUrl(classId: string): string | null {
   return CUSTOM_CLASS_ART_URLS[classId] || null;
 }
 
+const DUNGEON_NAME_TO_ID: Record<string, string> = {
+  影牙城堡: 'shadowfang_keep',
+  死亡矿井: 'deadmines',
+  血色修道院: 'scarlet_monastery',
+  斯坦索姆: 'stratholme',
+  祖尔格拉布: 'zulgurub',
+  巨龙之魂: 'dragon_soul',
+};
+
+/** 获取副本通关奖励保底徽章图标 URL（支持 dungeonId 或中文副本名） */
+export function getDungeonRewardIconUrl(dungeonIdOrName: string): string | null {
+  const raw = (dungeonIdOrName || '').trim();
+  if (!raw) return null;
+  const mapped = DUNGEON_NAME_TO_ID[raw] || raw.toLowerCase();
+  return CUSTOM_ART_URLS[`dungeon_${mapped}`] || CUSTOM_ART_URLS[mapped] || null;
+}
+
 /**
  * 判断指定技能/Buff 是否正在使用来自 \ART\resources\ 的外部资源图标
  */

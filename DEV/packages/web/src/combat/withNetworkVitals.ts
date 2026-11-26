@@ -6,7 +6,7 @@
  * Buff stacks: publish ABSOLUTE resulting stacks after local mutate so remotes
  * SET layers (not +1 per stale echo). stackDelta used for multi-peel removes.
  */
-import type { CombatEngine, Unit } from '@cata-raid-sim/engine';
+import { resolveCombatSkillDisplayName, type CombatEngine, type Unit } from '@cata-raid-sim/engine';
 import {
   getCombatAuthorityContext,
   publishCombatEffectAlreadyApplied,
@@ -31,6 +31,7 @@ export function withNetworkVitals<T>(engine: CombatEngine, fn: () => T): T {
   const origRemoveBuff = engine.auraManager.removeBuff.bind(engine.auraManager);
   const origResurrect = engine.resurrectUnit.bind(engine);
   const origApplyTaunt = engine.threatManager.applyTaunt.bind(engine.threatManager);
+  const origDrainHp = engine.drainHpTowardFloor.bind(engine);
 
   engine.healUnit = ((
     source: Unit,
@@ -44,6 +45,20 @@ export function withNetworkVitals<T>(engine: CombatEngine, fn: () => T): T {
     if (local) {
       origHeal(source, target, amount, isCrit, spellName);
     } else {
+      if (isUnitLocalAuthority(source.id)) {
+        const safeAmt = Math.max(0, Math.round(amount));
+        const prevHp = Math.min(target.maxHp, Math.max(0, target.hp));
+        const effectiveHeal = Math.max(0, Math.min(target.maxHp, prevHp + safeAmt) - prevHp);
+        const overheal = Math.max(0, safeAmt - effectiveHeal);
+        if (!source.combatStats) {
+          source.combatStats = { damageDealt: 0, healingDone: 0, overhealDone: 0, damageTaken: 0, interruptCount: 0 };
+        }
+        source.combatStats.healingDone = (source.combatStats.healingDone || 0) + effectiveHeal;
+        source.combatStats.overhealDone = (source.combatStats.overhealDone || 0) + overheal;
+        if (!source.combatStats.skillHealing) source.combatStats.skillHealing = {};
+        const disp = resolveCombatSkillDisplayName(spellName, '治疗术');
+        source.combatStats.skillHealing[disp] = (source.combatStats.skillHealing[disp] || 0) + effectiveHeal;
+      }
       engine.effectsManager?.addFloatingText({
         targetId: target.id,
         sourceId: source.id,
@@ -80,6 +95,17 @@ export function withNetworkVitals<T>(engine: CombatEngine, fn: () => T): T {
     if (local) {
       origDamage(source, target, amount, school, isCrit, spellName);
     } else {
+      if (isUnitLocalAuthority(source.id)) {
+        const safeAmt = Math.max(0, Math.round(amount));
+        const effective = Math.min(Math.max(0, target.hp), safeAmt);
+        if (!source.combatStats) {
+          source.combatStats = { damageDealt: 0, healingDone: 0, overhealDone: 0, damageTaken: 0, interruptCount: 0 };
+        }
+        source.combatStats.damageDealt = (source.combatStats.damageDealt || 0) + effective;
+        if (!source.combatStats.skillDamage) source.combatStats.skillDamage = {};
+        const disp = resolveCombatSkillDisplayName(spellName, '普通攻击');
+        source.combatStats.skillDamage[disp] = (source.combatStats.skillDamage[disp] || 0) + effective;
+      }
       engine.effectsManager?.addFloatingText({
         targetId: target.id,
         sourceId: source.id,
@@ -296,6 +322,43 @@ export function withNetworkVitals<T>(engine: CombatEngine, fn: () => T): T {
     else publishCombatEffectRelay(payload);
   }) as typeof engine.threatManager.applyTaunt;
 
+  engine.drainHpTowardFloor = ((
+    target: Unit,
+    amount: number,
+    floorHp = 1,
+    spellName = '窒息术'
+  ) => {
+    const local = isUnitLocalAuthority(target.id);
+    if (local) {
+      const drained = origDrainHp(target, amount, floorHp, spellName);
+      if (drained > 0) {
+        publishCombatEffectAlreadyApplied({
+          sourceId: engine.bossUnit?.id || 'boss',
+          targetId: target.id,
+          spellId: 'asphyxiate',
+          spellName,
+          kind: 'DAMAGE',
+          amount: drained,
+          isCrit: false,
+        });
+      }
+      return drained;
+    }
+    const drained = Math.min(Math.max(0, Math.round(amount)), Math.max(0, target.hp - floorHp));
+    if (drained > 0) {
+      publishCombatEffectRelay({
+        sourceId: engine.bossUnit?.id || 'boss',
+        targetId: target.id,
+        spellId: 'asphyxiate',
+        spellName,
+        kind: 'DAMAGE',
+        amount: drained,
+        isCrit: false,
+      });
+    }
+    return drained;
+  }) as CombatEngine['drainHpTowardFloor'];
+
   try {
     return fn();
   } finally {
@@ -305,6 +368,7 @@ export function withNetworkVitals<T>(engine: CombatEngine, fn: () => T): T {
     engine.auraManager.removeBuff = origRemoveBuff;
     engine.resurrectUnit = origResurrect;
     engine.threatManager.applyTaunt = origApplyTaunt;
+    engine.drainHpTowardFloor = origDrainHp;
   }
 }
 

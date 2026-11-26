@@ -1,5 +1,6 @@
 import type { BossEncounterModule, BossSkill } from '../core/BossTypes.js';
 import { spawnCombatUnit } from '../../engine/UnitSpawn.js';
+import { pickWeightedBossTarget } from '../core/BossTargetPicker.js';
 
 export const SCARLET_TRAINEE_SUMMON = 'herod_scarlet_trainee';
 
@@ -78,7 +79,7 @@ export const HerodEncounter: BossEncounterModule = {
         execute: (boss, engine) => {
           if ((ai.herodWhirlwindMs || 0) > 0) return;
           const pool = living(engine).filter((u: any) => u.role !== 'TANK');
-          const t = pool[Math.floor(Math.random() * Math.max(1, pool.length))];
+          const t = pickWeightedBossTarget(pool);
           if (t) engine.dealDamage(boss, t, 16_000, 'PHYSICAL', false, '冲锋');
         },
       },
@@ -127,7 +128,7 @@ export const HerodEncounter: BossEncounterModule = {
       for (let i = 0; i < 8; i++) {
         spawnCombatUnit(engine, {
           id: `trainee_${Date.now()}_${i}`,
-          name: `血色学徒 ${i + 1}`,
+          name: '血色学徒',
           unitKind: 'ADD',
           role: 'ENEMY',
           classId: 'NPC',

@@ -1,6 +1,7 @@
 import type { BossEncounterModule, BossSkill } from '../core/BossTypes.js';
 import type { CombatEngine } from '../../engine/CombatEngine.js';
 import type { Unit } from '../../types.js';
+import { pickWeightedBossTarget } from '../core/BossTargetPicker.js';
 
 export type CookieAiState = {
   cookieFightMs?: number;
@@ -56,7 +57,7 @@ export const CookieEncounter: BossEncounterModule = {
         execute: (boss, engine) => {
           const fri = living(engine);
           for (let i = 0; i < 2; i++) {
-            const t = fri[Math.floor(Math.random() * Math.max(1, fri.length))];
+            const t = pickWeightedBossTarget(fri);
             const pos = t?.position || { x: 400 + i * 40, y: 220 };
             const isGood = Math.random() < 0.4;
             if (isGood) {

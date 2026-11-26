@@ -4,6 +4,7 @@ import type { Unit } from '../../types.js';
 
 export const CRUSH_ARMOR_SPELL_ID = 'crush_armor';
 export const RESONATING_CRYSTAL_SPELL_ID = 'resonating_crystal';
+export const RESONATING_CRYSTAL_LINK_ID = 'resonating_crystal_link';
 export const MORCHOK_PILLAR_SPELL_ID = 'morchok_pillar';
 
 export type MorchokCrystal = {
@@ -119,7 +120,7 @@ export const MorchokEncounter: BossEncounterModule = {
           voiceText: '近距分摊',
           severity: 'WARN',
           roleHint: 'ALL',
-          preWarnMs: 3000,
+          preWarnMs: 0,
         },
         execute: (boss, engine) => {
           if (ai.morchokPhase === 'black_blood') return;
@@ -188,6 +189,23 @@ export const MorchokEncounter: BossEncounterModule = {
             remainingMs: 12_000,
           });
           for (const id of linked) {
+            const targetUnit = living.find(x => x.id === id);
+            if (targetUnit) {
+              engine.applyBuff(targetUnit, {
+                id: `rc_link_${Date.now()}_${id}`,
+                spellId: RESONATING_CRYSTAL_LINK_ID,
+                name: '共鸣水晶连线',
+                kind: 'DEBUFF',
+                tags: ['DEBUFF'],
+                sourceUnitId: boss.id,
+                targetUnitId: id,
+                durationMs: 12_000,
+                remainingMs: 12_000,
+                stacks: 1,
+                maxStacks: 1,
+                school: 'NATURE',
+              });
+            }
             engine.effectsManager?.addFloatingText({
               targetId: id,
               text: '💎 共鸣水晶连线！靠近吸收！',
@@ -265,7 +283,7 @@ export const MorchokEncounter: BossEncounterModule = {
           voiceText: '躲柱子后',
           severity: 'CRITICAL',
           roleHint: 'ALL',
-          preWarnMs: 3500,
+          preWarnMs: 0,
         },
         execute: (boss, engine) => {
           // 进入黑血阶段 ~12s
@@ -336,6 +354,7 @@ export const MorchokEncounter: BossEncounterModule = {
       for (const id of c.linkedIds) {
         const u = living.find(x => x.id === id);
         if (!u) continue;
+        u.buffs = (u.buffs || []).filter(b => b.spellId !== RESONATING_CRYSTAL_LINK_ID);
         const d = dist(u.position || { x: 0, y: 0 }, c);
         const amt = crystalExplosionDamage(d, baseFar);
         engine.dealDamage(boss, u, amt, 'NATURE', false, '共鸣水晶');

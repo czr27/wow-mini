@@ -1,4 +1,5 @@
 import type { BossEncounterModule, BossSkill } from '../core/BossTypes.js';
+import { pickWeightedBossTarget } from '../core/BossTargetPicker.js';
 
 type WaldenAiState = {
   waldenLastPos?: Map<string, { x: number; y: number }>;
@@ -94,7 +95,7 @@ export const WaldenEncounter: BossEncounterModule = {
         description: '在随机目标脚下落下冰霜碎裂圈，踩中持续受伤',
         execute: (boss, engine) => {
           const living = engine.friendlyUnits.filter(u => u.alive ?? u.isAlive);
-          const target = living[Math.floor(Math.random() * living.length)] || engine.friendlyUnits[0];
+          const target = pickWeightedBossTarget(living) || engine.friendlyUnits[0];
           const pos = target?.position || { x: 420, y: 220 };
           engine.effectsManager?.addGroundEffect({
             kind: 'DAMAGE_ZONE',

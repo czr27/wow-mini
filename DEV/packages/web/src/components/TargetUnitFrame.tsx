@@ -207,7 +207,6 @@ export const TargetUnitFrame: React.FC<TargetUnitFrameProps> = ({
             </span>
             <span
               className="text-[11px] font-black text-white tracking-wide truncate max-w-[110px]"
-              title={`[单击切目标 | Shift+点击设为焦点] ${unit.name}`}
               style={{
                 textShadow:
                   '0 0 3px #000, 0 1px 2px #000, -1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000',
@@ -221,7 +220,6 @@ export const TargetUnitFrame: React.FC<TargetUnitFrameProps> = ({
             <button
               onClick={() => setIsLocked(!isLocked)}
               className="text-[10px] text-gray-400 hover:text-amber-300 px-0.5 rounded hover:bg-black/40 transition"
-              title={isLocked ? '已锁定位置 (点击解锁)' : '未锁定位置 (按住拖拽)'}
             >
               {isLocked ? '🔒' : '🔓'}
             </button>
@@ -232,7 +230,6 @@ export const TargetUnitFrame: React.FC<TargetUnitFrameProps> = ({
                   onClearTarget();
                 }}
                 className="text-[10px] text-gray-400 hover:text-red-400 px-1 rounded hover:bg-black/40 transition font-bold"
-                title="取消选中目标"
               >
                 ✕
               </button>
@@ -246,7 +243,6 @@ export const TargetUnitFrame: React.FC<TargetUnitFrameProps> = ({
           <div className="relative flex-shrink-0">
             <div
               className="w-10 h-10 rounded-full border border-[#d4af37] bg-black overflow-hidden relative shadow cursor-pointer hover:border-amber-300 transition"
-              title={`[单击切目标 | Shift+点击设为焦点] ${unit.name}`}
             >
               {isBoss ? (
                 <div className="w-full h-full flex items-center justify-center bg-[#250508] text-xl">

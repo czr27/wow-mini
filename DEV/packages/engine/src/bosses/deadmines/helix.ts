@@ -2,6 +2,7 @@ import type { BossEncounterModule, BossSkill } from '../core/BossTypes.js';
 import type { CombatEngine } from '../../engine/CombatEngine.js';
 import type { Unit } from '../../types.js';
 import { spawnCombatUnit } from '../../engine/UnitSpawn.js';
+import { pickWeightedBossTarget } from '../core/BossTargetPicker.js';
 
 export const OAF_SUMMON = 'helix_lumbering_oaf';
 
@@ -40,7 +41,7 @@ export const HelixEncounter: BossEncounterModule = {
         description: '脚下铺粘性炸弹，定时爆炸',
         execute: (boss, engine) => {
           const fri = living(engine);
-          const t = fri[Math.floor(Math.random() * Math.max(1, fri.length))];
+          const t = pickWeightedBossTarget(fri);
           const pos = t?.position || { x: 400, y: 220 };
           engine.effectsManager?.addGroundEffect({
             kind: 'DAMAGE_ZONE',
@@ -74,7 +75,7 @@ export const HelixEncounter: BossEncounterModule = {
         },
         execute: (boss, engine) => {
           const pool = living(engine).filter(u => u.role !== 'TANK');
-          const t = pool[Math.floor(Math.random() * Math.max(1, pool.length))] || living(engine)[0];
+          const t = pickWeightedBossTarget(pool) || pickWeightedBossTarget(living(engine));
           if (!t) return;
           engine.applyBuff(t, {
             id: `chest_bomb_${Date.now()}`,
@@ -112,7 +113,7 @@ export const HelixEncounter: BossEncounterModule = {
         execute: (boss, engine) => {
           if (ai.helixPhase === 'leap') return;
           const pool = living(engine);
-          const t = pool[Math.floor(Math.random() * Math.max(1, pool.length))];
+          const t = pickWeightedBossTarget(pool);
           if (t) engine.dealDamage(boss, t, 30_000, 'PHYSICAL', true, '木虱砸击');
         },
       },
@@ -174,7 +175,7 @@ export const HelixEncounter: BossEncounterModule = {
           for (const o of living(engine)) {
             engine.dealDamage(boss, o, 20_000, 'FIRE', true, '胸弹爆炸');
           }
-          u.buffs = u.buffs.filter(b => b.spellId !== 'chest_bomb');
+          engine.auraManager.removeBuff(u, 'chest_bomb');
           engine.effectsManager?.addFloatingText({
             targetId: u.id,
             text: '💥 胸弹波及全团！',
@@ -207,7 +208,7 @@ export const HelixEncounter: BossEncounterModule = {
           u.buffs = (u.buffs || []).filter(b => b.spellId !== 'helix_leap');
         }
         const pool = living(engine);
-        const t = pool[Math.floor(Math.random() * Math.max(1, pool.length))];
+        const t = pickWeightedBossTarget(pool);
         if (!t) return;
         ai.helixMountedId = t.id;
         engine.applyBuff(t, {

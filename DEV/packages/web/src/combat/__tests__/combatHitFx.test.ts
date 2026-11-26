@@ -458,4 +458,73 @@ describe('combatHitFx', () => {
     });
     assert.equal(state.snowBursts.length, 0);
   });
+
+  it('普通攻击生效（含远程近身普攻与小怪普攻）均生成突刺特效', () => {
+    const mage = unit({
+      id: 'm1',
+      name: '法',
+      classId: 'MAGE',
+      role: 'DPS',
+      position: { x: 112, y: 100 },
+    });
+    const add = unit({
+      id: 'add1',
+      name: '狼人卫兵',
+      classId: 'BOSS',
+      role: 'ENEMY',
+      unitKind: 'ADD',
+      position: { x: 135, y: 100 },
+    });
+    const boss = unit({
+      id: 'boss',
+      name: 'B',
+      classId: 'BOSS',
+      role: 'ENEMY',
+      unitKind: 'BOSS',
+      position: { x: 130, y: 100 },
+    });
+    const map = new Map<string, Unit>([
+      [mage.id, mage],
+      [add.id, add],
+      [boss.id, boss],
+    ]);
+    const state = createHitFxState();
+    const seen = new Set<string>();
+    const now = 6000;
+
+    ingestCombatActionsAsHitFx(state, {
+      actions: [
+        {
+          id: 'auto_mage',
+          atMs: now,
+          actorId: mage.id,
+          spellId: 'auto_attack',
+          spellName: '普通攻击',
+          kind: 'INSTANT',
+          targetId: boss.id,
+        },
+        {
+          id: 'auto_add',
+          atMs: now + 10,
+          actorId: add.id,
+          spellId: 'auto_attack',
+          spellName: '狼人卫兵 攻击',
+          kind: 'INSTANT',
+          targetId: mage.id,
+          visualTone: 'ENEMY',
+        },
+      ],
+      unitsById: map,
+      seenIds: seen,
+      now,
+    });
+
+    const mageAuto = state.slashes.filter((s) => s.id.startsWith('auto_mage'));
+    const addAuto = state.slashes.filter((s) => s.id.startsWith('auto_add'));
+    assert.equal(mageAuto.length, HIT_FX_IMPACT_COUNT);
+    assert.equal(mageAuto[0].mode, 'thrust');
+    assert.equal(addAuto.length, HIT_FX_IMPACT_COUNT);
+    assert.equal(addAuto[0].mode, 'thrust');
+    assert.equal(addAuto[0].side, 'ENEMY');
+  });
 });

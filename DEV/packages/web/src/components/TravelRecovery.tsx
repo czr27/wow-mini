@@ -173,15 +173,7 @@ export const TravelRecovery: React.FC<Props> = ({
           'linear-gradient(135deg, rgba(8,20,32,0.94) 0%, rgba(12,28,40,0.92) 55%, rgba(18,24,20,0.9) 100%)',
       }}
     >
-      <div className="px-3 pt-2.5 pb-2 flex items-center gap-2.5">
-        {/* Status badge (fixed auto-march, no manual control in maze) */}
-        <div className="shrink-0 h-8 flex items-center gap-1.5 rounded-xl px-3 border bg-cyan-500/15 border-cyan-400/45 text-cyan-100 shadow-[0_0_16px_rgba(34,211,238,0.12)]">
-          <span className="inline-block w-1.5 h-1.5 rounded-full bg-cyan-300 animate-pulse" />
-          <span className="text-[11px] font-bold tracking-wide leading-none whitespace-nowrap">
-            队伍行军
-          </span>
-        </div>
-
+      <div className="px-3.5 pt-2.5 pb-2 flex items-center gap-3">
         {/* March destination + progress */}
         <div className="flex-1 min-w-0">
           <div className="flex items-baseline justify-between gap-2 mb-1">
@@ -203,7 +195,7 @@ export const TravelRecovery: React.FC<Props> = ({
             />
           </div>
           <div className="mt-1 text-[9px] text-slate-500 truncate">
-            系统自动推进中 · 迷宫阶段禁止自主移动（可右键旋转/俯仰视角）
+            自动赶路中（Buff时间）
           </div>
         </div>
 
@@ -218,7 +210,6 @@ export const TravelRecovery: React.FC<Props> = ({
           <button
             type="button"
             onClick={onFastForward}
-            title={`发起跳过（联机需多数同意）；单机立即开启与【${targetBossName}】的战斗`}
             className="group relative h-8 flex items-center px-3.5 rounded-xl text-[11px] font-extrabold tracking-wide leading-none text-[#1a1205] border border-amber-300/70 transition-transform hover:scale-[1.03] active:scale-[0.97] shadow-[0_4px_18px_rgba(245,158,11,0.35)]"
             style={{
               background: 'linear-gradient(160deg, #fbbf24 0%, #f59e0b 48%, #d97706 100%)',

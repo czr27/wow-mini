@@ -2,6 +2,7 @@ import type { BossEncounterModule, BossSkill } from '../core/BossTypes.js';
 import type { CombatEngine } from '../../engine/CombatEngine.js';
 import type { Unit } from '../../types.js';
 import { spawnCombatUnit } from '../../engine/UnitSpawn.js';
+import { pickWeightedBossTargets } from '../core/BossTargetPicker.js';
 
 export const ICE_TOMB_SPELL_ID = 'ice_tomb';
 export const ICE_TOMB_ADD_SUMMON = 'hagara_ice_tomb';
@@ -55,7 +56,7 @@ function enterFrostPhase(boss: Unit, engine: CombatEngine, ai: HagaraAiState) {
   const living = livingFriendlies(engine);
   const nonTank = living.filter(u => u.role !== 'TANK');
   const pool = nonTank.length >= 2 ? nonTank : living;
-  const tombs = [...pool].sort(() => Math.random() - 0.5).slice(0, Math.min(2, pool.length));
+  const tombs = pickWeightedBossTargets(pool, Math.min(2, pool.length));
 
   for (const u of tombs) {
     engine.applyBuff(u, {
@@ -135,7 +136,7 @@ function enterLightningPhase(boss: Unit, engine: CombatEngine, ai: HagaraAiState
   for (let i = 0; i < offsets.length; i++) {
     spawnCombatUnit(engine, {
       id: `crystal_${Date.now()}_${i}`,
-      name: `传导水晶 ${i + 1}`,
+      name: '传导水晶',
       unitKind: 'ADD',
       role: 'ENEMY',
       classId: 'NPC',

@@ -13,6 +13,8 @@ import {
   type PlayerInfo,
   type PlayerInputPayload,
   type RoomActionPayload,
+  type RoomChatMessage,
+  type RoomChatSendPayload,
   type RoomCreatePayload,
   type VoteCastPayload,
   type VoteStartPayload,
@@ -953,6 +955,58 @@ export class RoomWsHub {
         break;
       }
 
+      case 'ROOM_CHAT': {
+        const roomId = msg.roomId || session.roomId;
+        if (!roomId || session.roomId !== roomId) break;
+        const room = this.roomManager.getRoom(roomId);
+        if (!room) break;
+        const payload = msg.payload as RoomChatSendPayload | undefined;
+        const text = typeof payload?.text === 'string' ? payload.text.trim().slice(0, 200) : '';
+        if (!text) break;
+
+        const now = Date.now();
+        const isBoss = payload?.senderKind === 'BOSS';
+        if (isBoss) {
+          // Only authoritative host can broadcast Boss yells
+          if (room.hostId !== session.playerId) break;
+          const bossMsg: RoomChatMessage = {
+            id: `chat_${now}_${Math.random().toString(36).slice(2, 7)}`,
+            roomId,
+            senderId: payload?.senderId || 'boss',
+            senderName: payload?.senderName || '首领',
+            senderKind: 'BOSS',
+            text,
+            atMs: now,
+          };
+          this.broadcastRoom(roomId, {
+            type: 'ROOM_CHAT',
+            roomId,
+            timeMs: now,
+            payload: bossMsg,
+          });
+          break;
+        }
+
+        const member = room.members.find((m) => m.id === session.playerId && !m.isAi);
+        const chatMsg: RoomChatMessage = {
+          id: `chat_${now}_${Math.random().toString(36).slice(2, 7)}`,
+          roomId,
+          senderId: session.playerId,
+          senderName: member?.name || session.playerName || session.username,
+          senderKind: 'PLAYER',
+          classId: (member?.classId || session.classId) as RoomChatMessage['classId'],
+          text,
+          atMs: now,
+        };
+        this.broadcastRoom(roomId, {
+          type: 'ROOM_CHAT',
+          roomId,
+          timeMs: now,
+          payload: chatMsg,
+        });
+        break;
+      }
+
       case 'VOTE_START': {
         const roomId = msg.roomId || session.roomId;
         if (!roomId) break;
@@ -1094,6 +1148,24 @@ export class RoomWsHub {
         const room = this.roomManager.getRoom(msg.roomId);
         if (!room || room.hostId !== session.playerId) break;
         this.broadcastRoom(msg.roomId, msg, session.playerId);
+        break;
+      }
+
+      case 'GM_COMMAND': {
+        if (!msg.roomId && session.roomId) msg.roomId = session.roomId;
+        if (!msg.roomId || session.roomId !== msg.roomId) break;
+        const gmRoom = this.roomManager.getRoom(msg.roomId);
+        if (!gmRoom) break;
+        const combatSession = this.combatSessions.get(msg.roomId);
+        if (combatSession && msg.payload) {
+          combatSession.handleGmCommand(msg.payload as any);
+        }
+        this.broadcastRoom(msg.roomId, {
+          type: 'GM_COMMAND',
+          roomId: msg.roomId,
+          timeMs: Date.now(),
+          payload: msg.payload,
+        });
         break;
       }
 

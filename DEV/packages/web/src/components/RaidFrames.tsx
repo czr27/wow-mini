@@ -624,7 +624,6 @@ export const RaidFrames: React.FC<Props> = ({
           <button
             onClick={() => setIsLocked(!isLocked)}
             className="text-[10px] text-gray-400 hover:text-amber-300 px-1 py-0.5 rounded hover:bg-white/10 transition"
-            title={isLocked ? '团队面板已锁定 (点击解锁)' : '团队面板未锁定 (按住把手拖拽)'}
           >
             {isLocked ? '🔒' : '🔓'}
           </button>
@@ -654,7 +653,6 @@ export const RaidFrames: React.FC<Props> = ({
                       ? 'text-[#f3d178] font-bold bg-amber-500/15'
                       : 'text-gray-400 font-normal hover:text-[#f3d178]/80'
                   }`}
-                  title={`选择小队 ${squadIdx + 1}（Alt+1~5 对应该小队第1~5人）`}
                 >
                   小队 {squadIdx + 1}
                 </button>
@@ -733,18 +731,21 @@ export const RaidFrames: React.FC<Props> = ({
               let activeDispelType: DispelType | null = null;
               for (const d of unitDebuffs) {
                 const meta = DEBUFF_REGISTRY[d.spellId];
-                if (meta?.dispelType && (playerDispelCapabilities.length === 0 || playerDispelCapabilities.includes(meta.dispelType))) {
-                  activeDispelType = meta.dispelType;
+                const dType = (meta?.dispelType || d.dispelType) as DispelType | undefined;
+                if (dType && playerDispelCapabilities.includes(dType)) {
+                  activeDispelType = dType;
                   break;
                 }
               }
 
-              // 默认将可驱散的 Debuff 排在最前保证可见
+              // 默认将自己可驱散的 Debuff 排在最前保证可见
               unitDebuffs.sort((a, b) => {
                 const metaA = DEBUFF_REGISTRY[a.spellId];
                 const metaB = DEBUFF_REGISTRY[b.spellId];
-                const dispellableA = (metaA?.dispelType && (playerDispelCapabilities.length === 0 || playerDispelCapabilities.includes(metaA.dispelType))) ? 1 : 0;
-                const dispellableB = (metaB?.dispelType && (playerDispelCapabilities.length === 0 || playerDispelCapabilities.includes(metaB.dispelType))) ? 1 : 0;
+                const typeA = (metaA?.dispelType || a.dispelType) as DispelType | undefined;
+                const typeB = (metaB?.dispelType || b.dispelType) as DispelType | undefined;
+                const dispellableA = (typeA && playerDispelCapabilities.includes(typeA)) ? 1 : 0;
+                const dispellableB = (typeB && playerDispelCapabilities.includes(typeB)) ? 1 : 0;
                 if (dispellableA !== dispellableB) {
                   return dispellableB - dispellableA;
                 }
@@ -839,7 +840,6 @@ export const RaidFrames: React.FC<Props> = ({
                         backgroundImage:
                           'repeating-linear-gradient(45deg, transparent, transparent 4px, rgba(255,255,255,0.2) 4px, rgba(255,255,255,0.2) 8px)',
                       }}
-                      title={`吸收护盾: ${absorbAmount}`}
                     />
                   )}
 
@@ -858,7 +858,6 @@ export const RaidFrames: React.FC<Props> = ({
                           backgroundImage: 'linear-gradient(to right, rgba(110, 231, 183, 0.30), rgba(16, 185, 129, 0.25))',
                           boxShadow: '0 0 6px rgba(52, 211, 153, 0.4)',
                         }}
-                        title={`[施法预治疗] ${cast.casterName} - ${cast.spellName}: +${Math.round(cast.amount)}`}
                       />
                     );
                   })}
@@ -875,7 +874,6 @@ export const RaidFrames: React.FC<Props> = ({
                           'repeating-linear-gradient(45deg, transparent, transparent 3px, rgba(255, 255, 255, 0.16) 3px, rgba(255, 255, 255, 0.16) 6px)',
                         boxShadow: '0 0 4px rgba(56, 189, 248, 0.5)',
                       }}
-                      title={`[HoT 下1秒预期]: +${Math.round(hotExpectedVal)} (${nextSecHot.details.map(d => `${d.name}+${d.amount}`).join(', ')})`}
                     />
                   )}
 
@@ -921,7 +919,6 @@ export const RaidFrames: React.FC<Props> = ({
                           e.stopPropagation();
                           if (onQuickDispel) onQuickDispel(unit.id);
                         }}
-                        title="[单击或右击] 快捷驱散减益"
                       >
                         <span>✨</span>
                         <span>驱散</span>
@@ -949,7 +946,6 @@ export const RaidFrames: React.FC<Props> = ({
                         {totalExpectedIncoming > 0 && (
                           <span
                             className="text-emerald-300 font-extrabold bg-black/85 px-0.5 rounded text-[7px] border border-emerald-500/40"
-                            title={`预期进血: +${Math.round(totalExpectedIncoming)} (施法: +${Math.round(totalCastHealVal)} / HoT下1秒: +${Math.round(hotExpectedVal)})`}
                           >
                             +{totalExpectedIncoming >= 1000 ? `${(totalExpectedIncoming / 1000).toFixed(totalExpectedIncoming >= 10000 ? 0 : 1)}k` : `${Math.round(totalExpectedIncoming)}`}
                           </span>
@@ -1012,9 +1008,10 @@ export const RaidFrames: React.FC<Props> = ({
                         const elapsedRatio = Math.max(0, Math.min(1, (duration - remaining) / duration));
                         const shadowDeg = Math.round(elapsedRatio * 360);
 
-                        const isDebuffDispellable = playerDispelCapabilities.length > 0
-                          ? Boolean(meta.dispelType && playerDispelCapabilities.includes(meta.dispelType))
-                          : Boolean(meta.dispelType);
+                        const debuffDispelType = (meta.dispelType || b.dispelType) as DispelType | undefined;
+                        const canSelfDispel = Boolean(
+                          debuffDispelType && playerDispelCapabilities.includes(debuffDispelType)
+                        );
 
                         const iconSvg = SPELL_ICONS[b.spellId];
 
@@ -1031,11 +1028,10 @@ export const RaidFrames: React.FC<Props> = ({
                               if (onQuickDispel) onQuickDispel(unit.id);
                             }}
                             className={`w-[14px] h-[14px] rounded relative overflow-hidden flex items-center justify-center bg-black/90 flex-shrink-0 shadow cursor-pointer hover:scale-110 transition ${
-                              isDebuffDispellable
-                                ? 'ring-2 ring-yellow-400 shadow-[0_0_8px_rgba(250,204,21,0.95)] animate-pulse'
+                              canSelfDispel
+                                ? 'ring-[1.5px] ring-white shadow-[0_0_6px_rgba(255,255,255,0.95)]'
                                 : ''
                             }`}
-                            title={`[减益] ${b.name} (${meta.dispelType ? `可驱散: ${meta.dispelType}` : '无法驱散'}) 剩余 ${Math.ceil(remaining / 1000)}s - 单击或右击快捷驱散`}
                           >
                             {iconSvg ? (
                               <div
@@ -1045,7 +1041,7 @@ export const RaidFrames: React.FC<Props> = ({
                             ) : (
                               <span
                                 className="text-[7.5px] font-black z-10 select-none drop-shadow pointer-events-none"
-                                style={{ color: isDebuffDispellable ? '#FDE047' : meta.color }}
+                                style={{ color: canSelfDispel ? '#FFFFFF' : meta.color }}
                               >
                                 {meta.label}
                               </span>
@@ -1057,10 +1053,6 @@ export const RaidFrames: React.FC<Props> = ({
                                 background: `conic-gradient(rgba(0, 0, 0, 0.78) 0deg, rgba(0, 0, 0, 0.78) ${shadowDeg}deg, transparent ${shadowDeg}deg, transparent 360deg)`,
                               }}
                             />
-                            {/* Dispellable Sparkle Indicator */}
-                            {isDebuffDispellable && (
-                              <div className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-yellow-400 rounded-full shadow pointer-events-none ring-1 ring-yellow-200 z-30" />
-                            )}
                             {b.stacks > 1 && (
                               <span className="absolute bottom-0 right-0 bg-red-950/95 text-red-200 text-[9px] font-black font-mono px-0.5 rounded-tl leading-none z-30 pointer-events-none drop-shadow border-t border-l border-red-500/50 shadow-sm">
                                 {b.stacks}
@@ -1092,9 +1084,6 @@ export const RaidFrames: React.FC<Props> = ({
                             key={b.id}
                             className={`w-[14px] h-[14px] rounded relative overflow-hidden flex items-center justify-center bg-black/90 flex-shrink-0 shadow transition-all ${
                               isHotTickingSoon ? 'ring-1 ring-cyan-400 shadow-[0_0_8px_rgba(56,189,248,0.85)]' : ''
-                            }`}
-                            title={`[增益] ${b.name} (剩余 ${Math.ceil(remaining / 1000)}s / 共${b.stacks}层)${
-                              isHotTickingSoon ? ' - ⚡下1秒即将生效治疗' : ''
                             }`}
                           >
                             {iconSvg ? (
@@ -1159,7 +1148,6 @@ export const RaidFrames: React.FC<Props> = ({
       <div
         onMouseDown={handleResizeStart}
         className="absolute bottom-0 right-0 w-3.5 h-3.5 cursor-se-resize flex items-end justify-end p-0.5 z-40 group select-none"
-        title="拖拽右下角拉伸调整团队框架大小（按账号自动记忆）"
       >
         <svg className="w-2.5 h-2.5 text-gray-500 group-hover:text-amber-400 transition" viewBox="0 0 6 6" fill="currentColor">
           <circle cx="5" cy="5" r="0.75" />
@@ -1201,7 +1189,6 @@ export const RaidFrames: React.FC<Props> = ({
                   setLocalMarks(prev => ({ ...prev, [activeMarkMenu.unitName]: mark }));
                   setActiveMarkMenu(null);
                 }}
-                title={`标记为 ${mark}`}
               >
                 {mark}
               </button>

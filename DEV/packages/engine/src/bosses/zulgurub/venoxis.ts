@@ -2,6 +2,7 @@ import type { BossEncounterModule, BossSkill } from '../core/BossTypes.js';
 import type { CombatEngine } from '../../engine/CombatEngine.js';
 import type { Unit } from '../../types.js';
 import { spawnCombatUnit } from '../../engine/UnitSpawn.js';
+import { pickWeightedBossTarget, pickWeightedBossTargets } from '../core/BossTargetPicker.js';
 
 export const TOXIC_LINK_ID = 'toxic_link';
 export const BLOODVENOM_SUMMON = 'venoxis_bloodvenom';
@@ -10,6 +11,7 @@ export type VenoxisAiState = {
   venoxisFightMs?: number;
   venoxisPhase?: 'human' | 'snake' | 'withdrawal';
   venoxisLinkAcc?: number;
+  venoxisLinkGraceMs?: number;
   venoxisPoolAcc?: number;
   venoxisWithdrawalMs?: number;
   venoxisWithdrawalDone?: boolean;
@@ -77,7 +79,7 @@ export const VenoxisEncounter: BossEncounterModule = {
         execute: (boss, engine) => {
           if (ai.venoxisPhase === 'withdrawal') return;
           const pool = living(engine).filter(u => u.role !== 'TANK');
-          const picks = [...pool].sort(() => Math.random() - 0.5).slice(0, 2);
+          const picks = pickWeightedBossTargets(pool, 2);
           if (picks.length < 2) return;
           for (const u of picks) {
             engine.applyBuff(u, {
@@ -133,17 +135,17 @@ export const VenoxisEncounter: BossEncounterModule = {
       const d = dist(linked[0].position || {}, linked[1].position || {});
       if (d >= 80) {
         for (const u of linked) {
-          u.buffs = (u.buffs || []).filter(b => b.spellId !== TOXIC_LINK_ID);
+          engine.auraManager.removeBuff(u, TOXIC_LINK_ID);
           engine.effectsManager?.addFloatingText({
             targetId: u.id,
-            text: '链接已扯断',
+            text: '⚡ 毒性链接已扯断！',
             category: 'STATUS',
-            isCrit: false,
+            isCrit: true,
           });
         }
       } else if (Math.floor((ai.venoxisFightMs || 0) / 1000) !== Math.floor(((ai.venoxisFightMs || 0) - deltaMs) / 1000)) {
         for (const u of linked) {
-          engine.dealDamage(boss, u, 8000, 'NATURE', false, '毒性链接');
+          engine.dealDamage(boss, u, 4500, 'NATURE', false, '毒性链接');
         }
       }
     }
@@ -164,7 +166,7 @@ export const VenoxisEncounter: BossEncounterModule = {
       if ((ai.venoxisPoolAcc || 0) >= 6000) {
         ai.venoxisPoolAcc = 0;
         const fri = living(engine);
-        const t = fri[Math.floor(Math.random() * Math.max(1, fri.length))];
+        const t = pickWeightedBossTarget(fri);
         const pos = t?.position || { x: 400, y: 220 };
         engine.effectsManager?.addGroundEffect({
           kind: 'DAMAGE_ZONE',
@@ -189,7 +191,7 @@ export const VenoxisEncounter: BossEncounterModule = {
         for (let i = 0; i < 3; i++) {
           spawnCombatUnit(engine, {
             id: `bv_${Date.now()}_${i}`,
-            name: `血毒触须 ${i + 1}`,
+            name: '血毒触须',
             unitKind: 'ADD',
             role: 'ENEMY',
             classId: 'NPC',
@@ -230,7 +232,7 @@ export const VenoxisEncounter: BossEncounterModule = {
       );
       if (tents.length > 0 && Math.floor((ai.venoxisFightMs || 0) / 1000) !== Math.floor(((ai.venoxisFightMs || 0) - deltaMs) / 1000)) {
         for (const u of living(engine)) {
-          engine.dealDamage(boss, u, 6000 * tents.length, 'NATURE', false, '血毒触须');
+          engine.dealDamage(boss, u, 2500 * tents.length, 'NATURE', false, '血毒触须');
         }
       }
       if ((ai.venoxisWithdrawalMs || 0) <= 0) {

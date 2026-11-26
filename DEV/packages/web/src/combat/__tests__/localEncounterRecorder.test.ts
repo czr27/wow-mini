@@ -181,4 +181,55 @@ describe('localEncounterRecorder', () => {
     assert.ok(enc.length >= rsm.dungeon.bosses.length);
     assert.ok(enc.every((e) => e.result === 'KILL'));
   });
+
+  it('WIPE 时合并房主灭团战报并兜底记录 Boss 剩余血量百分比', () => {
+    const engine = new CombatEngine();
+    const reportMgr = new ReportManager();
+    const rsm = new RunStateMachine(SHADOWFANG_KEEP_CONFIG, engine, reportMgr);
+    rsm.phase = 'BOSS_COMBAT';
+    rsm.currentBossIndex = 0;
+
+    const boss: any = {
+      id: 'boss_1',
+      name: '亚什布里男爵',
+      classId: 'BOSS',
+      role: 'ENEMY',
+      isBoss: true,
+      isPlayer: false,
+      isAlive: true,
+      alive: true,
+      hp: 37500,
+      maxHp: 100000,
+      position: { x: 540, y: 200 },
+      stats: { attackPower: 0, spellPower: 0, critChance: 0, haste: 0, armor: 0, dodge: 0, parry: 0, block: 0, spellResist: 0 },
+      buffs: [],
+    };
+    engine.addUnit(boss);
+    engine.addUnit(makeFriend('me', 0));
+
+    const rec = createLocalEncounterRecorder();
+    noteGuestCombatSnapshot({ state: rec, rsm, engine, nowMs: 1000 });
+
+    rsm.phase = 'WIPE_VOTE';
+    noteGuestCombatSnapshot({ state: rec, rsm, engine, nowMs: 5000 });
+    assert.equal(rsm.latestWipeReport?.result, 'WIPE');
+    assert.equal(rsm.latestWipeReport?.bossRemainingHpPct, 37.5);
+
+    mergeHostEncounterReports(rsm, [
+      {
+        bossIndex: 0,
+        bossId: 'boss_1',
+        bossName: '亚什布里男爵',
+        result: 'WIPE',
+        durationSec: 12,
+        wipesBeforeKill: 1,
+        bossRemainingHpPct: 37.5,
+        wipeCause: '倒团原因',
+        unitStats: [],
+      },
+    ]);
+    assert.equal(rsm.latestWipeReport?.bossRemainingHpPct, 37.5);
+    assert.equal(rsm.latestWipeReport?.wipeCause, '倒团原因');
+    assert.equal(rsm.encounterReports.filter((e) => e.result === 'WIPE').length, 1);
+  });
 });

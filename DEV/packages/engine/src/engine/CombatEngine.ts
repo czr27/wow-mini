@@ -397,6 +397,57 @@ export const SPELL_ID_TO_NAME: Record<string, string> = {
 
 type EventHandler = (event: CombatEvent) => void;
 
+export interface UnitCrowdControlInfo {
+  isControlled: boolean;
+  kind: 'STUN' | 'SILENCE' | null;
+  spellId?: string;
+  spellName?: string;
+  remainingMs?: number;
+  reason: string;
+}
+
+/**
+ * 统一判定单位当前是否处于硬控/沉默状态（窒息术、冰霜之墓、变形术、恐惧、心控、制裁之锤、沉默等）。
+ */
+export function getUnitCrowdControlInfo(
+  unit: { buffs?: Buff[] } | null | undefined
+): UnitCrowdControlInfo {
+  if (!unit?.buffs?.length) {
+    return { isControlled: false, kind: null, reason: '' };
+  }
+  const stunBuff = unit.buffs.find(
+    (b) =>
+      b.spellId === 'asphyxiate' ||
+      b.spellId === 'ice_tomb' ||
+      (b.tags as string[] | undefined)?.includes('STUN') ||
+      (b.tags as string[] | undefined)?.includes('CC')
+  );
+  if (stunBuff) {
+    return {
+      isControlled: true,
+      kind: 'STUN',
+      spellId: stunBuff.spellId,
+      spellName: stunBuff.name,
+      remainingMs: stunBuff.remainingMs,
+      reason: `${stunBuff.name || '昏迷'}中，无法行动！`,
+    };
+  }
+  const silenceBuff = unit.buffs.find((b) =>
+    (b.tags as string[] | undefined)?.includes('SILENCE')
+  );
+  if (silenceBuff) {
+    return {
+      isControlled: true,
+      kind: 'SILENCE',
+      spellId: silenceBuff.spellId,
+      spellName: silenceBuff.name,
+      remainingMs: silenceBuff.remainingMs,
+      reason: `${silenceBuff.name || '沉默'}中，无法施法！`,
+    };
+  }
+  return { isControlled: false, kind: null, reason: '' };
+}
+
 /**
  * [E-02] CombatEngine — 20 Hz战斗循环主控制器
  *
@@ -432,6 +483,11 @@ export class CombatEngine {
   /** 挑战难度与自定义系数 */
   public difficulty: DungeonDifficulty = 'HEROIC';
   public customDifficulty: CustomDifficultySettings = { ...DEFAULT_CUSTOM_DIFFICULTY };
+  /** GM 面板：敌方伤害倍率（默认 1.0，范围 0.1~5.0） */
+  public gmEnemyDamageMult = 1.0;
+  /** GM 面板：己方/敌方无敌开关 */
+  public gmFriendlyInvincible = false;
+  public gmEnemyInvincible = false;
 
   readonly calculator: Calculator;
   readonly threatManager: ThreatManager;
@@ -467,6 +523,9 @@ export class CombatEngine {
       ttlMs?: number;
       dedupeKey?: string;
       cooldownMs?: number;
+      mergeWindowMs?: number;
+      mergeItemName?: string;
+      mergeTitlePrefix?: string;
     }
   ): DbmAlert | null {
     return this.dbmLog.push(partial);
@@ -1357,8 +1416,11 @@ export class CombatEngine {
       }
     }
 
-    // 无敌：圣盾 / 寒冰屏障 / 保护之手 / 威慑 等 → 伤害为 0
-    if (unitHasImmunity(target, school)) {
+    // 无敌：圣盾 / 寒冰屏障 / 保护之手 / 威慑 / GM 无敌 → 伤害为 0
+    const isGmInv =
+      (target.role === 'ENEMY' && this.gmEnemyInvincible) ||
+      (target.role !== 'ENEMY' && this.gmFriendlyInvincible);
+    if (isGmInv || unitHasImmunity(target, school)) {
       this.effectsManager.addFloatingText({
         id: `imm_${Date.now()}_${targetId}_${Math.random()}`,
         targetId,
@@ -2072,16 +2134,9 @@ export class CombatEngine {
     return this.bossHealingGraceRemainingMs > 0;
   }
 
-  /** Hard CC that blocks actions (Asphyxiate / Ice Tomb / explicit STUN). Not Veil/Mortal Wound. */
+  /** Hard CC that blocks actions (Asphyxiate / Ice Tomb / Polymorph / Fear / Mind Control / Silence). */
   isUnitCrowdControlled(unit: { buffs?: Buff[] } | null | undefined): boolean {
-    if (!unit?.buffs?.length) return false;
-    return unit.buffs.some(
-      b =>
-        b.spellId === 'asphyxiate' ||
-        b.spellId === 'ice_tomb' ||
-        (b.tags as string[] | undefined)?.includes('STUN') ||
-        (b.tags as string[] | undefined)?.includes('SILENCE')
-    );
+    return getUnitCrowdControlInfo(unit).isControlled;
   }
 
   /**
@@ -2095,6 +2150,12 @@ export class CombatEngine {
     spellName = '窒息术',
   ): number {
     if (!target.isAlive && !target.alive) return 0;
+    if (
+      (target.role === 'ENEMY' && this.gmEnemyInvincible) ||
+      (target.role !== 'ENEMY' && this.gmFriendlyInvincible)
+    ) {
+      return 0;
+    }
     if (target.hp <= floorHp) {
       target.hp = floorHp;
       return 0;
@@ -2172,7 +2233,7 @@ export class CombatEngine {
     // Scale legacy boss/enemy hits to Level 80 HP pools (Tank 65k / DPS 36k)
     // 窒息术禁止一切倍率，避免「压到 1 血」被英雄/自定义系数打成击杀
     if (!isAsphyxiate && source.role === 'ENEMY' && target.role !== 'ENEMY') {
-      finalAmount *= LEVEL_80_BOSS_DAMAGE_SCALE;
+      finalAmount *= LEVEL_80_BOSS_DAMAGE_SCALE * Math.max(0.1, Math.min(5, this.gmEnemyDamageMult || 1));
     }
     if (!isAsphyxiate && this.difficulty === 'CUSTOM') {
       if (source.isPlayer) {

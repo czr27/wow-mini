@@ -834,9 +834,12 @@ export function ingestCombatActionsAsHitFx(state: HitFxState, opts: IngestHitFxO
     if (!lookDamageSpell(a.spellId, a.spellName) && actor?.role === 'HEALER') continue;
     if (!aPos || !tPos) continue;
 
+    const isPhysicalAuto =
+      a.spellId === 'auto_attack' || a.spellId === 'claw' || a.spellId === 'spirit_bite';
     const melee = isEnemy
       ? Math.hypot(aPos.x - tPos.x, aPos.y - tPos.y) <= 80
-      : isMeleeClassSpec((actor?.classId as any) || 'MAGE', (actor as any)?.spec);
+      : isMeleeClassSpec((actor?.classId as any) || 'MAGE', (actor as any)?.spec) ||
+        (isPhysicalAuto && Math.hypot(aPos.x - tPos.x, aPos.y - tPos.y) <= 80);
 
     // Boss FX size = bossHeight/charHeight (HIT_FX_BOSS_SIZE_MULT)
     const hitScale = isEnemy ? HIT_FX_BOSS_SIZE_MULT : actorScale;

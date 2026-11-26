@@ -36,10 +36,16 @@ export interface BossSkillDbmRule {
 }
 
 const MAX_DBM_ALERTS = 32;
+const SAME_NAME_DEDUPE_MS = 7000;
 
 export class DbmAlertLog {
   private alerts: DbmAlert[] = [];
   private dedupeUntilMs = new Map<string, number>();
+  private recentTitleAtMs = new Map<string, number>();
+  private mergeStateByKey = new Map<
+    string,
+    { lastAtMs: number; count: number; baseNames: string[]; prefix: string }
+  >();
 
   push(
     partial: Omit<DbmAlert, 'id' | 'atMs' | 'ttlMs'> & {
@@ -48,19 +54,61 @@ export class DbmAlertLog {
       ttlMs?: number;
       dedupeKey?: string;
       cooldownMs?: number;
+      /** 同 replaceKey 在短时间窗内（如同时刷多只小怪）自动合并为一条数量/名称汇总提示 */
+      mergeWindowMs?: number;
+      mergeItemName?: string;
+      mergeTitlePrefix?: string;
     }
   ): DbmAlert | null {
     const now = partial.atMs ?? Date.now();
     if (partial.dedupeKey) {
       const until = this.dedupeUntilMs.get(partial.dedupeKey) ?? 0;
       if (now < until) return null;
-      this.dedupeUntilMs.set(partial.dedupeKey, now + (partial.cooldownMs ?? 3000));
+      this.dedupeUntilMs.set(partial.dedupeKey, now + Math.max(SAME_NAME_DEDUPE_MS, partial.cooldownMs ?? SAME_NAME_DEDUPE_MS));
+    }
+
+    let resolvedTitle = partial.title;
+    let isMergedUpdate = false;
+    if (partial.replaceKey && partial.mergeWindowMs && partial.mergeWindowMs > 0) {
+      const prev = this.mergeStateByKey.get(partial.replaceKey);
+      const itemName = (partial.mergeItemName || partial.title).trim();
+      const prefix = partial.mergeTitlePrefix ?? '';
+      if (prev && now - prev.lastAtMs <= partial.mergeWindowMs) {
+        prev.lastAtMs = now;
+        prev.count += 1;
+        isMergedUpdate = true;
+        if (itemName && !prev.baseNames.includes(itemName)) {
+          prev.baseNames.push(itemName);
+        }
+        const namesText =
+          prev.baseNames.length <= 2
+            ? prev.baseNames.join('、')
+            : `${prev.baseNames.slice(0, 2).join('、')} 等`;
+        resolvedTitle = `${prefix}${namesText} ×${prev.count}`;
+      } else {
+        this.mergeStateByKey.set(partial.replaceKey, {
+          lastAtMs: now,
+          count: 1,
+          baseNames: itemName ? [itemName] : [],
+          prefix,
+        });
+      }
+    }
+
+    // 同名 DBM（剥离倒计时数字）7s 内不重复播报两遍（同波次合并更新除外）
+    const normalizedTitle = resolvedTitle.replace(/\s*\(\d+s\)\s*$/, '').trim();
+    if (!isMergedUpdate && normalizedTitle) {
+      const lastSameAt = this.recentTitleAtMs.get(normalizedTitle);
+      if (lastSameAt !== undefined && now - lastSameAt < SAME_NAME_DEDUPE_MS) {
+        return null;
+      }
+      this.recentTitleAtMs.set(normalizedTitle, now);
     }
 
     const alert: DbmAlert = {
       id: partial.id || `dbm_${now}_${Math.random().toString(36).slice(2, 7)}`,
       atMs: now,
-      title: partial.title,
+      title: resolvedTitle,
       advice: partial.advice,
       voiceText: partial.voiceText || toShortVoiceText(partial.advice),
       replaceKey: partial.replaceKey,
@@ -100,6 +148,8 @@ export class DbmAlertLog {
   clear(): void {
     this.alerts = [];
     this.dedupeUntilMs.clear();
+    this.recentTitleAtMs.clear();
+    this.mergeStateByKey.clear();
   }
 }
 
@@ -110,15 +160,37 @@ export function toShortVoiceText(advice: string): string {
   return cleaned.length <= 5 ? cleaned : cleaned.slice(0, 4);
 }
 
+/** 判断可打断技能是否属于“巨量伤害 / 治疗复活 / 强负面效应”高威胁技能 */
+function isHighThreatInterruptible(skill: BossSkill, metrics?: SkillMetrics): boolean {
+  const text = `${skill.name} ${skill.description || ''}`;
+  // 1. 明确必断 / 复活 / 首领自愈 / 全团治疗
+  if (
+    metrics?.roleType === 'HEAL' ||
+    /必须打断|必断|复活|自愈|回血|治疗/.test(text)
+  ) {
+    return true;
+  }
+  // 2. 强负面效应：心控、变形、高额诅咒/减疗/重毒 DOT
+  if (/心控|心灵控制|支配|变形|诅咒|降受疗|减疗|沉默|致死|重毒|剧毒|高额DOT/.test(text)) {
+    return true;
+  }
+  // 3. 巨量伤害或高威胁长CD/长读条AOE，过滤 8~10s 常规填充箭/惩击
+  if (/巨量|毁灭|重创|重伤|剧痛|致命|团灭/.test(text)) return true;
+  if (skill.targetKind === 'AOE' && (skill.cooldownMs >= 15_000 || skill.castTimeMs >= 2500)) {
+    return true;
+  }
+  return false;
+}
+
 /**
  * 引擎加载/编译首领技能时生成 DBM 播报规则：
  * - 优先采用副本设计期显式声明的 `skill.dbm`（分散、分摊、躲柱子、转火等攻略核心机制）
- * - 未显式声明时，仅对 `interruptible === true` 自动生成「注意打断」提醒
- * - 常规掉血 / 减伤 / 治疗等玩家凭血条即可判断的技能不再自动刷屏报警
+ * - 未显式声明时，仅对高威胁的可打断技能（巨量伤害、治疗/复活、强负面效应）生成「注意打断」
+ * - 常规小技能、普通读条填充与常规掉血不再自动刷屏报警
  */
 export function deriveBossSkillDbmRule(
   skill: BossSkill,
-  _metrics?: SkillMetrics
+  metrics?: SkillMetrics
 ): BossSkillDbmRule | null {
   const explicit: BossSkillDbmMeta | undefined = skill.dbm;
   if (explicit) {
@@ -130,14 +202,14 @@ export function deriveBossSkillDbmRule(
       voiceText: explicit.voiceText || toShortVoiceText(explicit.advice),
       severity: sev,
       roleHint: explicit.roleHint ?? 'ALL',
-      preWarnMs: explicit.preWarnMs ?? (skill.cooldownMs >= 12000 ? 3000 : 0),
+      preWarnMs: explicit.preWarnMs ?? 0,
       ttlMs: explicit.ttlMs ?? (sev === 'CRITICAL' ? 4500 : 3500),
       announceOnCast: explicit.announceOnCast ?? true,
       source: 'ENCOUNTER',
     };
   }
 
-  if (skill.interruptible) {
+  if (skill.interruptible && isHighThreatInterruptible(skill, metrics)) {
     return {
       spellId: skill.id,
       spellName: skill.name,

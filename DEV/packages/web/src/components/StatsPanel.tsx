@@ -455,10 +455,9 @@ export const StatsPanel: React.FC<Props> = ({
           isLocked ? 'cursor-default' : isDragging ? 'cursor-grabbing' : 'cursor-grab'
         }`}
         style={{ backgroundColor: '#18182e', opacity: 1 }}
-        title={isLocked ? '已锁定位置 (点击锁图标解锁)' : '拖拽可移动浮窗位置'}
       >
         <span className="text-xs font-bold text-amber-300 flex items-center space-x-1.5 min-w-0">
-          <span className="text-gray-400 hover:text-amber-400 transition" title="拖动把手">
+          <span className="text-gray-400 hover:text-amber-400 transition">
             ⠿
           </span>
           <span>📊</span>
@@ -473,7 +472,6 @@ export const StatsPanel: React.FC<Props> = ({
           <button
             onClick={handleManualClear}
             className="text-[11px] text-gray-400 hover:text-red-300 px-1 py-0.5 rounded transition hover:bg-[#252545]"
-            title="清空当前战斗统计"
           >
             🗑️
           </button>
@@ -482,7 +480,6 @@ export const StatsPanel: React.FC<Props> = ({
           <button
             onClick={resetPositionAndSize}
             className="text-[11px] text-gray-400 hover:text-amber-300 px-1 py-0.5 rounded transition hover:bg-[#252545]"
-            title="复位位置与尺寸"
           >
             ↺
           </button>
@@ -493,7 +490,6 @@ export const StatsPanel: React.FC<Props> = ({
             className={`text-[11px] px-1 py-0.5 rounded transition hover:bg-[#252545] ${
               isLocked ? 'text-amber-400' : 'text-gray-400 hover:text-gray-200'
             }`}
-            title={isLocked ? '已锁定 (点击解锁拖拽与缩放)' : '未锁定 (点击锁定位置)'}
           >
             {isLocked ? '🔒' : '🔓'}
           </button>
@@ -505,7 +501,6 @@ export const StatsPanel: React.FC<Props> = ({
               setIsCollapsed(!isCollapsed);
             }}
             className="text-xs text-gray-400 hover:text-white px-1 py-0.5 rounded transition hover:bg-[#252545]"
-            title={isCollapsed ? '展开统计' : '收起统计'}
           >
             {isCollapsed ? '▲' : '▼'}
           </button>
@@ -619,31 +614,26 @@ export const StatsPanel: React.FC<Props> = ({
               <div
                 onMouseDown={(e) => handleResizeStart(e, 'e')}
                 className="absolute right-0 top-3 bottom-3 w-1.5 cursor-ew-resize hover:bg-amber-400/30 transition z-10"
-                title="左右拉伸宽度"
               />
               {/* Left edge */}
               <div
                 onMouseDown={(e) => handleResizeStart(e, 'w')}
                 className="absolute left-0 top-3 bottom-3 w-1.5 cursor-ew-resize hover:bg-amber-400/30 transition z-10"
-                title="向左拉伸宽度"
               />
               {/* Bottom edge */}
               <div
                 onMouseDown={(e) => handleResizeStart(e, 's')}
                 className="absolute bottom-0 left-3 right-3 h-1.5 cursor-ns-resize hover:bg-amber-400/30 transition z-10"
-                title="向下拉伸高度"
               />
               {/* Bottom-left corner */}
               <div
                 onMouseDown={(e) => handleResizeStart(e, 'sw')}
                 className="absolute bottom-0 left-0 w-3 h-3 cursor-sw-resize hover:bg-amber-400/50 rounded-bl-xl transition z-20"
-                title="向左下调整大小"
               />
               {/* Bottom-right corner with visual handle lines */}
               <div
                 onMouseDown={(e) => handleResizeStart(e, 'se')}
                 className="absolute bottom-0.5 right-0.5 w-4 h-4 cursor-se-resize flex items-center justify-center opacity-60 hover:opacity-100 transition-opacity z-20 group"
-                title="拖动调整大小 (宽与高)"
               >
                 <svg width="10" height="10" viewBox="0 0 10 10" className="text-gray-400 group-hover:text-amber-400">
                   <line x1="8" y1="2" x2="2" y2="8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />

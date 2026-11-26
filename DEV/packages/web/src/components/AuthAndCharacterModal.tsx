@@ -1,5 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { getBgmVolume, setBgmVolume } from '../utils/bgmManager.js';
 import { getSfxVolume, setSfxVolume } from '../utils/combatSfx.js';
+import { getDbmVoiceVolume, setDbmVoiceVolume, speakDbmVoice } from '../utils/dbmVoice.js';
+import { DbmAlertBanner } from './DbmAlertBanner.js';
+import { getDungeonRewardIconUrl } from '../assets/pixelIcons.js';
 import type {
   CharacterRecord,
   ClassId,
@@ -7,6 +11,7 @@ import type {
   DungeonClearCertificate,
   CharacterUiLayout,
   CombatDisplayPrefs,
+  DbmAlert,
 } from '@cata-raid-sim/engine';
 import {
   clampIsoViewSensitivity,
@@ -390,8 +395,35 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
   const [draggedSlotIdx, setDraggedSlotIdx] = useState<number | null>(null);
   const [sniffingSlotIdx, setSniffingSlotIdx] = useState<number | null>(null);
   const [inspectedSpellId, setInspectedSpellId] = useState<string | null>(null);
-  const [hoveredCertId, setHoveredCertId] = useState<string | null>(null);
+  const [hoveredCertAnchor, setHoveredCertAnchor] = useState<{
+    certId: string;
+    x: number;
+    y: number;
+  } | null>(null);
+  const certFirstRowRef = useRef<HTMLDivElement | null>(null);
+  const [certRowHeight, setCertRowHeight] = useState<number>(0);
+
+  useEffect(() => {
+    const el = certFirstRowRef.current;
+    if (!el) return;
+    const update = () => {
+      const h = el.getBoundingClientRect().height;
+      if (h > 0) setCertRowHeight(Math.round(h));
+    };
+    update();
+    if (typeof ResizeObserver !== 'undefined') {
+      const ro = new ResizeObserver(update);
+      ro.observe(el);
+      return () => ro.disconnect();
+    }
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, [selectedCharId]);
+  const [bgmVolPct, setBgmVolPct] = useState(() => Math.round(getBgmVolume() * 100));
   const [sfxVolPct, setSfxVolPct] = useState(() => Math.round(getSfxVolume() * 100));
+  const [dbmVolPct, setDbmVolPct] = useState(() => Math.round(getDbmVoiceVolume() * 100));
+  const [dbmTestAlerts, setDbmTestAlerts] = useState<DbmAlert[]>([]);
+  const [dbmTestIdx, setDbmTestIdx] = useState(0);
   const [isCreating, setIsCreating] = useState(false);
   const [isSkillBookOpen, setIsSkillBookOpen] = useState(false);
   const [newCharName, setNewCharName] = useState('');
@@ -732,7 +764,6 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
                           }
                         }}
                         className="text-gray-500 hover:text-red-400 p-1 text-xs"
-                        title="删除角色"
                       >
                         🗑️
                       </button>
@@ -834,7 +865,6 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
                               type="button"
                               onClick={() => setIsSkillBookOpen(true)}
                               className="text-xs px-2.5 py-1 bg-indigo-700 hover:bg-indigo-600 text-white rounded font-bold shadow flex items-center space-x-1"
-                              title="打开法术书，可拖动全部技能填入三栏槽位"
                             >
                               <span>📖</span>
                               <span>法术书</span>
@@ -850,7 +880,6 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
                                   ? 'bg-amber-500 text-black border-amber-400 shadow-md ring-2 ring-amber-400/50'
                                   : 'bg-black/40 text-gray-300 hover:text-white border-gray-600'
                               }`}
-                              title="点击后单击任意技能格子，直接按下键盘按键完成绑定"
                             >
                               {editingKeybinding ? '✓ 完成改键' : '改键位'}
                             </button>
@@ -1053,7 +1082,7 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
                                   type="button"
                                   onClick={() => setInspectedSpellId(null)}
                                   className="text-[10px] text-slate-400 hover:text-amber-300 transition"
-                                  title="返回专精介绍"
+
                                 >
                                   返回专精介绍
                                 </button>
@@ -1172,81 +1201,163 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
                           {selectedChar.clearCertificates?.length || 0} 枚
                         </span>
                       </h4>
-                      <p className="text-xs text-gray-400">
-                        每排 12 格与动作条对齐；悬浮查看副本与专精，单击查看详细战报
-                      </p>
                     </div>
                   </div>
 
                   {(() => {
                     const certs = selectedChar.clearCertificates || [];
-                    const certRows = Math.max(1, Math.ceil(certs.length / 12));
-                    const totalBagSlots = certRows * 12;
-                    const hoveredCert = hoveredCertId ? certs.find(c => c.id === hoveredCertId) : null;
+                    const certRows = Math.max(1, Math.ceil(certs.length / 24));
+                    const hoveredCert = hoveredCertAnchor
+                      ? certs.find(c => c.id === hoveredCertAnchor.certId)
+                      : null;
                     const shortDungeonTag = (name: string) => {
                       const clean = name.replace(/（.*?）|\(.*?\)/g, '').trim();
                       return clean.slice(0, 2) || '通关';
                     };
+                    const resolveCertBorderStyle = (cert: DungeonClearCertificate) => {
+                      const name = cert.dungeonName || '';
+                      const isCustom = cert.difficulty === 'CUSTOM' || name.includes('自定义');
+                      const isNormal = cert.difficulty === 'NORMAL' || name.includes('普通');
+                      const is20Man =
+                        cert.is20Man === true ||
+                        cert.dungeonId === 'dragon_soul' ||
+                        name.includes('20人') ||
+                        name.includes('巨龙之魂');
+
+                      if (isCustom) {
+                        return {
+                          borderClass: 'border-white hover:border-white',
+                          glow: 'inset 0 0 0 1px rgba(255,255,255,0.45), 0 0 6px rgba(255,255,255,0.35)',
+                          badgeColor: '#FFFFFF',
+                        };
+                      }
+                      if (isNormal) {
+                        if (is20Man) {
+                          return {
+                            borderClass: 'border-purple-400 hover:border-purple-300',
+                            glow: 'inset 0 0 0 1px rgba(192,132,252,0.45), 0 0 6px rgba(192,132,252,0.4)',
+                            badgeColor: '#C084FC',
+                          };
+                        }
+                        return {
+                          borderClass: 'border-sky-400 hover:border-sky-300',
+                          glow: 'inset 0 0 0 1px rgba(56,189,248,0.45), 0 0 6px rgba(56,189,248,0.4)',
+                          badgeColor: '#38BDF8',
+                        };
+                      }
+                      // Heroic (default): 5-man purple, 20-man +1 tier -> orange
+                      if (is20Man) {
+                        return {
+                          borderClass: 'border-orange-400 hover:border-orange-300',
+                          glow: 'inset 0 0 0 1px rgba(251,146,60,0.55), 0 0 8px rgba(251,146,60,0.5)',
+                          badgeColor: '#FB923C',
+                        };
+                      }
+                      return {
+                        borderClass: 'border-purple-400 hover:border-purple-300',
+                        glow: 'inset 0 0 0 1px rgba(192,132,252,0.45), 0 0 6px rgba(192,132,252,0.4)',
+                        badgeColor: '#C084FC',
+                      };
+                    };
 
                     return (
                       <div className="relative">
-                        <div className={certRows > 3 ? 'max-h-[138px] overflow-y-auto pr-1 w-fit' : 'w-fit'}>
-                          <div className="grid grid-cols-12 gap-0.5 w-fit border border-[#3b3b5c] rounded-lg p-1 bg-[#0c0c18] shadow-inner">
-                            {Array.from({ length: totalBagSlots }).map((_, idx) => {
-                              const cert = certs[idx];
-                              if (!cert) {
-                                return (
-                                  <div
-                                    key={`empty-${idx}`}
-                                    className="w-9 h-9 sm:w-10 sm:h-10 rounded border border-[#22223a] bg-[#090914] opacity-60"
-                                  />
-                                );
-                              }
-                              const classColor = CLASS_COLORS[cert.characterClass] || '#f59e0b';
-                              const specLabel =
-                                CLASS_SPECS[cert.characterClass]?.find(s => s.id === cert.characterSpec)?.name ||
-                                cert.characterSpec;
-                              return (
-                                <button
-                                  key={cert.id}
-                                  type="button"
-                                  onClick={() => onViewCertificate(cert)}
-                                  onMouseEnter={() => setHoveredCertId(cert.id)}
-                                  onMouseLeave={() => setHoveredCertId(prev => (prev === cert.id ? null : prev))}
-                                  title={`${cert.dungeonName} · ${specLabel}`}
-                                  className="w-9 h-9 sm:w-10 sm:h-10 rounded border border-amber-500/60 hover:border-amber-300 bg-gradient-to-br from-[#1d192b] to-[#111120] hover:from-[#2b243f] hover:to-[#18182e] transition flex flex-col items-center justify-center relative group shadow-sm"
-                                  style={{ boxShadow: `inset 0 0 0 1px ${classColor}33` }}
-                                >
-                                  <span className="text-sm leading-none">📜</span>
-                                  <span
-                                    className="text-[9px] font-bold leading-none mt-0.5 truncate max-w-full px-0.5"
-                                    style={{ color: classColor }}
-                                  >
-                                    {shortDungeonTag(cert.dungeonName)}
-                                  </span>
-                                </button>
-                              );
-                            })}
+                        <div
+                          className={certRows > 3 ? 'overflow-y-auto pr-0.5 min-w-0' : 'min-w-0'}
+                          style={
+                            certRows > 3
+                              ? { maxHeight: certRowHeight > 0 ? `${certRowHeight * 3 + 6}px` : '108px' }
+                              : undefined
+                          }
+                        >
+                          <div className="flex flex-col space-y-0.5 w-full">
+                            {Array.from({ length: certRows }).map((_, rowIdx) => (
+                              <div
+                                key={`cert-row-${rowIdx}`}
+                                ref={rowIdx === 0 ? certFirstRowRef : undefined}
+                                className="grid grid-cols-[repeat(24,minmax(0,1fr))] gap-0.5 w-full border border-[#3b3b5c] rounded-lg overflow-hidden bg-[#0c0c18] shadow-md"
+                              >
+                                {Array.from({ length: 24 }).map((__, colIdx) => {
+                                  const idx = rowIdx * 24 + colIdx;
+                                  const cert = certs[idx];
+                                  if (!cert) {
+                                    return (
+                                      <div
+                                        key={`empty-${idx}`}
+                                        className="w-full aspect-square min-w-0 border border-[#28283e] bg-[#0c0c18] opacity-70"
+                                      />
+                                    );
+                                  }
+                                  const borderStyle = resolveCertBorderStyle(cert);
+                                  const rewardUrl = getDungeonRewardIconUrl(cert.dungeonId || cert.dungeonName);
+                                  return (
+                                    <button
+                                      key={cert.id}
+                                      type="button"
+                                      onClick={() => onViewCertificate(cert)}
+                                      onMouseEnter={(e) => {
+                                        const rect = e.currentTarget.getBoundingClientRect();
+                                        setHoveredCertAnchor({
+                                          certId: cert.id,
+                                          x: rect.left + rect.width / 2,
+                                          y: rect.top,
+                                        });
+                                      }}
+                                      onMouseLeave={() =>
+                                        setHoveredCertAnchor(prev => (prev?.certId === cert.id ? null : prev))
+                                      }
+                                      className={`w-full aspect-square min-w-0 border-2 ${borderStyle.borderClass} bg-[#141424] hover:bg-[#1f1f35] hover:z-10 transition relative overflow-hidden cursor-pointer select-none`}
+                                      style={{ boxShadow: borderStyle.glow }}
+                                    >
+                                      <div className="absolute inset-0 rounded flex items-center justify-center overflow-hidden z-10 pointer-events-none p-0.5">
+                                        {rewardUrl ? (
+                                          <img
+                                            src={rewardUrl}
+                                            alt={cert.dungeonName}
+                                            className="w-full h-full object-cover rounded-sm"
+                                          />
+                                        ) : (
+                                          <span className="text-base leading-none">📜</span>
+                                        )}
+                                      </div>
+                                      <span className="absolute bottom-0 inset-x-0 bg-black/85 text-[8px] text-gray-200 truncate text-center z-20 py-0.5 px-0.5 pointer-events-none leading-tight">
+                                        {shortDungeonTag(cert.dungeonName)}
+                                      </span>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            ))}
                           </div>
                         </div>
 
-                        {hoveredCert && (() => {
+                        {hoveredCert && hoveredCertAnchor && (() => {
                           const specLabel =
                             CLASS_SPECS[hoveredCert.characterClass]?.find(s => s.id === hoveredCert.characterSpec)?.name ||
                             hoveredCert.characterSpec;
                           const classColor = CLASS_COLORS[hoveredCert.characterClass] || '#fbbf24';
+                          const borderStyle = resolveCertBorderStyle(hoveredCert);
+                          const vw = typeof window !== 'undefined' ? window.innerWidth : 1280;
+                          const clampedX = Math.max(150, Math.min(vw - 150, hoveredCertAnchor.x));
                           return (
-                            <div className="mt-2 bg-[#0d0d1a] border border-amber-500/50 rounded-lg px-3 py-2 text-xs shadow-lg flex flex-wrap items-center justify-between gap-2 pointer-events-none">
-                              <div className="flex items-center space-x-2">
-                                <span>📜</span>
-                                <span className="font-bold text-amber-300">{hoveredCert.dungeonName}</span>
-                                <span className="text-gray-500">|</span>
-                                <span className="font-bold" style={{ color: classColor }}>
+                            <div
+                              className="fixed z-[90] -translate-x-1/2 -translate-y-full pb-2 pointer-events-none"
+                              style={{ left: `${clampedX}px`, top: `${hoveredCertAnchor.y}px` }}
+                            >
+                              <div
+                                className="bg-[#0d0d1a]/80 backdrop-blur-md border rounded-lg px-3 py-2 text-xs shadow-2xl min-w-[230px] max-w-[320px] space-y-1"
+                                style={{ borderColor: borderStyle.badgeColor }}
+                              >
+                                <div className="flex items-center gap-1.5 font-bold" style={{ color: borderStyle.badgeColor }}>
+                                  <span>📜</span>
+                                  <span className="truncate">{hoveredCert.dungeonName}</span>
+                                </div>
+                                <div className="text-[11px] font-bold" style={{ color: classColor }}>
                                   通关专精：{CLASS_NAMES[hoveredCert.characterClass]} · {specLabel}
-                                </span>
-                              </div>
-                              <div className="text-[11px] text-gray-400 font-mono">
-                                {new Date(hoveredCert.clearedAtIso).toLocaleDateString()} · 耗时 {hoveredCert.totalDurationSec}s · 单击查看详情
+                                </div>
+                                <div className="text-[10px] text-gray-300/90 font-mono">
+                                  {new Date(hoveredCert.clearedAtIso).toLocaleDateString()} · 耗时 {hoveredCert.totalDurationSec}s · 单击查看详情
+                                </div>
                               </div>
                             </div>
                           );
@@ -1278,35 +1389,62 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
                     const Check = ({
                       label,
                       k,
+                      title,
                     }: {
                       label: string;
                       k: keyof CombatDisplayPrefs;
+                      title?: string;
                     }) => (
-                      <label className="flex items-center gap-1.5 text-[11px] text-gray-300 cursor-pointer select-none hover:text-white">
+                      <label
+                        title={title || label}
+                        className="flex items-center gap-2 text-[11px] text-gray-300 cursor-pointer select-none hover:text-white min-w-0 py-0.5"
+                      >
                         <input
                           type="checkbox"
                           checked={!!prefs[k]}
                           onChange={() => toggle(k)}
-                          className="accent-amber-500"
+                          className="accent-amber-500 w-3.5 h-3.5 shrink-0 cursor-pointer"
                         />
-                        <span>{label}</span>
+                        <span className="truncate leading-tight">{label}</span>
                       </label>
                     );
                     return (
                       <div className="space-y-3">
-                        {/* 1. 声音与播报 */}
+                        {/* 1. 声音 */}
                         <div className="bg-[#121224] border border-[#272744] rounded-lg p-3 space-y-2.5">
-                          <div className="text-[10px] text-amber-400/90 font-bold">声音与播报</div>
+                          <div className="text-[10px] text-amber-400/90 font-bold">声音</div>
                           <label className="flex items-center gap-3 text-[11px] text-gray-300">
-                            <span className="shrink-0 flex items-center gap-1.5">
-                              <span>{sfxVolPct === 0 ? '🔇' : '🔊'}</span>
-                              <span>战斗与施法音效</span>
+                            <span className="shrink-0 flex items-center gap-1.5 w-20">
+                              <span>{bgmVolPct === 0 ? '🔇' : '🎵'}</span>
+                              <span>音量</span>
                             </span>
                             <input
                               type="range"
                               min={0}
                               max={100}
-                              step={5}
+                              step={1}
+                              value={bgmVolPct}
+                              onChange={(e) => {
+                                const pct = Number(e.target.value);
+                                setBgmVolPct(pct);
+                                setBgmVolume(pct / 100);
+                              }}
+                              className="flex-1 max-w-xs accent-amber-500 cursor-pointer"
+                            />
+                            <span className="w-9 text-right tabular-nums text-amber-300 font-semibold">
+                              {bgmVolPct}%
+                            </span>
+                          </label>
+                          <label className="flex items-center gap-3 text-[11px] text-gray-300">
+                            <span className="shrink-0 flex items-center gap-1.5 w-20">
+                              <span>{sfxVolPct === 0 ? '🔇' : '🔊'}</span>
+                              <span>音效</span>
+                            </span>
+                            <input
+                              type="range"
+                              min={0}
+                              max={100}
+                              step={1}
                               value={sfxVolPct}
                               onChange={(e) => {
                                 const pct = Number(e.target.value);
@@ -1319,17 +1457,115 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
                               {sfxVolPct}%
                             </span>
                           </label>
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-3 gap-y-1.5 pt-1 border-t border-[#20203a]">
-                            <Check label="DBM 文字播报（分散/分摊/打断/小怪）" k="enableDbm" />
-                            <Check label="DBM 短语音播报（4字战术语音）" k="enableDbmVoice" />
+                          <label className="flex items-center gap-3 text-[11px] text-gray-300">
+                            <span className="shrink-0 flex items-center gap-1.5 w-20">
+                              <span>{dbmVolPct === 0 ? '🔇' : '📢'}</span>
+                              <span>DBM</span>
+                            </span>
+                            <input
+                              type="range"
+                              min={0}
+                              max={100}
+                              step={1}
+                              value={dbmVolPct}
+                              onChange={(e) => {
+                                const pct = Number(e.target.value);
+                                setDbmVolPct(pct);
+                                setDbmVoiceVolume(pct / 100);
+                              }}
+                              className="flex-1 max-w-xs accent-sky-400 cursor-pointer"
+                            />
+                            <span className="w-9 text-right tabular-nums text-sky-300 font-semibold">
+                              {dbmVolPct}%
+                            </span>
+                          </label>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 pt-2 border-t border-[#20203a]">
+                            <Check label="DBM 文字播报" k="enableDbm" />
+                            <Check label="DBM 语音播报" k="enableDbmVoice" />
                           </div>
+                          <div className="flex flex-wrap items-center justify-between gap-2 pt-1.5 border-t border-[#20203a]">
+                            <button
+                              type="button"
+                              data-testid="dbm-test-btn"
+                              onClick={() => {
+                                const samples: Array<{
+                                  title: string;
+                                  advice: string;
+                                  voiceText: string;
+                                  severity: DbmAlert['severity'];
+                                  roleHint: DbmAlert['roleHint'];
+                                }> = [
+                                  {
+                                    title: '正在施放：大地践踏',
+                                    advice: '近距分摊，最近目标双倍伤害',
+                                    voiceText: '近距分摊',
+                                    severity: 'WARN',
+                                    roleHint: 'ALL',
+                                  },
+                                  {
+                                    title: '🚨 正在施放：大地黑血沸腾',
+                                    advice: '黑血阶段，躲到碎石柱后方',
+                                    voiceText: '躲柱子后',
+                                    severity: 'CRITICAL',
+                                    roleHint: 'ALL',
+                                  },
+                                  {
+                                    title: '即将施放：点名胸弹',
+                                    advice: '点名炸弹，注意分散远离队友',
+                                    voiceText: '注意分散',
+                                    severity: 'WARN',
+                                    roleHint: 'ALL',
+                                  },
+                                ];
+                                const pick = samples[dbmTestIdx % samples.length];
+                                setDbmTestIdx((i) => i + 1);
+                                const now = Date.now();
+                                setDbmTestAlerts([
+                                  {
+                                    id: `dbm_test_${now}`,
+                                    atMs: now,
+                                    title: pick.title,
+                                    advice: pick.advice,
+                                    voiceText: pick.voiceText,
+                                    replaceKey: 'dbm_settings_test',
+                                    severity: pick.severity,
+                                    ttlMs: 8000,
+                                    roleHint: pick.roleHint,
+                                    source: 'RUNTIME',
+                                  },
+                                ]);
+                                if (prefs.enableDbmVoice) {
+                                  speakDbmVoice(pick.voiceText, { force: true });
+                                }
+                              }}
+                              className="px-2.5 py-1 rounded bg-sky-600/80 hover:bg-sky-500 text-white text-[11px] font-bold border border-sky-400/50 transition cursor-pointer"
+                            >
+                              🔔 测试DBM
+                            </button>
+                            <span className="text-[10px] text-gray-400">
+                              {!prefs.enableDbm && !prefs.enableDbmVoice
+                                ? '文字与语音均已关闭'
+                                : !prefs.enableDbm
+                                ? '文字播报已关闭（仅测试语音）'
+                                : !prefs.enableDbmVoice || dbmVolPct === 0
+                                ? '语音已关闭或音量为 0%（仅显示文字，可拖动）'
+                                : '独立音量；测试横幅将出现在实际位置并可拖动'}
+                            </span>
+                          </div>
+                          <DbmAlertBanner
+                            alerts={dbmTestAlerts}
+                            enabled={prefs.enableDbm}
+                            initialPos={selectedChar.uiLayout?.dbmBanner ?? null}
+                            onSavePos={(pos) => onSaveUiLayout?.(selectedChar.id, { dbmBanner: pos })}
+                            fixedOverlay
+                          />
                         </div>
 
                         {/* 2. 视角与插件 */}
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                           <div className="bg-[#121224] border border-[#272744] rounded-lg p-3 space-y-2">
                             <div className="text-[10px] text-amber-400/90 font-bold">视角</div>
-                            <label className="flex items-center gap-1.5 text-[11px] text-gray-300 cursor-pointer select-none hover:text-white">
+                            <label className="flex items-center gap-2 text-[11px] text-gray-300 cursor-pointer select-none hover:text-white py-0.5">
                               <input
                                 type="checkbox"
                                 checked={prefs.canvasViewMode === 'ISO'}
@@ -1339,9 +1575,9 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
                                     canvasViewMode: e.target.checked ? 'ISO' : 'TOPDOWN',
                                   })
                                 }
-                                className="accent-amber-500"
+                                className="accent-amber-500 w-3.5 h-3.5 shrink-0 cursor-pointer"
                               />
-                              <span>2.5D 立体视角</span>
+                              <span className="leading-tight">2.5D 立体视角</span>
                             </label>
                             {prefs.canvasViewMode === 'ISO' && (() => {
                               const orbitSens = clampIsoViewSensitivity(
@@ -1406,61 +1642,70 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
                             <Check label="按照 Boss 房间自动清空计算" k="detailsResetPerBossRoom" />
                           </div>
                         </div>
-                        <div>
-                          <div className="text-[10px] text-amber-400/80 font-bold mb-1.5">血条 · 名称</div>
-                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-3 gap-y-1.5">
-                            <Check label="本人血条" k="showSelfHp" />
-                            <Check label="本人名称" k="showSelfName" />
-                            <Check label="全员血条" k="showAllHp" />
-                            <Check label="全员名称" k="showAllNames" />
-                            <Check label="Boss 血条" k="showBossHp" />
-                            <Check label="Boss 名称" k="showBossName" />
-                            <Check label="小怪血条" k="showAddHp" />
-                            <Check label="小怪名称" k="showAddName" />
-                            <Check label="目标血条" k="showTargetHp" />
-                            <Check label="目标名称" k="showTargetName" />
-                            <Check label="焦点血条" k="showFocusHp" />
-                            <Check label="焦点名称" k="showFocusName" />
+                        {/* 3. 画面显示与战斗信息（统一 4 列对齐） */}
+                        <div className="bg-[#121224] border border-[#272744] rounded-lg p-3 space-y-3">
+                          <div>
+                            <div className="text-[10px] text-amber-400/90 font-bold mb-1.5">血条 · 名称</div>
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-1.5">
+                              <Check label="本人血条" k="showSelfHp" />
+                              <Check label="本人名称" k="showSelfName" />
+                              <Check label="全员血条" k="showAllHp" />
+                              <Check label="全员名称" k="showAllNames" />
+                              <Check label="Boss 血条" k="showBossHp" />
+                              <Check label="Boss 名称" k="showBossName" />
+                              <Check label="小怪血条" k="showAddHp" />
+                              <Check label="小怪名称" k="showAddName" />
+                              <Check label="目标血条" k="showTargetHp" />
+                              <Check label="目标名称" k="showTargetName" />
+                              <Check label="焦点血条" k="showFocusHp" />
+                              <Check label="焦点名称" k="showFocusName" />
+                            </div>
                           </div>
-                        </div>
-                        <div>
-                          <div className="text-[10px] text-amber-400/80 font-bold mb-1.5">投掷物 · 切割</div>
-                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-3 gap-y-1.5">
-                            <Check label="友方投掷物" k="showFriendlyProjectiles" />
-                            <Check label="友方切割" k="showFriendlySlash" />
-                            <Check label="敌方投掷物" k="showEnemyProjectiles" />
-                            <Check label="敌方切割" k="showEnemySlash" />
+
+                          <div className="pt-2.5 border-t border-[#20203a]">
+                            <div className="text-[10px] text-amber-400/90 font-bold mb-1.5">投掷物 · 切割</div>
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-1.5">
+                              <Check label="友方投掷物" k="showFriendlyProjectiles" />
+                              <Check label="友方切割" k="showFriendlySlash" />
+                              <Check label="敌方投掷物" k="showEnemyProjectiles" />
+                              <Check label="敌方切割" k="showEnemySlash" />
+                            </div>
                           </div>
-                        </div>
-                        <div>
-                          <div className="text-[10px] text-amber-400/80 font-bold mb-1.5">地形光圈</div>
-                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-3 gap-y-1.5">
-                            <Check label="治疗地形" k="showHealTerrain" />
-                            <Check label="加成地形" k="showBuffTerrain" />
-                            <Check label="伤害地形" k="showDamageTerrain" />
+
+                          <div className="pt-2.5 border-t border-[#20203a]">
+                            <div className="flex flex-wrap items-center justify-between gap-2 mb-1.5">
+                              <div className="text-[10px] text-amber-400/90 font-bold">地形光圈</div>
+                              <span className="text-[10px] text-slate-500">
+                                填充：治疗绿 / 增益黄 / 伤害红；描边：友方白 / 敌方红
+                              </span>
+                            </div>
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-1.5">
+                              <Check label="治疗地形" k="showHealTerrain" />
+                              <Check label="加成地形" k="showBuffTerrain" />
+                              <Check label="伤害地形" k="showDamageTerrain" />
+                            </div>
                           </div>
-                          <p className="text-[10px] text-slate-500 mt-1">
-                            填充：治疗绿 / 增益黄 / 伤害红；描边强制：友方白 / 敌方红
-                          </p>
-                        </div>
-                        <div>
-                          <div className="text-[10px] text-amber-400/80 font-bold mb-1.5">团队框架</div>
-                          <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-3 gap-y-1.5">
-                            <Check label="框架名称" k="showRaidFrameNames" />
-                            <Check label="框架 Buff" k="showRaidFrameBuffs" />
-                            <Check label="框架 Debuff" k="showRaidFrameDebuffs" />
-                            <Check label="常驻 Buff" k="showRaidFrameStandingBuffs" />
+
+                          <div className="pt-2.5 border-t border-[#20203a]">
+                            <div className="text-[10px] text-amber-400/90 font-bold mb-1.5">团队框架</div>
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-1.5">
+                              <Check label="框架名称" k="showRaidFrameNames" />
+                              <Check label="框架 Buff" k="showRaidFrameBuffs" />
+                              <Check label="框架 Debuff" k="showRaidFrameDebuffs" />
+                              <Check label="常驻 Buff" k="showRaidFrameStandingBuffs" />
+                            </div>
                           </div>
-                        </div>
-                        <div>
-                          <div className="text-[10px] text-amber-400/80 font-bold mb-1.5">跳字</div>
-                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-3 gap-y-1.5">
-                            <Check label="我的伤害" k="showSctMyDamage" />
-                            <Check label="我的治疗" k="showSctMyHeal" />
-                            <Check label="治疗于我" k="showSctHealOnMe" />
-                            <Check label="伤害于我" k="showSctDamageOnMe" />
-                            <Check label="友方伤害" k="showSctAllyDamage" />
-                            <Check label="友方治疗" k="showSctAllyHeal" />
+
+                          <div className="pt-2.5 border-t border-[#20203a]">
+                            <div className="text-[10px] text-amber-400/90 font-bold mb-1.5">跳字</div>
+                            <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-1.5">
+                              <Check label="我的伤害" k="showSctMyDamage" />
+                              <Check label="我的治疗" k="showSctMyHeal" />
+                              <Check label="治疗于我" k="showSctHealOnMe" />
+                              <Check label="伤害于我" k="showSctDamageOnMe" />
+                              <Check label="友方伤害" k="showSctAllyDamage" />
+                              <Check label="友方治疗" k="showSctAllyHeal" />
+                            </div>
                           </div>
                         </div>
                       </div>

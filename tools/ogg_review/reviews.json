@@ -1,0 +1,581 @@
+{
+  "slots": {
+    "global_lobby": {
+      "trackId": "D_开场与结算_INTRO_OUTRO/[019s] gameroom_track1.ogg",
+      "status": "pending",
+      "comment": ""
+    },
+    "global_summary": {
+      "trackId": "E_待试听_未命名或特殊房间/[032s] 06.Huge Crowd Applause-Cheers, Int.ogg",
+      "status": "pending",
+      "comment": ""
+    },
+    "global_boss_intro": {
+      "trackId": "D_开场与结算_INTRO_OUTRO/[007s] Neon Abyss BOSS _Rv01_ INTRO (135bpm).ogg",
+      "status": "pending",
+      "comment": ""
+    },
+    "global_wipe": {
+      "trackId": "E_待试听_未命名或特殊房间/[030s] 恶魔.ogg",
+      "status": "pending",
+      "comment": ""
+    },
+    "deadmines_travel": {
+      "trackId": "A_主力长曲_55s以上/[060s] Level 1 _SEARCH _bpm128 _in D _Rv103_.ogg",
+      "status": "pending",
+      "comment": ""
+    },
+    "deadmines_boss": {
+      "trackId": "B_可用曲目_40至55s/[045s] Level 1 _FLIGHT _bpm128 _in D _Rv103_.ogg",
+      "status": "pending",
+      "comment": ""
+    },
+    "deadmines_final": {
+      "trackId": "B_可用曲目_40至55s/[050s] Neon Abyss BOSS _Rv01_ BODY (135bpm).ogg",
+      "status": "pending",
+      "comment": ""
+    },
+    "shadowfang_travel": {
+      "trackId": "A_主力长曲_55s以上/[060s] Level 3 _Rv09_ SEARCHING.ogg",
+      "status": "pending",
+      "comment": ""
+    },
+    "shadowfang_boss": {
+      "trackId": "A_主力长曲_55s以上/[060s] Level 3 _Rv09_ FIGHTING.ogg",
+      "status": "pending",
+      "comment": ""
+    },
+    "shadowfang_final": {
+      "trackId": "A_主力长曲_55s以上/[057s] Neon Abyss BOSS 3 Rv03_ BODY.ogg",
+      "status": "pending",
+      "comment": ""
+    },
+    "scarlet_travel": {
+      "trackId": "A_主力长曲_55s以上/[060s] Level 4 SEARCH _bpm128 _Rv02_.ogg",
+      "status": "pending",
+      "comment": ""
+    },
+    "scarlet_boss": {
+      "trackId": "C_战斗短循环_28至40s/[030s] Level 4 FIGHT _bpm128 _Rv02_.ogg",
+      "status": "pending",
+      "comment": ""
+    },
+    "scarlet_final": {
+      "trackId": "C_战斗短循环_28至40s/[031s] Level 4 BOSS _Rv03_ BODY 140bpm.ogg",
+      "status": "pending",
+      "comment": ""
+    },
+    "stratholme_travel": {
+      "trackId": "B_可用曲目_40至55s/[046s] Level 2 _SEARCH _bpm126 _Rv05_.ogg",
+      "status": "pending",
+      "comment": ""
+    },
+    "stratholme_boss": {
+      "trackId": "B_可用曲目_40至55s/[046s] Level 2 _FIGHT _bpm126 _Rv05_.ogg",
+      "status": "pending",
+      "comment": ""
+    },
+    "stratholme_final": {
+      "trackId": "A_主力长曲_55s以上/[057s] Neon Abyss BOSS 2 _Rv203_ BODY bpm135.ogg",
+      "status": "pending",
+      "comment": ""
+    },
+    "zulgurub_travel": {
+      "trackId": "A_主力长曲_55s以上/[060s] Neon Aybss - Level 5 Seach bpm127 Rv01_.ogg",
+      "status": "pending",
+      "comment": ""
+    },
+    "zulgurub_boss": {
+      "trackId": "C_战斗短循环_28至40s/[030s] Neon Aybss - Level 5 Fight bpm127 Rv02_.ogg",
+      "status": "pending",
+      "comment": ""
+    },
+    "zulgurub_final": {
+      "trackId": "C_战斗短循环_28至40s/[028s] Neon Abyss Boss 5 _Rv04_ bpm135 _BODY.ogg",
+      "status": "pending",
+      "comment": ""
+    },
+    "dragonsoul_travel": {
+      "trackId": "A_主力长曲_55s以上/[062s] Neon Aybss - Level 7 _Search bpm124 _Rv01_.ogg",
+      "status": "pending",
+      "comment": ""
+    },
+    "dragonsoul_boss": {
+      "trackId": "C_战斗短循环_28至40s/[031s] Neon Aybss - Level 7 _Fight bpm124 _Rv01_.ogg",
+      "status": "pending",
+      "comment": ""
+    },
+    "dragonsoul_final": {
+      "trackId": "A_主力长曲_55s以上/[073s] Music_athena_02.ogg",
+      "status": "pending",
+      "comment": ""
+    }
+  },
+  "tracks": {
+    "A_主力长曲_55s以上/[057s] Neon Abyss BOSS 2 _Rv203_ BODY bpm135.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "分配给boss，快节奏活泼搞笑逗比boss（boss没特别说明就一个boss固定分一个）"
+    },
+    "A_主力长曲_55s以上/[057s] Neon Abyss BOSS 3 Rv03_ BODY.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "分配给boss，快节奏（boss没特别说明就一个boss固定分一个）"
+    },
+    "A_主力长曲_55s以上/[060s] Level 1 _SEARCH _bpm128 _in D _Rv103_.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "分配给boss，音量过小建议导入时平均音量有这么大的 都校准到boss房同一平均水平"
+    },
+    "A_主力长曲_55s以上/[060s] Level 3 _Rv09_ FIGHTING.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "分配给boss，快节奏（boss没特别说明就一个boss固定分一个），音量过大建议导入时平均音量有这么大的 都校准到boss房同一平均水平"
+    },
+    "A_主力长曲_55s以上/[060s] Level 3 _Rv09_ SEARCHING.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "分配给boss，空灵感森林、矿洞、探险（boss没特别说明就一个boss固定分一个）"
+    },
+    "A_主力长曲_55s以上/[060s] Level 4 SEARCH _bpm128 _Rv02_.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "分配给boss，快节奏（boss没特别说明就一个boss固定分一个）"
+    },
+    "A_主力长曲_55s以上/[060s] Music_athena.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "分配给boss，快节奏（boss没特别说明就一个boss固定分一个）"
+    },
+    "A_主力长曲_55s以上/[060s] Neon Aybss - Level 5 Seach bpm127 Rv01_.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "分配给boss，快节奏（boss没特别说明就一个boss固定分一个）"
+    },
+    "A_主力长曲_55s以上/[062s] Neon Aybss - Level 7 _Search bpm124 _Rv01_.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "分配给boss，快节奏（boss没特别说明就一个boss固定分一个）"
+    },
+    "A_主力长曲_55s以上/[073s] Music_athena_02.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "分配给boss，快节奏（boss没特别说明就一个boss固定分一个）"
+    },
+    "B_可用曲目_40至55s/[044s] Neon Abyss BOSS _Rv01_ BODY EXPLOSION (135bpm).ogg": {
+      "status": "drop",
+      "tag": "未指定",
+      "comment": ""
+    },
+    "B_可用曲目_40至55s/[045s] Level 1 _FLIGHT _bpm128 _in D _Rv103_.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "分配给boss，快节奏（boss没特别说明就一个boss固定分一个）"
+    },
+    "B_可用曲目_40至55s/[045s] Neon Abyss - Level 6 _Search _bpm129 _Rv01_.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "分配给boss，偏法术度系女巫（boss没特别说明就一个boss固定分一个）"
+    },
+    "B_可用曲目_40至55s/[046s] Level 2 _FIGHT _bpm126 _Rv05_.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "分配给boss，快节奏（boss没特别说明就一个boss固定分一个）"
+    },
+    "B_可用曲目_40至55s/[046s] Level 2 _SEARCH _bpm126 _Rv05_.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "分配给boss，偏法术毒系（boss没特别说明就一个boss固定分一个）"
+    },
+    "B_可用曲目_40至55s/[050s] Neon Abyss BOSS _Rv01_ BODY (135bpm).ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "分配给boss，快节奏（boss没特别说明就一个boss固定分一个）"
+    },
+    "C_战斗短循环_28至40s/[028s] Neon Abyss Boss 5 _Rv04_ bpm135 _BODY.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "分配给boss，快节奏（boss没特别说明就一个boss固定分一个）"
+    },
+    "C_战斗短循环_28至40s/[029s] Music_final.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "分配给boss，快节奏（boss没特别说明就一个boss固定分一个）"
+    },
+    "C_战斗短循环_28至40s/[030s] Level 4 FIGHT _bpm128 _Rv02_.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "分配给boss，快节奏（boss没特别说明就一个boss固定分一个）"
+    },
+    "C_战斗短循环_28至40s/[030s] Neon Abyss - Level 6 _Fight _bpm129 _Rv01_.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "分配给boss，快节奏（boss没特别说明就一个boss固定分一个）"
+    },
+    "C_战斗短循环_28至40s/[030s] Neon Aybss - Level 5 Fight bpm127 Rv02_.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "分配给boss，快节奏（boss没特别说明就一个boss固定分一个）"
+    },
+    "C_战斗短循环_28至40s/[031s] Level 4 BOSS _Rv03_ BODY 140bpm.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "分配给boss，快节奏（boss没特别说明就一个boss固定分一个）"
+    },
+    "C_战斗短循环_28至40s/[031s] Neon Aybss - Level 7 _Fight bpm124 _Rv01_.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "分配给boss，快节奏（boss没特别说明就一个boss固定分一个）"
+    },
+    "C_战斗短循环_28至40s/[038s] Music_final2.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "用于账户未登录的阶段"
+    },
+    "D_开场与结算_INTRO_OUTRO/[000s] wheel stab.ogg": {
+      "status": "star",
+      "tag": "未指定",
+      "comment": ""
+    },
+    "D_开场与结算_INTRO_OUTRO/[002s] Level_9_outro.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "用于全体友方增益buff类技能（爪子等）"
+    },
+    "D_开场与结算_INTRO_OUTRO/[002s] Neon Aybss - Level 7 _INTRO bpm124 _Rv01_.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "用于过boss非最后关"
+    },
+    "D_开场与结算_INTRO_OUTRO/[003s] SP_1_outro.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "用于过boss非最后关（一个副本指派一个同类）"
+    },
+    "D_开场与结算_INTRO_OUTRO/[004s] Level 3 _Rv09_ INTRO.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "用于从房间进本"
+    },
+    "D_开场与结算_INTRO_OUTRO/[004s] Level_10_outro.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "用于过boss非最后关（一个副本指派一个同类）"
+    },
+    "D_开场与结算_INTRO_OUTRO/[004s] Level_8_outro.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "用于团灭（团灭列表固定副本指派一个）"
+    },
+    "D_开场与结算_INTRO_OUTRO/[004s] Neon Abyss - Level 6 _INTRO _bpm129 _Rv01_.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "用于团灭（团灭列表固定副本指派一个）"
+    },
+    "D_开场与结算_INTRO_OUTRO/[004s] Neon Aybss - Level 5 INTRO bpm127 _Rv01_.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "用于过boss非最后关（一个副本指派一个同类）"
+    },
+    "D_开场与结算_INTRO_OUTRO/[004s] Neon Aybss - Level 5 OUTRO bpm127 _Rv01_.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "用于过boss最后关也就是副本通关（每个副本指派一个大通关音效）"
+    },
+    "D_开场与结算_INTRO_OUTRO/[004s] Neon Aybss - Level 7 _OUTRO bpm124 _Rv01_.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "用于过boss最后关也就是副本通关（每个副本指派一个大通关音效）"
+    },
+    "D_开场与结算_INTRO_OUTRO/[006s] Level 1 _INRTO _bpm128 _in D _Rv103_.ogg": {
+      "status": "star",
+      "tag": "未指定",
+      "comment": ""
+    },
+    "D_开场与结算_INTRO_OUTRO/[006s] Level 4 INTRO _bpm128 _Rv02_.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "用于团灭（团灭列表固定副本指派一个）"
+    },
+    "D_开场与结算_INTRO_OUTRO/[006s] Neon Abyss - Level 6 _OUTRO _bpm129 _Rv01_.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "用于团灭（团灭列表固定副本指派一个）"
+    },
+    "D_开场与结算_INTRO_OUTRO/[006s] Neon Abyss Boss 5 _Rv01_ bpm135 _OUTRO.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "用于团灭（团灭列表固定副本指派一个）"
+    },
+    "D_开场与结算_INTRO_OUTRO/[007s] Level 3 _OUTRO _bpm128 _Rv09_ 选择1.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "用于团灭（团灭列表固定副本指派一个）"
+    },
+    "D_开场与结算_INTRO_OUTRO/[007s] Level 4 BOSS _Rv03_ INTRO 140bpm.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "用于过boss最后关也就是副本通关（每个副本指派一个大通关音效）"
+    },
+    "D_开场与结算_INTRO_OUTRO/[007s] Neon Abyss BOSS 2 _Rv202_ INTRO bpm135.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "用于过boss最后关也就是副本通关（每个副本指派一个大通关音效）"
+    },
+    "D_开场与结算_INTRO_OUTRO/[007s] Neon Abyss BOSS 3 Rv03_ INTRO.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "用于过boss最后关也就是副本通关（每个副本指派一个大通关音效）"
+    },
+    "D_开场与结算_INTRO_OUTRO/[007s] Neon Abyss BOSS _Rv01_ INTRO (135bpm).ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "用于过boss最后关也就是副本通关（每个副本指派一个大通关音效）"
+    },
+    "D_开场与结算_INTRO_OUTRO/[007s] Neon Abyss Boss 5 _Rv01_ bpm135 _INTRO.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "用于过boss最后关也就是副本通关（每个副本指派一个大通关音效）"
+    },
+    "D_开场与结算_INTRO_OUTRO/[008s] 10949.ogg": {
+      "status": "drop",
+      "tag": "未指定",
+      "comment": "鼓掌 暂不用"
+    },
+    "D_开场与结算_INTRO_OUTRO/[008s] Level 1 _OUTRO _bpm128 _in D _Rv103_.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "用于团灭（团灭列表固定副本指派一个）"
+    },
+    "D_开场与结算_INTRO_OUTRO/[008s] Level 2 _INTRO _bpm126 _Rv05_.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "用于过boss非最后关也就是副本通关（每个副本指派一个小通关音效）"
+    },
+    "D_开场与结算_INTRO_OUTRO/[008s] Level 2 _OUTRO _bpm126 _Rv05_.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "用于团灭（团灭列表固定副本指派一个）"
+    },
+    "D_开场与结算_INTRO_OUTRO/[008s] Level 4 OUTRO _bpm128 _Rv02_.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "用于团灭（团灭列表固定副本指派一个）"
+    },
+    "D_开场与结算_INTRO_OUTRO/[008s] Neon Abyss BOSS 3 Rv03_ OUTRO.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "用于团灭（团灭列表固定副本指派一个）"
+    },
+    "D_开场与结算_INTRO_OUTRO/[008s] Neon Abyss _Rv101_ INTRO TRANSITION (128bpm).ogg": {
+      "status": "drop",
+      "tag": "未指定",
+      "comment": ""
+    },
+    "D_开场与结算_INTRO_OUTRO/[009s] Level 4 BOSS _Rv03_ OUTRO 140bpm.ogg": {
+      "status": "drop",
+      "tag": "未指定",
+      "comment": ""
+    },
+    "D_开场与结算_INTRO_OUTRO/[009s] Neon Abyss BOSS 2 _Rv202_ OUTRO bpm135.ogg": {
+      "status": "drop",
+      "tag": "未指定",
+      "comment": "用于团灭（团灭列表固定副本指派一个）"
+    },
+    "D_开场与结算_INTRO_OUTRO/[009s] Neon Abyss BOSS _Rv01_ OUTRO (135bpm).ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "用于团灭（团灭列表固定副本指派一个）"
+    },
+    "D_开场与结算_INTRO_OUTRO/[015s] Neon Abyss Black Market _Rv100 (128bpm).ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "房间等待"
+    },
+    "D_开场与结算_INTRO_OUTRO/[015s] Neon Abyss Black Market _Rv201 (128bpm).ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "房间等待"
+    },
+    "D_开场与结算_INTRO_OUTRO/[019s] gameroom_track1.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "用于在房间等待（列表随机）"
+    },
+    "D_开场与结算_INTRO_OUTRO/[019s] gameroom_track2.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "用于在房间等待（列表随机）"
+    },
+    "E_待试听_未命名或特殊房间/[021s] Music.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "用于在房间外（列表）"
+    },
+    "E_待试听_未命名或特殊房间/[022s] 滚字幕.ogg": {
+      "status": "star",
+      "tag": "未指定",
+      "comment": ""
+    },
+    "E_待试听_未命名或特殊房间/[026s] fishingroom_track1.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "随机分配给迷宫"
+    },
+    "E_待试听_未命名或特殊房间/[026s] fishingroom_track2.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "随机分配给迷宫"
+    },
+    "E_待试听_未命名或特殊房间/[030s] Neon Abyss Holy Room _Rv01_ (128bpm).ogg": {
+      "status": "pending",
+      "tag": "未指定",
+      "comment": "用于在房间等待（列表循环）"
+    },
+    "E_待试听_未命名或特殊房间/[030s] 恶魔.ogg": {
+      "status": "drop",
+      "tag": "未指定",
+      "comment": ""
+    },
+    "E_待试听_未命名或特殊房间/[031s] Test_Fighting_1.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "分配给boss，快节奏（boss没特别说明就一个boss固定分一个）"
+    },
+    "E_待试听_未命名或特殊房间/[032s] 06.Huge Crowd Applause-Cheers, Int.ogg": {
+      "status": "drop",
+      "tag": "未指定",
+      "comment": ""
+    },
+    "E_待试听_未命名或特殊房间/[032s] Test_Fighting_2.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "分配给boss，快节奏（boss没特别说明就一个boss固定分一个）"
+    },
+    "E_待试听_未命名或特殊房间/[032s] animation_music.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "分配给boss，快节奏（boss没特别说明就一个boss固定分一个）"
+    },
+    "E_待试听_未命名或特殊房间/[032s] 赌博.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "用在boss身份跟钱有关系的boss"
+    },
+    "E_待试听_未命名或特殊房间/[033s] game_muse.ogg": {
+      "status": "star",
+      "tag": "未指定",
+      "comment": "欢乐"
+    },
+    "E_待试听_未命名或特殊房间/[033s] 天使.ogg": {
+      "status": "star",
+      "tag": "未指定",
+      "comment": ""
+    },
+    "E_待试听_未命名或特殊房间/[034s] Test_Fighting_3.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "分配给boss，快节奏（boss没特别说明就一个boss固定分一个）"
+    },
+    "E_待试听_未命名或特殊房间/[040s] Test_Fighting_4.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": ""
+    },
+    "E_待试听_未命名或特殊房间/[041s] 1.5.ogg": {
+      "status": "drop",
+      "tag": "未指定",
+      "comment": ""
+    },
+    "E_待试听_未命名或特殊房间/[044s] progress_bg.ogg": {
+      "status": "pending",
+      "tag": "未指定",
+      "comment": ""
+    },
+    "E_待试听_未命名或特殊房间/[055s] chan_music.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "用于在房间外（列表）"
+    },
+    "E_待试听_未命名或特殊房间/[062s] Test_Searching_1.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "分配给boss，未来感、科技感、机器人（boss没特别说明就一个boss固定分一个）"
+    },
+    "E_待试听_未命名或特殊房间/[064s] Test_Searching_2.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "分配给boss，快节奏（boss没特别说明就一个boss固定分一个）"
+    },
+    "E_待试听_未命名或特殊房间/[066s] Test_Searching_3.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "分配给boss，快节奏（boss没特别说明就一个boss固定分一个）"
+    },
+    "E_待试听_未命名或特殊房间/[066s] Test_Searching_4.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "分配给boss，未来感（boss没特别说明就一个boss固定分一个）"
+    },
+    "E_待试听_未命名或特殊房间/[066s] Untitled.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "房间等待"
+    },
+    "E_待试听_未命名或特殊房间/[067s] 20-4-21-霓虹-bpm100(1).ogg": {
+      "status": "drop",
+      "tag": "未指定",
+      "comment": ""
+    },
+    "E_待试听_未命名或特殊房间/[093s] dream punk3.2.ogg": {
+      "status": "drop",
+      "tag": "未指定",
+      "comment": ""
+    },
+    "E_待试听_未命名或特殊房间/[096s] normal.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "可以用来给一般boss分配（同一个boss用一首除非特别说明分阶段）"
+    },
+    "E_待试听_未命名或特殊房间/[128s] 普通.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "加入房间等待列表"
+    },
+    "F_环境音_雨声雷声/[004s] thunder2.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "最后一关团灭"
+    },
+    "F_环境音_雨声雷声/[008s] thunder1.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "最后一关团灭"
+    },
+    "F_环境音_雨声雷声/[009s] thunder4.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "最后一关团灭"
+    },
+    "F_环境音_雨声雷声/[012s] thunder3.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "最后一关团灭"
+    },
+    "F_环境音_雨声雷声/[036s] ambient_forest.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "房间等待"
+    },
+    "F_环境音_雨声雷声/[036s] ambient_lake.ogg": {
+      "status": "keep",
+      "tag": "未指定",
+      "comment": "房间等待"
+    },
+    "F_环境音_雨声雷声/[105s] Rain..ogg": {
+      "status": "drop",
+      "tag": "未指定",
+      "comment": ""
+    }
+  }
+}

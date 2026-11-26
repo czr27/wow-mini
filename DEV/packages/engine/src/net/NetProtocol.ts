@@ -406,7 +406,56 @@ export type NetMessageType =
   | 'VOTE_STATE'
   | 'VOTE_RESULT'
   | 'CAST_INTERRUPT'
+  | 'GM_COMMAND'
+  | 'ROOM_CHAT'
   | 'ERROR';
+
+export type RoomChatSenderKind = 'PLAYER' | 'BOSS' | 'SYSTEM';
+
+export interface RoomChatMessage {
+  id: string;
+  roomId: string;
+  senderId: string;
+  senderName: string;
+  senderKind: RoomChatSenderKind;
+  classId?: ClassId;
+  text: string;
+  atMs: number;
+}
+
+export interface RoomChatSendPayload {
+  text: string;
+  senderKind?: RoomChatSenderKind;
+  senderName?: string;
+  senderId?: string;
+  classId?: ClassId;
+}
+
+export type GmCommandKind =
+  | 'FRIENDLY_HP_PCT'
+  | 'FRIENDLY_FULL_RESTORE'
+  | 'ENEMY_HP_PCT'
+  | 'ENEMY_SET_HP_ONE'
+  | 'ENEMY_KILL_ALL'
+  | 'ENEMY_DMG_MULT'
+  | 'TRIGGER_BOSS_SKILL'
+  | 'RESET_COOLDOWNS'
+  | 'CLEAR_GROUND_HAZARDS'
+  | 'FAST_FORWARD_10S'
+  | 'SKIP_TRAVEL'
+  | 'SPAWN_WILD_PACK'
+  | 'TOGGLE_FRIENDLY_INVINCIBLE'
+  | 'TOGGLE_ENEMY_INVINCIBLE';
+
+export interface GmCommandPayload {
+  playerId: string;
+  kind: GmCommandKind;
+  deltaPct?: number;
+  mult?: number;
+  skillId?: string;
+  count?: number;
+  enabled?: boolean;
+}
 
 export interface NetEnvelope<T = unknown> {
   type: NetMessageType;

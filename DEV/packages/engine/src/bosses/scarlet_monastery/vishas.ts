@@ -1,4 +1,5 @@
 import type { BossEncounterModule, BossSkill } from '../core/BossTypes.js';
+import { pickWeightedBossTarget } from '../core/BossTargetPicker.js';
 
 function living(engine: any) {
   return engine.friendlyUnits.filter((u: any) => (u.alive ?? u.isAlive) && (u.hp ?? 0) > 0);
@@ -24,7 +25,7 @@ export const VishasEncounter: BossEncounterModule = {
         description: '可驱散暗影 DoT',
         execute: (boss, engine) => {
           const pool = living(engine);
-          const t = pool[Math.floor(Math.random() * Math.max(1, pool.length))];
+          const t = pickWeightedBossTarget(pool);
           if (!t) return;
           engine.applyBuff(t, {
             id: `swp_${Date.now()}`,

@@ -73,7 +73,7 @@ describe('DBM 精简播报、短语音与顶替规则', () => {
 
   it('3. 即将施放会被正在施放通过相同 replaceKey 直接顶替，不新起一条', () => {
     const engine = new CombatEngine();
-    const boss = engine.spawnBoss('morchok', '莫卓克', 1_000_000);
+    const boss = engine.spawnBoss('ashbury', '亚什布里男爵', 1_000_000);
     spawnCombatUnit(engine, {
       id: 'tank_1',
       name: '防战',
@@ -83,25 +83,25 @@ describe('DBM 精简播报、短语音与顶替规则', () => {
       position: { x: 520, y: 190 },
     });
 
-    const ai = new BaseBossAI('morchok', 'dragon_soul');
-    const stomp = ai.skills.find((s) => s.id === 'stomp')!;
+    const ai = new BaseBossAI('ashbury', 'shadowfang_keep');
+    const asphyx = ai.skills.find((s) => s.id === 'asphyxiate')!;
     for (const s of ai.skills) {
-      if (s.id !== 'stomp') s.lastCastMs = engine.nowMs;
+      if (s.id !== 'asphyxiate') s.lastCastMs = engine.nowMs;
     }
 
     // 1) 即将就绪（剩余 2s < preWarnMs 3s）发出即将施放
-    stomp.lastCastMs = engine.nowMs - (stomp.cooldownMs - 2000);
+    asphyx.lastCastMs = engine.nowMs - (asphyx.cooldownMs - 2000);
     ai.tick(50, boss, engine);
     // 2) 同一帧缓冲内进入冷却就绪并开始读条，发出正在施放并直接顶替
     engine.elapsedMs += 2050;
     ai.tick(50, boss, engine);
 
     const alerts = engine.drainDbmAlerts();
-    const stompAlerts = alerts.filter((a) => a.spellId === 'stomp');
-    assert.equal(stompAlerts.length, 1);
-    assert.ok(stompAlerts[0].title.includes('正在施放'));
-    assert.equal(stompAlerts[0].replaceKey, 'skill_morchok_stomp');
-    assert.equal(stompAlerts[0].voiceText, '近距分摊');
+    const asphyxAlerts = alerts.filter((a) => a.spellId === 'asphyxiate');
+    assert.equal(asphyxAlerts.length, 1);
+    assert.ok(asphyxAlerts[0].title.includes('正在施放'));
+    assert.equal(asphyxAlerts[0].replaceKey, 'skill_ashbury_asphyxiate');
+    assert.equal(asphyxAlerts[0].voiceText, '准备抬血');
   });
 
   it('4. 召唤增援小怪触发「先杀小怪」，地面普通红圈不再自动刷屏', () => {
@@ -199,8 +199,11 @@ describe('DBM 精简播报、短语音与顶替规则', () => {
     });
 
     const glubAi = new BaseBossAI('glubtok', 'deadmines');
-    glubtok.hp = 200_000; // <= 50% 触发 P2
+    glubtok.hp = Math.round(glubtok.maxHp * 0.4); // <= 50% 触发 P2，此时火墙尚未出现，不提前误报
     glubAi.tick(100, glubtok, engine);
+    assert.equal(engine.drainDbmAlerts().length, 0);
+    // 8s 后火墙真正生成时才触发「躲避火墙」
+    glubAi.tick(8000, glubtok, engine);
     const glubAlerts = engine.drainDbmAlerts();
     assert.equal(glubAlerts.length, 1);
     assert.equal(glubAlerts[0].voiceText, '躲避火墙');
@@ -212,5 +215,66 @@ describe('DBM 精简播报、短语音与顶替规则', () => {
     const herodAi = new BaseBossAI('herod', 'scarlet_monastery');
     assert.equal(herodAi.skills.find((s) => s.id === 'herod_strike')?.dbm, undefined);
     assert.equal(herodAi.skills.find((s) => s.id === 'whirlwind')?.dbm?.voiceText, '注意远离');
+  });
+
+  it('8. 同波次刷出多只小怪时自动合并为一条 DBM 提示，不刷屏', () => {
+    const engine = new CombatEngine();
+    for (let i = 1; i <= 4; i++) {
+      spawnCombatUnit(engine, {
+        id: `tentacle_${i}`,
+        name: `虚空触须 ${i}`,
+        classId: 'NPC',
+        role: 'ENEMY',
+        unitKind: 'ADD',
+        hp: 50000,
+        maxHp: 50000,
+      });
+    }
+    const alerts = engine.drainDbmAlerts();
+    assert.equal(alerts.length, 1);
+    assert.equal(alerts[0].title, '增援：虚空触须 ×4');
+    assert.equal(alerts[0].advice, '先杀小怪');
+    assert.equal(alerts[0].replaceKey, 'runtime_add_wave');
+  });
+
+  it('9. 普通可打断填充技能不触发「注意打断」，仅高威胁/强负面可打断技能报警', () => {
+    const balnazzarAi = new BaseBossAI('balnazzar', 'stratholme');
+    // 暗影箭为常规填充箭：不报警；心灵控制为强负面效应：报警
+    assert.equal((balnazzarAi as any).dbmRulesMap.has('shadow_bolt'), false);
+    assert.equal((balnazzarAi as any).dbmRulesMap.get('mind_control')?.voiceText, '注意打断');
+
+    const thalnorenAi = new BaseBossAI('thalnoren', 'scarlet_monastery');
+    assert.equal((thalnorenAi as any).dbmRulesMap.has('flame_spike'), false);
+
+    const venoxisAi = new BaseBossAI('venoxis', 'zulgurub');
+    assert.equal((venoxisAi as any).dbmRulesMap.get('whispers_of_hethiss')?.voiceText, '注意打断');
+  });
+
+  it('10. 同名 DBM 7 秒内不重复报告两遍，超过 7 秒后可再次触发', () => {
+    const engine = new CombatEngine();
+    const a1 = engine.emitDbmAlert({
+      atMs: 1000,
+      title: '正在施放：旋风斩',
+      advice: '近战远离旋风斩范围',
+      voiceText: '注意远离',
+      severity: 'WARN',
+    });
+    const a2 = engine.emitDbmAlert({
+      atMs: 5000,
+      title: '正在施放：旋风斩',
+      advice: '近战远离旋风斩范围',
+      voiceText: '注意远离',
+      severity: 'WARN',
+    });
+    const a3 = engine.emitDbmAlert({
+      atMs: 8500,
+      title: '正在施放：旋风斩',
+      advice: '近战远离旋风斩范围',
+      voiceText: '注意远离',
+      severity: 'WARN',
+    });
+    assert.ok(a1);
+    assert.equal(a2, null, '7s 内同名 DBM 必须被过滤');
+    assert.ok(a3, '超过 7s 后同名 DBM 应允许再次触发');
   });
 });

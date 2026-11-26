@@ -2,16 +2,24 @@ import type { BossEncounterModule, BossSkill } from '../core/BossTypes.js';
 import type { CombatEngine } from '../../engine/CombatEngine.js';
 import type { Unit } from '../../types.js';
 import { spawnCombatUnit } from '../../engine/UnitSpawn.js';
+import { pickWeightedBossTarget } from '../core/BossTargetPicker.js';
 
 export const DISRUPTING_SHADOWS_ID = 'disrupting_shadows';
 export const VOID_TENTACLE_SUMMON = 'zonozz_void_tentacle';
 export const FOCUSED_ANGER_ID = 'focused_anger';
+export const BLACK_BLOOD_CARRIER_ID = 'black_blood_ball_carrier';
+export const ZONOZZ_BALL_TARGET_GROUND_ID = 'zonozz_ball_target';
+
+const ZONOZZ_BALL_DURATION_MS = 8000;
+const ZONOZZ_BALL_EARLY_COLLIDE_MS = 1500;
+const ZONOZZ_BALL_HIT_RADIUS = 100;
 
 export type ZonozzAiState = {
   zonozzFightMs?: number;
   zonozzPhase?: 'main' | 'void';
   zonozzPhaseAcc?: number;
   zonozzBallCarrierId?: string;
+  zonozzBallSpawnedAt?: number;
   zonozzBallResolveAt?: number;
   zonozzAngerStacks?: number;
   skills?: BossSkill[];
@@ -69,7 +77,7 @@ export const ZonozzEncounter: BossEncounterModule = {
         execute: (boss, engine) => {
           if (ai.zonozzPhase === 'void') return;
           const pool = living(engine).filter(u => u.role !== 'TANK');
-          const t = pool[Math.floor(Math.random() * Math.max(1, pool.length))];
+          const t = pickWeightedBossTarget(pool);
           if (!t) return;
           engine.applyBuff(t, {
             id: `ds_${Date.now()}_${t.id}`,
@@ -108,13 +116,74 @@ export const ZonozzEncounter: BossEncounterModule = {
         execute: (boss, engine) => {
           if (ai.zonozzPhase === 'void') return;
           const carriers = living(engine).filter(u => u.role === 'DPS' || u.role === 'HEALER');
-          const carrier = carriers[Math.floor(Math.random() * Math.max(1, carriers.length))] || living(engine)[0];
+          const carrier = pickWeightedBossTarget(carriers) || pickWeightedBossTarget(living(engine));
           if (!carrier) return;
+          const nowFight = ai.zonozzFightMs || 0;
           ai.zonozzBallCarrierId = carrier.id;
-          ai.zonozzBallResolveAt = (ai.zonozzFightMs || 0) + 8000;
+          ai.zonozzBallSpawnedAt = nowFight;
+          ai.zonozzBallResolveAt = nowFight + ZONOZZ_BALL_DURATION_MS;
+
+          // Clear any leftover ball carrier buffs / boss target rings
+          for (const u of engine.friendlyUnits) {
+            if (u.buffs?.length) {
+              u.buffs = u.buffs.filter(b => b.spellId !== BLACK_BLOOD_CARRIER_ID);
+            }
+          }
+          if (engine.effectsManager?.groundEffects) {
+            engine.effectsManager.groundEffects = engine.effectsManager.groundEffects.filter(
+              g => g.spellId !== ZONOZZ_BALL_TARGET_GROUND_ID,
+            );
+          }
+
+          // Visible carrier buff (syncs to guests + shows in HUD + canvas orb)
+          engine.applyBuff(carrier, {
+            id: `bbb_${Date.now()}_${carrier.id}`,
+            spellId: BLACK_BLOOD_CARRIER_ID,
+            name: '⚫ 黑光球 (靠近Boss撞击)',
+            kind: 'DEBUFF',
+            tags: ['DEBUFF'],
+            sourceUnitId: boss.id,
+            targetUnitId: carrier.id,
+            durationMs: ZONOZZ_BALL_DURATION_MS,
+            remainingMs: ZONOZZ_BALL_DURATION_MS,
+            stacks: 1,
+            maxStacks: 1,
+            school: 'SHADOW',
+          });
+
+          // Visible 100px target ring around Boss (syncs to guests)
+          const bPos = boss.position || { x: 500, y: 200 };
+          engine.effectsManager?.addGroundEffect({
+            id: `${ZONOZZ_BALL_TARGET_GROUND_ID}_${Date.now()}`,
+            kind: 'HEAL_ZONE',
+            spellId: ZONOZZ_BALL_TARGET_GROUND_ID,
+            ownerId: boss.id,
+            x: bPos.x,
+            y: bPos.y,
+            radius: ZONOZZ_BALL_HIT_RADIUS,
+            colorHex: '#A855F7',
+            remainingMs: ZONOZZ_BALL_DURATION_MS,
+            tickIntervalMs: 1000,
+            tickValue: 0,
+          });
+
+          engine.emitDbmAlert?.({
+            title: `⚫ 黑光球点名：${carrier.name}`,
+            advice: carrier.isPlayer
+              ? '你身上有黑光球！立刻移动进入 Boss 紫色圆环撞击！'
+              : `持球者 ${carrier.name} 需在 8 秒内进入 Boss 紫色圆环撞击！`,
+            voiceText: '分摊撞球',
+            severity: 'WARN',
+            roleHint: 'ALL',
+            spellId: 'black_blood_ball',
+            source: 'RUNTIME',
+            dedupeKey: 'zonozz_black_blood_ball',
+            cooldownMs: 3000,
+          });
+
           engine.effectsManager?.addFloatingText({
             targetId: carrier.id,
-            text: '⚫ 黑光球！靠近 Boss 传球撞击！',
+            text: '⚫ 黑光球！进入 Boss 紫圈撞击！',
             category: 'STATUS',
             isCrit: true,
           });
@@ -139,7 +208,7 @@ export const ZonozzEncounter: BossEncounterModule = {
           for (let i = 0; i < n; i++) {
             spawnCombatUnit(engine, {
               id: `tentacle_${Date.now()}_${i}`,
-              name: `虚空触须 ${i + 1}`,
+              name: '虚空触须',
               unitKind: 'ADD',
               role: 'ENEMY',
               classId: 'NPC',
@@ -168,13 +237,41 @@ export const ZonozzEncounter: BossEncounterModule = {
     ai.zonozzFightMs = (ai.zonozzFightMs || 0) + deltaMs;
     if (!ai.zonozzPhase) ai.zonozzPhase = 'main';
 
-    // 黑光球结算
+    // 黑光球追踪、AI 跑位与撞击结算
     if (ai.zonozzBallCarrierId && ai.zonozzBallResolveAt != null) {
-      if ((ai.zonozzFightMs || 0) >= ai.zonozzBallResolveAt) {
-        const carrier = living(engine).find(u => u.id === ai.zonozzBallCarrierId);
-        const near =
-          carrier && dist(carrier.position || {}, boss.position || {}) <= 100;
-        if (near) {
+      const carrier = living(engine).find(u => u.id === ai.zonozzBallCarrierId);
+      const bPos = boss.position || { x: 500, y: 200 };
+
+      // Keep target ring centered on Boss
+      const targetRing = engine.effectsManager?.groundEffects?.find(
+        g => g.spellId === ZONOZZ_BALL_TARGET_GROUND_ID,
+      );
+      if (targetRing) {
+        targetRing.x = bPos.x;
+        targetRing.y = bPos.y;
+      }
+
+      // AI carrier runs toward Boss to collide the orb
+      if (carrier && !carrier.isPlayer && !carrier.isHumanControlled && carrier.position) {
+        const dx = bPos.x - carrier.position.x;
+        const dy = bPos.y - carrier.position.y;
+        const d = Math.hypot(dx, dy);
+        if (d > 45) {
+          const step = Math.min(d - 45, (110 * Math.max(0, deltaMs)) / 1000);
+          carrier.position = {
+            x: carrier.position.x + (dx / d) * step,
+            y: carrier.position.y + (dy / d) * step,
+          };
+        }
+      }
+
+      const near = !!(carrier && dist(carrier.position || {}, bPos) <= ZONOZZ_BALL_HIT_RADIUS);
+      const timedOut = (ai.zonozzFightMs || 0) >= ai.zonozzBallResolveAt;
+      const canEarlyCollide =
+        near && (ai.zonozzFightMs || 0) >= (ai.zonozzBallSpawnedAt || 0) + ZONOZZ_BALL_EARLY_COLLIDE_MS;
+
+      if (timedOut || canEarlyCollide) {
+        if (near && carrier) {
           ai.zonozzAngerStacks = (ai.zonozzAngerStacks || 0) + 1;
           const stacks = ai.zonozzAngerStacks;
           const existing = boss.buffs?.find(b => b.spellId === FOCUSED_ANGER_ID);
@@ -188,7 +285,7 @@ export const ZonozzEncounter: BossEncounterModule = {
               name: `专注愤怒 (${stacks})`,
               kind: 'DEBUFF',
               tags: ['DEBUFF'],
-              sourceUnitId: carrier!.id,
+              sourceUnitId: carrier.id,
               targetUnitId: boss.id,
               durationMs: 60_000,
               remainingMs: 60_000,
@@ -198,7 +295,7 @@ export const ZonozzEncounter: BossEncounterModule = {
             });
           }
           // 易伤窗口：额外打 Boss 一下表现爆发
-          engine.dealDamage(carrier!, boss, 80_000 * stacks, 'SHADOW', true, '黑光撞击');
+          engine.dealDamage(carrier, boss, 80_000 * stacks, 'SHADOW', true, '黑光撞击');
           engine.effectsManager?.addFloatingText({
             targetId: boss.id,
             text: `💥 黑光撞击！易伤 ${stacks} 层！`,
@@ -216,7 +313,20 @@ export const ZonozzEncounter: BossEncounterModule = {
             isCrit: true,
           });
         }
+
+        // Cleanup carrier buff & target ring
+        for (const u of engine.friendlyUnits) {
+          if (u.buffs?.length) {
+            u.buffs = u.buffs.filter(b => b.spellId !== BLACK_BLOOD_CARRIER_ID);
+          }
+        }
+        if (engine.effectsManager?.groundEffects) {
+          engine.effectsManager.groundEffects = engine.effectsManager.groundEffects.filter(
+            g => g.spellId !== ZONOZZ_BALL_TARGET_GROUND_ID,
+          );
+        }
         ai.zonozzBallCarrierId = undefined;
+        ai.zonozzBallSpawnedAt = undefined;
         ai.zonozzBallResolveAt = undefined;
       }
     }

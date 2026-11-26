@@ -10,6 +10,7 @@ import {
 } from '@cata-raid-sim/engine';
 import { syncUnitResources } from './unitResources.js';
 import { emitLocalAoePulse } from './emitLocalAoePulse.js';
+import { inferSpellSchool, playCombatSfx } from '../utils/combatSfx.js';
 
 export type ResolvePlayerCastCtx = {
   engine: CombatEngine;
@@ -495,6 +496,13 @@ export function resolvePlayerCast(
     if (totalCdMs && totalCdMs > 0) {
       onTriggerCooldown(spellId, totalCdMs);
     }
+
+    playCombatSfx({
+      kind: isHarmful ? 'spell_hit' : 'heal',
+      school: inferSpellSchool(spellId, normSpell?.name),
+      role: 'self',
+      actorId: player.id,
+    });
 
     return true;
 }

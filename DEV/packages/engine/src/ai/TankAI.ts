@@ -315,6 +315,23 @@ export function computeDungeonPriorityZone(
   const anchor = bossPos ?? { x: 500, y: 200 };
   const signals = [bossCastingSpellName || '', ...activeAdvices].filter(Boolean).join(' ');
 
+  // 最高优保命：ZUG 温诺希斯「毒性链接」— 被连线双方必须立刻彼此拉开 ≥ 95px 扯断链接
+  const hasToxicLink = unit.buffs?.some((b) => b.spellId === 'toxic_link');
+  if (hasToxicLink) {
+    const linkedPartner = allies.find(
+      (a) => a.id !== unit.id && a.unit?.buffs?.some((b) => b.spellId === 'toxic_link')
+    );
+    if (linkedPartner) {
+      return {
+        mode: 'SPREAD',
+        center: anchor,
+        radiusPx: 95,
+        allyPositions: [{ id: linkedPartner.id, x: linkedPartner.x, y: linkedPartner.y }],
+        label: '保命机制：拉开扯断毒性链接',
+      };
+    }
+  }
+
   const hasChestBomb =
     unit.buffs?.some((b) => b.spellId === 'chest_bomb') ||
     allies.some((a) => a.unit?.buffs?.some((b) => b.spellId === 'chest_bomb'));

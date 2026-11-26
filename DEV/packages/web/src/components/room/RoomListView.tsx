@@ -307,7 +307,6 @@ export const RoomListView: React.FC<RoomListViewProps> = ({
                               className={`font-mono font-bold ${
                                 playersFull ? 'text-slate-500' : 'text-emerald-400'
                               }`}
-                              title="总数(AI数) · 括号外=玩家+AI，括号内=AI"
                             >
                               {totalCount}/{quota.capacity} ({aiCount})
                             </span>
@@ -343,7 +342,6 @@ export const RoomListView: React.FC<RoomListViewProps> = ({
                         {!canJoin ? (
                           <span
                             className="px-3 py-1 rounded font-bold text-xs bg-slate-800 text-slate-500 border border-slate-700 cursor-not-allowed"
-                            title={joinBlockedReason}
                           >
                             {joinBlockedReason || '无法加入'}
                           </span>
@@ -351,11 +349,6 @@ export const RoomListView: React.FC<RoomListViewProps> = ({
                           <button
                             onClick={() => onJoinRoom(room.id)}
                             className="px-3 py-1 rounded font-bold text-xs bg-rose-600 hover:bg-rose-500 text-white shadow transition"
-                            title={
-                              room.difficulty === 'CUSTOM'
-                                ? '战斗中可加入并顶替 AI（优先坦克同职业→输出→治疗）'
-                                : '战斗中可加入游戏并顶替同职责 AI'
-                            }
                           >
                             加入游戏
                           </button>

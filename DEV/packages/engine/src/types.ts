@@ -783,6 +783,10 @@ export interface CharacterUiLayout {
   playerFrame?: UiPosition | null;
   targetFrame?: UiPosition | null;
   statsPanel?: UiPosition | null;
+  /** DBM 横幅位置（相对于顶部居中的偏移 x 与 y） */
+  dbmBanner?: UiPosition | null;
+  /** GM 测试面板位置 */
+  gmPanel?: UiPosition | null;
   /** 画布显示偏好（血条/名称/投掷物/地形） */
   combatDisplay?: CombatDisplayPrefs | null;
 }
@@ -811,6 +815,8 @@ export interface CharacterRecord {
   lastCustomDifficulty?: CustomDifficultySettings;
   // Per-character floating UI HUD layout (RaidFrames, Draggable ActionBar, etc.)
   uiLayout?: CharacterUiLayout;
+  /** GM 测试权限（跟随角色保存，由顶部当前角色分工图标连点 12 下解锁） */
+  isGm?: boolean;
 }
 
 export interface UserAccount {
@@ -827,6 +833,8 @@ export interface DungeonClearCertificate {
   id: string;
   dungeonId: string;
   dungeonName: string;
+  difficulty?: DungeonDifficulty;
+  is20Man?: boolean;
   clearedAtIso: string;
   characterName: string;
   characterClass: ClassId;

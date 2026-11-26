@@ -772,6 +772,17 @@ export class AccountManager {
     return char?.uiLayout ? { ...char.uiLayout } : null;
   }
 
+  public setCharacterGm(charId: string, isGm: boolean): boolean {
+    const acc = this.getCurrentAccount();
+    if (!acc) return false;
+    const char = acc.characters.find(c => c.id === charId);
+    if (!char) return false;
+    char.isGm = isGm;
+    this.touchCharacter(char, acc);
+    this.saveToStorage();
+    return true;
+  }
+
   private serverSyncTimer: any = null;
 
   /**

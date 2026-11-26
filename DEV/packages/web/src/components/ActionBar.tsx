@@ -7,6 +7,7 @@ import {
   type KeybindingMap,
   type ClassId,
   type SpellResourceCostBundle,
+  type UnitCrowdControlInfo,
 } from '@cata-raid-sim/engine';
 import { SPELL_ICONS, SPELL_TOOLTIPS } from '../assets/pixelIcons.js';
 import { sanitizeSavedActionBarPos, clampHudPosToViewport } from '../utils/hudLayout.js';
@@ -113,6 +114,7 @@ interface Props {
   activeGroundSpellId?: string | null;
   insufficientResourceSpells?: Record<string, boolean>;
   spellResourceErrors?: Record<string, string>;
+  crowdControl?: UnitCrowdControlInfo | null;
   initialPos?: { x: number; y: number } | null;
   onSavePos?: (pos: { x: number; y: number } | null) => void;
 }
@@ -178,6 +180,7 @@ export const ActionBar: React.FC<Props> = ({
   activeGroundSpellId = null,
   insufficientResourceSpells = {},
   spellResourceErrors = {},
+  crowdControl = null,
   initialPos = null,
   onSavePos,
 }) => {
@@ -343,9 +346,14 @@ export const ActionBar: React.FC<Props> = ({
     };
   }, []);
 
-  // 统一施法触发：资源不足拦截 + 超出施法距离拦截 + 界面红字报错
+  // 统一施法触发：受控拦截 + 资源不足拦截 + 超出施法距离拦截 + 界面红字报错
   const handleSlotCast = useCallback((idx: number) => {
     if (isPlayerDead) return;
+
+    if (crowdControl?.isControlled) {
+      triggerUIError(`⛓️ ${crowdControl.reason || '受控中，无法行动！'}`);
+      return;
+    }
 
     const slot = slots.find(s => s.slotIdx === idx);
     if (!slot) return;
@@ -562,7 +570,6 @@ export const ActionBar: React.FC<Props> = ({
                   key={idx}
                   className="w-5 h-5 rounded-full border border-black/60 flex items-center justify-center text-[9px] font-bold text-white relative overflow-hidden"
                   style={{ backgroundColor: isReady ? color : '#222' }}
-                  title={`${rune.type} ${isReady ? '就绪' : `${(rune.cdMs / 1000).toFixed(1)}s`}`}
                 >
                   {!isReady && (
                     <div
@@ -617,6 +624,17 @@ export const ActionBar: React.FC<Props> = ({
         </div>
       )}
 
+      {/* 受控/沉默状态横幅提示 */}
+      {crowdControl?.isControlled && !isPlayerDead && (
+        <div className="mb-1 px-3 py-0.5 rounded-full bg-red-950/90 border border-red-500/80 text-red-200 text-[11px] font-bold shadow-lg backdrop-blur-sm pointer-events-none select-none">
+          ⛓️ {crowdControl.spellName || '受控中'}
+          {crowdControl.remainingMs && crowdControl.remainingMs > 0
+            ? ` (${Math.max(1, Math.ceil(crowdControl.remainingMs / 1000))}s)`
+            : ''}{' '}
+          — 无法施放技能
+        </div>
+      )}
+
       {/* 技能栏上方弹出红色小字报错 (UIErrorsFrame: 法力值不足 / 能量不足 / 怒气不足 / 目标太远了) */}
       {uiErrorMessage && (
         <div
@@ -638,7 +656,6 @@ export const ActionBar: React.FC<Props> = ({
         className={`relative flex flex-col items-center space-y-1 bg-[#141424]/95 border-2 border-transparent group-hover/action-bar:border-[#2f2f4c] p-2 rounded-xl shadow-2xl backdrop-blur transition-colors ${
           isLocked ? 'cursor-default' : 'cursor-move'
         }`}
-        title={isLocked ? '动作条已锁定' : '拖动边框或空白处可移动动作条'}
       >
         <button
           type="button"
@@ -649,7 +666,6 @@ export const ActionBar: React.FC<Props> = ({
             setIsLocked(!isLocked);
           }}
           className="absolute -top-1 -right-1 z-40 w-5 h-5 flex items-center justify-center text-[11px] rounded bg-black/70 border border-[#3e3e5c] text-amber-300 opacity-0 pointer-events-none group-hover/action-bar:opacity-100 group-hover/action-bar:pointer-events-auto transition-opacity hover:bg-black/90"
-          title={isLocked ? '解锁动作条位置' : '锁定动作条位置'}
         >
           {isLocked ? '🔒' : '🔓'}
         </button>
@@ -695,7 +711,8 @@ export const ActionBar: React.FC<Props> = ({
                 ? Math.min(1, Math.max(0, (effectiveTotalCdMs - effectiveCdRemainingMs) / effectiveTotalCdMs))
                 : 1;
               const cdElapsedDeg = Math.min(360, Math.max(0, Math.round(cdElapsedProgress * 360)));
-              const isReadyToCast = slot && !isOnCd && !isCombatDisabled && !isResourceShort;
+              const isCrowdControlled = !!crowdControl?.isControlled;
+              const isReadyToCast = slot && !isOnCd && !isCombatDisabled && !isResourceShort && !isCrowdControlled;
               const isSlotPressed = !!pressedSlots[idx];
               const isGroundTargetActive = !!(activeGroundSpellId && slot?.spellId === activeGroundSpellId);
 
@@ -837,9 +854,13 @@ export const ActionBar: React.FC<Props> = ({
                       : 'border-[#222238] bg-[#0c0c18] hover:border-[#383856] cursor-default'
                   }`}
                 >
-                  {/* Player Dead Mask - darkness matches cooldown overlay (rgba 0.8) */}
-                  {isPlayerDead && (
-                    <div className="absolute inset-0 bg-black/80 z-20 pointer-events-none rounded-lg" />
+                  {/* Player Dead / Hard CC Mask */}
+                  {(isPlayerDead || (isCrowdControlled && !!slot)) && (
+                    <div
+                      className={`absolute inset-0 z-25 pointer-events-none rounded-lg ${
+                        isPlayerDead ? 'bg-black/80' : 'bg-black/70 backdrop-grayscale'
+                      }`}
+                    />
                   )}
 
                   {/* 资源不足（法力/能量/怒气不足）：技能图标直接变暗（灰化、变黑），图标饱和度降低，明显变暗淡 */}

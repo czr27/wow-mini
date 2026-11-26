@@ -15,6 +15,7 @@ import {
 } from '@cata-raid-sim/engine';
 import { netClient } from '../net/NetClient.js';
 import type { NetworkRoomFacade } from '../net/NetworkRoomFacade.js';
+import { clearRoomRecentlyLeft, markRoomRecentlyLeft } from './useNetworkRoomSync.js';
 
 export type RoomLobbySubView = 'AUTH_CHAR' | 'ROOM_LIST' | 'ROOM_DETAIL';
 
@@ -90,6 +91,9 @@ export function useRoomLobby(deps: RoomLobbyDeps) {
   };
 
   const handleLeaveActiveRoom = () => {
+    if (activeRoomId) {
+      markRoomRecentlyLeft(activeRoomId);
+    }
     if (activeRoomId && currentChar) {
       // Host & guest both leave via ROOM_LEAVE; server transfers host to next player or destroys if empty
       roomFacadeRef.current.leaveRoom(activeRoomId, currentChar.id);
@@ -169,6 +173,7 @@ export function useRoomLobby(deps: RoomLobbyDeps) {
       return;
     }
     // Joining a lobby seat must not keep a leftover combat phase on screen
+    clearRoomRecentlyLeft(roomId);
     ensureLobbyPhase();
     syncAuthSpec();
     netClient.joinRoom(roomId, currentPlayerInfo()!);
@@ -183,6 +188,7 @@ export function useRoomLobby(deps: RoomLobbyDeps) {
       window.alert('尚未连接到游戏服务器。请确认服务端已启动（端口 3001），房间一律由服务器管理。');
       return;
     }
+    clearRoomRecentlyLeft(roomId);
     syncAuthSpec();
     netClient.joinRoom(roomId, currentPlayerInfo()!);
     setWaitingQueueRoomId(roomId);

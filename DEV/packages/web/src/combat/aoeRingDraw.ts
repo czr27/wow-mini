@@ -307,6 +307,8 @@ export function syncPersistentRingsFromGround(
     const isSafeCover =
       g.spellId === 'morchok_pillar' ||
       g.spellId === 'resonating_crystal' ||
+      g.spellId === 'zonozz_ball_target' ||
+      g.spellId === 'twilight_onslaught_soak' ||
       (g.spellId || '').startsWith('cauldron_marker_');
     const friendlyCaster = isSafeCover || !isEnemyActorUnit(owner);
     // 填充只看分类：绿治疗 / 黄增益 / 红伤害；描边看敌我

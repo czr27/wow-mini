@@ -175,7 +175,11 @@ export function playCombatSfx(params: PlayCombatSfxParams): void {
   // Throttle per-actor spam (especially melee/other players in 20-man)
   const nowMs = typeof performance !== 'undefined' ? performance.now() : Date.now();
   const actorKey = `${params.actorId ?? params.role}:${params.kind}`;
-  const minGapMs = params.role === 'other' ? 140 : 65;
+  const minGapMs = params.actorId?.startsWith('recv_heal_')
+    ? 220
+    : params.role === 'other'
+      ? 140
+      : 65;
   const lastAt = lastActorSfxAt.get(actorKey) ?? 0;
   if (nowMs - lastAt < minGapMs) return;
   lastActorSfxAt.set(actorKey, nowMs);
@@ -275,7 +279,7 @@ export function playCombatSfx(params: PlayCombatSfxParams): void {
   }
 
   if (params.kind === 'heal') {
-    const dur = 0.28;
+    const dur = 0.3;
     releaseVoice(dur);
 
     const osc1 = ctx.createOscillator();
@@ -284,9 +288,11 @@ export function playCombatSfx(params: PlayCombatSfxParams): void {
     osc1.type = 'sine';
     osc2.type = 'sine';
     osc1.frequency.setValueAtTime(523.25, t); // C5
+    osc1.frequency.exponentialRampToValueAtTime(659.25, t + dur); // -> E5
     osc2.frequency.setValueAtTime(659.25, t); // E5
+    osc2.frequency.exponentialRampToValueAtTime(783.99, t + dur); // -> G5
     g.gain.setValueAtTime(0.001, t);
-    g.gain.linearRampToValueAtTime(gainVal * 0.2, t + 0.03);
+    g.gain.linearRampToValueAtTime(gainVal * 0.28, t + 0.03);
     g.gain.exponentialRampToValueAtTime(0.001, t + dur);
 
     osc1.connect(g);
@@ -331,4 +337,32 @@ export function playCombatSfx(params: PlayCombatSfxParams): void {
   connectWithPan(ctx, g, pan);
   osc.start(t);
   osc.stop(t + dur);
+}
+
+/** Celebratory ascending chime when a mini-boss is defeated. */
+export function playBossDefeatedSfx(): void {
+  const masterVol = getSfxVolume();
+  if (masterVol <= 0.001) return;
+  const ctx = ensureAudioContext();
+  if (!ctx || !masterGain) return;
+
+  const t = ctx.currentTime;
+  const notes = [523.25, 659.25, 783.99, 1046.5]; // C5 -> E5 -> G5 -> C6
+  const gainPeak = Math.min(0.65, masterVol * 1.15);
+
+  notes.forEach((freq, idx) => {
+    const start = t + idx * 0.085;
+    const dur = idx === notes.length - 1 ? 0.55 : 0.24;
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    osc.type = idx === notes.length - 1 ? 'triangle' : 'sine';
+    osc.frequency.setValueAtTime(freq, start);
+    g.gain.setValueAtTime(0.001, start);
+    g.gain.linearRampToValueAtTime(gainPeak * (idx === notes.length - 1 ? 0.34 : 0.24), start + 0.025);
+    g.gain.exponentialRampToValueAtTime(0.001, start + dur);
+    osc.connect(g);
+    g.connect(masterGain!);
+    osc.start(start);
+    osc.stop(start + dur);
+  });
 }

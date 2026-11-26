@@ -90,7 +90,7 @@ export const RivendareEncounter: BossEncounterModule = {
           for (let i = 0; i < 4; i++) {
             spawnCombatUnit(engine, {
               id: `skel_${Date.now()}_${i}`,
-              name: `骷髅战士 ${i + 1}`,
+              name: '骷髅战士',
               unitKind: 'ADD',
               role: 'ENEMY',
               classId: 'NPC',

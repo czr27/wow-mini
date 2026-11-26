@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import type { DungeonClearCertificate } from '@cata-raid-sim/engine';
 import { CLASS_COLORS, CLASS_NAMES } from './AuthAndCharacterModal.js';
 import { DismissibleModal } from './DismissibleModal.js';
+import { getDungeonRewardIconUrl } from '../assets/pixelIcons.js';
 
 interface Props {
   certificate: DungeonClearCertificate | null;
@@ -40,7 +41,18 @@ export const ClearCertificateModal: React.FC<Props> = ({ certificate, onClose })
         {/* Certificate Header Banner */}
         <div className="bg-gradient-to-r from-[#2a2010] via-[#3a2e10] to-[#2a2010] border-b border-amber-500/40 px-6 py-4 flex items-center justify-between">
           <div className="flex items-center space-x-3">
-            <span className="text-3xl">📜</span>
+            {(() => {
+              const rewardUrl = getDungeonRewardIconUrl(certificate.dungeonId || certificate.dungeonName);
+              return rewardUrl ? (
+                <img
+                  src={rewardUrl}
+                  alt={certificate.dungeonName}
+                  className="w-10 h-10 rounded-lg border border-amber-400/60 shadow-md object-cover bg-[#090B14]"
+                />
+              ) : (
+                <span className="text-3xl">📜</span>
+              );
+            })()}
             <div>
               <div className="flex items-center space-x-2">
                 <h2 className="text-lg font-extrabold text-amber-300 tracking-wide">
@@ -176,40 +188,105 @@ export const ClearCertificateModal: React.FC<Props> = ({ certificate, onClose })
                   </div>
 
                   {/* Team Members Performance on this Boss */}
-                  <div>
-                    <h5 className="text-[11px] font-bold text-gray-400 uppercase mb-2">团队成员该场数据</h5>
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-xs text-left">
-                        <thead className="bg-[#121224] text-gray-400 border-b border-[#262646]">
-                          <tr>
-                            <th className="py-1.5 px-2">成员</th>
-                            <th className="py-1.5 px-2">职业</th>
-                            <th className="py-1.5 px-2">DPS</th>
-                            <th className="py-1.5 px-2">总伤害</th>
-                            <th className="py-1.5 px-2">HPS</th>
-                            <th className="py-1.5 px-2">承受伤害</th>
-                            <th className="py-1.5 px-2">打断</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-[#20203a]">
-                          {currentBossEnc.unitStats.map(u => (
-                            <tr key={u.unitId} className={u.isPlayer ? 'bg-amber-500/10' : ''}>
-                              <td className="py-1.5 px-2 font-bold flex items-center space-x-1">
-                                <span style={{ color: CLASS_COLORS[u.classId as any] || '#ccc' }}>{u.name}</span>
-                                {u.isPlayer && <span className="text-[9px] bg-amber-500 text-black px-1 rounded font-bold">我</span>}
-                              </td>
-                              <td className="py-1.5 px-2 text-gray-400">{CLASS_NAMES[u.classId as any] || u.classId}</td>
-                              <td className="py-1.5 px-2 font-mono text-red-300">{u.dps.toLocaleString()}</td>
-                              <td className="py-1.5 px-2 font-mono text-gray-300">{u.totalDamage.toLocaleString()}</td>
-                              <td className="py-1.5 px-2 font-mono text-emerald-300">{Math.max(0, u.hps).toLocaleString()}</td>
-                              <td className="py-1.5 px-2 font-mono text-amber-200">{u.damageTaken.toLocaleString()}</td>
-                              <td className="py-1.5 px-2 font-mono text-blue-300">{u.interrupts}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
+                  {(() => {
+                    const bossUnits = currentBossEnc.unitStats;
+                    const teamTotalDmg = Math.max(
+                      1,
+                      bossUnits.reduce((sum, u) => sum + Math.max(0, u.totalDamage), 0)
+                    );
+                    const teamTotalHeal = Math.max(
+                      1,
+                      bossUnits.reduce((sum, u) => sum + Math.max(0, u.totalHealing || 0), 0)
+                    );
+                    const teamTotalTaken = Math.max(
+                      1,
+                      bossUnits.reduce((sum, u) => sum + Math.max(0, u.damageTaken), 0)
+                    );
+                    const teamTotalInterrupts = bossUnits.reduce(
+                      (sum, u) => sum + Math.max(0, u.interrupts),
+                      0
+                    );
+                    return (
+                      <div>
+                        <h5 className="text-[11px] font-bold text-gray-400 uppercase mb-2">团队成员该场数据</h5>
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-xs text-left">
+                            <thead className="bg-[#121224] text-gray-400 border-b border-[#262646]">
+                              <tr>
+                                <th className="py-1.5 px-2">成员</th>
+                                <th className="py-1.5 px-2">职业</th>
+                                <th className="py-1.5 px-2 min-w-[125px]">DPS / 伤害占比</th>
+                                <th className="py-1.5 px-2 text-right">总伤害</th>
+                                <th className="py-1.5 px-2 min-w-[125px]">HPS / 治疗占比</th>
+                                <th className="py-1.5 px-2 min-w-[125px]">承受伤害 / 占比</th>
+                                <th className="py-1.5 px-2 min-w-[90px]">打断 / 占比</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-[#20203a]">
+                              {bossUnits.map(u => {
+                                const dmgPct = (Math.max(0, u.totalDamage) / teamTotalDmg) * 100;
+                                const healPct = (Math.max(0, u.totalHealing || 0) / teamTotalHeal) * 100;
+                                const takenPct = (Math.max(0, u.damageTaken) / teamTotalTaken) * 100;
+                                const intPct = teamTotalInterrupts > 0
+                                  ? (Math.max(0, u.interrupts) / teamTotalInterrupts) * 100
+                                  : 0;
+                                return (
+                                  <tr key={u.unitId} className={u.isPlayer ? 'bg-amber-500/10' : ''}>
+                                    <td className="py-1.5 px-2 font-bold flex items-center space-x-1">
+                                      <span style={{ color: CLASS_COLORS[u.classId as any] || '#ccc' }}>{u.name}</span>
+                                      {u.isPlayer && <span className="text-[9px] bg-amber-500 text-black px-1 rounded font-bold">我</span>}
+                                    </td>
+                                    <td className="py-1.5 px-2 text-gray-400">{CLASS_NAMES[u.classId as any] || u.classId}</td>
+                                    <td className="py-1.5 px-2 font-mono relative overflow-hidden">
+                                      <div
+                                        className="absolute inset-y-0.5 left-0.5 rounded-sm bg-red-500/30 pointer-events-none"
+                                        style={{ width: `${Math.min(100, dmgPct).toFixed(1)}%` }}
+                                      />
+                                      <div className="relative z-10 flex items-center justify-between gap-2">
+                                        <span className="text-red-300 font-bold">{u.dps.toLocaleString()}</span>
+                                        <span className="text-[10px] text-red-200/90">{dmgPct.toFixed(1)}%</span>
+                                      </div>
+                                    </td>
+                                    <td className="py-1.5 px-2 text-right font-mono text-gray-300">{u.totalDamage.toLocaleString()}</td>
+                                    <td className="py-1.5 px-2 font-mono relative overflow-hidden">
+                                      <div
+                                        className="absolute inset-y-0.5 left-0.5 rounded-sm bg-emerald-500/30 pointer-events-none"
+                                        style={{ width: `${Math.min(100, healPct).toFixed(1)}%` }}
+                                      />
+                                      <div className="relative z-10 flex items-center justify-between gap-2">
+                                        <span className="text-emerald-300 font-bold">{Math.max(0, u.hps).toLocaleString()}</span>
+                                        <span className="text-[10px] text-emerald-200/90">{healPct.toFixed(1)}%</span>
+                                      </div>
+                                    </td>
+                                    <td className="py-1.5 px-2 font-mono relative overflow-hidden">
+                                      <div
+                                        className="absolute inset-y-0.5 left-0.5 rounded-sm bg-amber-500/30 pointer-events-none"
+                                        style={{ width: `${Math.min(100, takenPct).toFixed(1)}%` }}
+                                      />
+                                      <div className="relative z-10 flex items-center justify-between gap-2">
+                                        <span className="text-amber-200 font-bold">{u.damageTaken.toLocaleString()}</span>
+                                        <span className="text-[10px] text-amber-100/90">{takenPct.toFixed(1)}%</span>
+                                      </div>
+                                    </td>
+                                    <td className="py-1.5 px-2 font-mono relative overflow-hidden">
+                                      <div
+                                        className="absolute inset-y-0.5 left-0.5 rounded-sm bg-sky-500/30 pointer-events-none"
+                                        style={{ width: `${Math.min(100, intPct).toFixed(1)}%` }}
+                                      />
+                                      <div className="relative z-10 flex items-center justify-between gap-2">
+                                        <span className="text-sky-300 font-bold">{u.interrupts}</span>
+                                        <span className="text-[10px] text-sky-200/90">{intPct.toFixed(1)}%</span>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </div>
               )}
             </div>

@@ -13,6 +13,7 @@ import {
   getEffectiveGcdMs,
   getHastedCastTimeMs,
   getSpellByAnyId,
+  getUnitCrowdControlInfo,
   getSpellGcdCategory,
   classifySpellCastMode,
   getCastLifecyclePolicy,
@@ -36,6 +37,7 @@ import { startPlayerCastBranches } from './startPlayerCastBranches.js';
 import { computePlayerGcdMs } from './playerGcd.js';
 import { withNetworkVitals } from './withNetworkVitals.js';
 import { publishCastLand, publishCastStart } from './castLifecycleNet.js';
+import { inferSpellSchool, playCombatSfx } from '../utils/combatSfx.js';
 
 /** Local CD map + shared-CD aliases — action-bar / cast gates. */
 function asPlayerClassId(
@@ -201,11 +203,15 @@ export function handlePlayerCastSlot(slotIdx: number, ctx: HandlePlayerCastSlotC
   const player = engine.friendlyUnits.find(u => u.isPlayer) || (ctx.currentChar ? engine.getUnit(ctx.currentChar.id) : undefined);
   const boss = engine.bossUnit;
 
-  // Asphyxiate / hard stun: cannot act
-  if (player && engine.isUnitCrowdControlled?.(player)) {
+  // Asphyxiate / hard stun / silence: cannot act
+  const ccInfo = getUnitCrowdControlInfo(player);
+  if (player && ccInfo.isControlled) {
+    window.dispatchEvent(
+      new CustomEvent('cata_ui_error', { detail: { text: `⛓️ ${ccInfo.reason}` } })
+    );
     engine.effectsManager?.addFloatingText({
       targetId: player.id,
-      text: '昏迷中，无法行动！',
+      text: `⛓️ ${ccInfo.reason}`,
       category: 'STATUS',
       isCrit: false,
     });
@@ -662,6 +668,12 @@ export function handlePlayerCastSlot(slotIdx: number, ctx: HandlePlayerCastSlotC
     }
     ctx.playerCastRef.current = castStateWithLifecycle;
     ctx.setPlayerCast(castStateWithLifecycle);
+    playCombatSfx({
+      kind: 'cast_start',
+      school: inferSpellSchool(castStateWithLifecycle.spellId, castStateWithLifecycle.spellName),
+      role: 'self',
+      actorId: player.id,
+    });
     if (!castStateWithLifecycle.isHarmful && !castStateWithLifecycle.isChannel && castStateWithLifecycle.targetId) {
       const pAmt = ctx.getPredictedHealAmount(castStateWithLifecycle.spellId, player);
       if (pAmt > 0) {
@@ -745,6 +757,12 @@ export function handlePlayerCastSlot(slotIdx: number, ctx: HandlePlayerCastSlotC
     })
   );
   if (handledInstant) {
+    playCombatSfx({
+      kind: isFriendlySpell ? 'heal' : 'spell_hit',
+      school: inferSpellSchool(slot.spellId, slot.name),
+      role: 'self',
+      actorId: player.id,
+    });
     // Instants: no cast bar; ST still publish CAST_LAND so remotes play hit FX / snowflakes.
     // AoE already publishes AOE_PULSE via emitLocalAoePulse — skip to avoid false ST projectiles.
     const isAoeInstant =
