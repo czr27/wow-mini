@@ -156,7 +156,7 @@ interface Props {
   /** 联机客人：不本地结算迷宫小怪，只镜像房主快照 */
   isNetworkGuest?: boolean;
   /** Guest: report local player xy to host for broadcast */
-  onNetworkMoveReport?: (x: number, y: number) => void;
+  onNetworkMoveReport?: (x: number, y: number, force?: boolean) => void;
   /** Maze auto-path (controlled by TravelRecovery HUD) */
   autoNavActive?: boolean;
   onAutoNavChange?: (active: boolean) => void;
@@ -3313,6 +3313,10 @@ export const CombatCanvas: React.FC<Props> = ({
         approachElapsedRef.current = 0;
         approachPullFiredRef.current = false;
         approachStartPositionsRef.current = {};
+        onNetworkMoveReport?.(playerPosRef.current.x, playerPosRef.current.y, true);
+      }
+      if (runPhase === 'BOSS_COMBAT' && prevCanvasPhaseRef.current !== 'BOSS_COMBAT') {
+        onNetworkMoveReport?.(playerPosRef.current.x, playerPosRef.current.y, true);
       }
       if (runPhase === 'TRAVEL_RECOVERY' && prevCanvasPhaseRef.current !== 'TRAVEL_RECOVERY') {
         portalEnterFiredRef.current = false;
@@ -5357,9 +5361,8 @@ export const CombatCanvas: React.FC<Props> = ({
         pos.y += (predY - pos.y) * blend;
       };
 
-      // Networked guests: pull boss toward host/server-authoritative position using velocity dead-reckoning.
-      // Host keeps local chase AI — do not lerp-overwrite host boss pose.
-      if (syncRemotePositions && isNetworkGuestRef.current) {
+      // 联机房间内 Boss 位置权威唯一归属 3001 服务端（房主与客人一律平滑跟随服务端坐标，严禁本地重复追击算坐标）
+      if (syncRemotePositions) {
         if (bossUnit?.position) {
           stepRemotePosition(`boss_${bossUnit.id}`, bossPosRef.current, bossUnit.position);
         }
@@ -5439,14 +5442,8 @@ export const CombatCanvas: React.FC<Props> = ({
         const isAlive = (u.isAlive ?? u.alive) && u.hp > 0;
         if (!isAlive) return;
 
-        // Network sync: guests follow all remotes; host only follows remote humans (MOVE).
-        // Do NOT use onNetworkMoveReport as a guest signal — App always passes that callback,
-        // which previously made host AI early-return and freeze (no heal-zone / dodge / fidget).
-        // Host AI companions still pathfind locally and write unit.position for broadcast.
-        const followHostPos =
-          syncRemotePositions &&
-          !!u.position &&
-          (isNetworkGuestRef.current || !!u.isHumanControlled);
+        // 联机房间内所有 AI 与远端真人位置均跟随服务端权威广播（仅单机本地运行 AI 寻路）
+        const followHostPos = syncRemotePositions && !!u.position;
         if (followHostPos) {
           stepRemotePosition(u.id, pos, u.position);
           return;
@@ -5635,11 +5632,9 @@ export const CombatCanvas: React.FC<Props> = ({
         u.position.y = pos.y;
       });
 
-      // ── Process Boss Movement & Pursuit AI (受距离约束，够不着会跑过去) ──
-      // Guests: boss pose already lerped from host snapshot — skip local chase AI.
-      // Host must keep chase AI (onNetworkMoveReport is always passed from App).
+      // ── Process Boss Movement & Pursuit AI (仅单机运行；联机房间内由 3001 服务端唯一权威控制) ──
       let bossIsMoving = false;
-      const guestFollowHostBoss = syncRemotePositions && isNetworkGuestRef.current;
+      const guestFollowHostBoss = syncRemotePositions;
       if (
         !guestFollowHostBoss &&
         runPhase === 'BOSS_COMBAT' &&

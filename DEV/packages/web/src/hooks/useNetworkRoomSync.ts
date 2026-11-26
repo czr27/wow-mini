@@ -809,10 +809,24 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
         d().setCompanionCasts(nextCasts);
         d().guestCastTimelinesRef.current = d().guestCastTimelinesRef.current.filter((c) => c.unitId !== body.unitId);
       }
-      if (msg.type === 'PLAYER_INPUT' && msg.payload && d().isNetworkHostRef.current) {
+      if (msg.type === 'PLAYER_INPUT' && msg.payload) {
         const input = msg.payload as PlayerInputPayload;
         if (input.playerId) noteAuthorityPacket(input.playerId, 'PLAYER_INPUT');
-        d().pendingGuestInputsRef.current.push(input);
+        if (
+          input.kind === 'MOVE' &&
+          typeof input.x === 'number' &&
+          typeof input.y === 'number' &&
+          input.playerId &&
+          input.playerId !== d().currentChar?.id
+        ) {
+          const u = d().engineRef.current.getUnit(input.playerId);
+          if (u) {
+            u.position = { x: input.x, y: input.y };
+          }
+        }
+        if (d().isNetworkHostRef.current) {
+          d().pendingGuestInputsRef.current.push(input);
+        }
       }
       if (msg.type === 'GM_COMMAND' && msg.payload) {
         const gmCmd = msg.payload as GmCommandPayload;

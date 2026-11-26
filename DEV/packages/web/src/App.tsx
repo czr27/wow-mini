@@ -869,10 +869,17 @@ export function App() {
   };
 
   /** Guest WASD/click-move → host (throttled). Host broadcasts positions in COMBAT_STATE. */
-  const handleNetworkMovePosition = (x: number, y: number) => {
-    if (!isNetworkGuestRef.current || !netClient.connected || !activeRoomIdRef.current || !currentChar) return;
+  const handleNetworkMovePosition = (x: number, y: number, force = false) => {
+    if (
+      !(isNetworkHostRef.current || isNetworkGuestRef.current) ||
+      !netClient.connected ||
+      !activeRoomIdRef.current ||
+      !currentChar
+    ) {
+      return;
+    }
     const now = Date.now();
-    if (now - lastMoveBroadcastMsRef.current < 80) return;
+    if (!force && now - lastMoveBroadcastMsRef.current < 80) return;
     lastMoveBroadcastMsRef.current = now;
     netClient.sendPlayerInput(activeRoomIdRef.current, {
       kind: 'MOVE',

@@ -360,11 +360,30 @@ export class RoomCombatSession {
 
   /** Idempotent player input dedupe + immediate ACK info (Host & Guest treated identically). */
   handlePlayerInput(
-    _playerId: string,
+    playerId: string,
     input: PlayerInputPayload
   ): { shouldApply: boolean; ack?: { clientInputId: string; attempt: number } } {
+    const applyMoveIfHuman = () => {
+      if (
+        input.kind === 'MOVE' &&
+        typeof input.x === 'number' &&
+        typeof input.y === 'number'
+      ) {
+        const uid = input.playerId || playerId;
+        if (uid && !this.isServerAuthorityUnit(uid)) {
+          const u = this.engine.getUnit(uid);
+          if (u) {
+            u.position = { x: input.x, y: input.y };
+          }
+        }
+      }
+    };
+
     const cid = input.clientInputId;
-    if (!cid) return { shouldApply: true };
+    if (!cid) {
+      applyMoveIfHuman();
+      return { shouldApply: true };
+    }
 
     const ack = {
       clientInputId: cid,
@@ -382,6 +401,7 @@ export class RoomCombatSession {
       if (old) this.processedInputIds.delete(old);
     }
     this.noteAck(cid);
+    applyMoveIfHuman();
     return { shouldApply: true, ack };
   }
 
