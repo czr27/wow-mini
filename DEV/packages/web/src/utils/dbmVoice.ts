@@ -89,17 +89,20 @@ export interface EvilOldManVoicePreset {
   label: string;
   pitch: number;
   rate: number;
+  /** Web Audio 低沉喉音基频 (Hz)，弥补部分浏览器 SAPI5 忽略 pitch 的问题 */
+  growlHz: number;
+  growlLfoHz: number;
 }
 
 /**
- * 多个“邪恶老男人”音色预设：低沉音调 + 阴冷/狂傲/沙哑语速变化。
+ * 多个“邪恶老男人”音色预设：极低音调 + 阴冷/狂傲/沙哑语速 + 低频喉音共振。
  */
 export const EVIL_OLD_MAN_VOICE_PRESETS: readonly EvilOldManVoicePreset[] = [
-  { id: 'dark_warlock', label: '阴沉老巫师', pitch: 0.42, rate: 0.84 },
-  { id: 'raspy_undead', label: '沙哑老亡灵', pitch: 0.48, rate: 0.78 },
-  { id: 'arrogant_warlord', label: '狂傲老领主', pitch: 0.56, rate: 0.96 },
-  { id: 'sinister_cultist', label: '阴险老教主', pitch: 0.62, rate: 0.88 },
-  { id: 'cackling_madman', label: '癫狂老怪', pitch: 0.46, rate: 1.05 },
+  { id: 'dark_warlock', label: '阴沉老巫师', pitch: 0.08, rate: 0.80, growlHz: 55, growlLfoHz: 5.5 },
+  { id: 'raspy_undead', label: '沙哑老亡灵', pitch: 0.14, rate: 0.72, growlHz: 48, growlLfoHz: 9.0 },
+  { id: 'arrogant_warlord', label: '狂傲老领主', pitch: 0.22, rate: 0.94, growlHz: 68, growlLfoHz: 4.0 },
+  { id: 'sinister_cultist', label: '阴险老教主', pitch: 0.30, rate: 0.85, growlHz: 62, growlLfoHz: 6.5 },
+  { id: 'cackling_madman', label: '癫狂老怪', pitch: 0.12, rate: 1.04, growlHz: 74, growlLfoHz: 11.0 },
 ];
 
 const MALE_VOICE_KEYWORDS = [
@@ -110,9 +113,58 @@ const MALE_VOICE_KEYWORDS = [
   'yunfeng',
   'yunhao',
   'yunze',
+  'yunjhe',
+  'wanlung',
+  'danny',
   'male',
   '男',
 ];
+
+const FEMALE_VOICE_KEYWORDS = [
+  'huihui',
+  'yaoyao',
+  'xiaoxiao',
+  'xiaoyi',
+  'xiaochen',
+  'xiaohan',
+  'xiaomeng',
+  'xiaomo',
+  'xiaoqiu',
+  'xiaorui',
+  'xiaoshuang',
+  'xiaoxuan',
+  'xiaoyan',
+  'xiaoyou',
+  'hanhan',
+  'zhiwei',
+  'yating',
+  'meijia',
+  'sin-ji',
+  'tracy',
+  'female',
+  '女',
+];
+
+let cachedSynthVoices: SpeechSynthesisVoice[] = [];
+let voicesListenerBound = false;
+
+function getAvailableVoices(synth: SpeechSynthesis): SpeechSynthesisVoice[] {
+  if (!voicesListenerBound && typeof synth.addEventListener === 'function') {
+    voicesListenerBound = true;
+    synth.addEventListener('voiceschanged', () => {
+      try {
+        cachedSynthVoices = synth.getVoices();
+      } catch {
+        // ignore
+      }
+    });
+  }
+  const live = synth.getVoices();
+  if (live && live.length > 0) {
+    cachedSynthVoices = live;
+  }
+  return cachedSynthVoices;
+}
 
 function pickEvilOldManVoice(
   voices: SpeechSynthesisVoice[],
@@ -123,12 +175,75 @@ function pickEvilOldManVoice(
     (v.lang || '').toLowerCase().startsWith('zh')
   );
   const pool = zhVoices.length > 0 ? zhVoices : voices;
+
+  // 1. 优先选明确男声
   const malePool = pool.filter((v) => {
     const name = (v.name || '').toLowerCase();
     return MALE_VOICE_KEYWORDS.some((kw) => name.includes(kw));
   });
-  const candidates = malePool.length > 0 ? malePool : pool;
+  if (malePool.length > 0) {
+    return malePool[presetIndex % malePool.length] || null;
+  }
+
+  // 2. 其次排除已知女声（如 Google 普通话支持 pitch 降调成低沉男声）
+  const nonFemalePool = pool.filter((v) => {
+    const name = (v.name || '').toLowerCase();
+    return !FEMALE_VOICE_KEYWORDS.some((kw) => name.includes(kw));
+  });
+  const candidates = nonFemalePool.length > 0 ? nonFemalePool : pool;
   return candidates[presetIndex % candidates.length] || null;
+}
+
+let growlAudioCtx: AudioContext | null = null;
+function playBossVoiceGrowl(preset: EvilOldManVoicePreset, volume: number): void {
+  if (typeof window === 'undefined' || volume <= 0) return;
+  const Ctx =
+    window.AudioContext ||
+    (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+  if (!Ctx) return;
+  try {
+    if (!growlAudioCtx) growlAudioCtx = new Ctx();
+    if (growlAudioCtx.state === 'suspended') {
+      void growlAudioCtx.resume();
+    }
+    const ctx = growlAudioCtx;
+    const now = ctx.currentTime;
+    const dur = 0.75;
+
+    const osc = ctx.createOscillator();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(preset.growlHz, now);
+    osc.frequency.exponentialRampToValueAtTime(Math.max(32, preset.growlHz * 0.78), now + dur);
+
+    const lfo = ctx.createOscillator();
+    const lfoGain = ctx.createGain();
+    lfo.frequency.setValueAtTime(preset.growlLfoHz, now);
+    lfoGain.gain.setValueAtTime(14, now);
+    lfo.connect(lfoGain);
+    lfoGain.connect(osc.frequency);
+
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(210, now);
+    filter.Q.setValueAtTime(3.2, now);
+
+    const gain = ctx.createGain();
+    const peak = Math.min(0.16, volume * 0.14);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(peak, now + 0.08);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+
+    osc.connect(filter);
+    filter.connect(gain);
+    gain.connect(ctx.destination);
+
+    osc.start(now);
+    lfo.start(now);
+    osc.stop(now + dur + 0.02);
+    lfo.stop(now + dur + 0.02);
+  } catch {
+    // ignore Web Audio errors
+  }
 }
 
 function normalizeBossVoiceKey(key: string): string {
@@ -194,9 +309,10 @@ export function speakBossTrashTalkVoice(
     utter.rate = preset.rate;
     utter.volume = bossVolume;
 
-    const voice = pickEvilOldManVoice(synth.getVoices(), idx);
+    const voice = pickEvilOldManVoice(getAvailableVoices(synth), idx);
     if (voice) utter.voice = voice;
 
+    playBossVoiceGrowl(preset, bossVolume);
     duckBgmForVoice(isDbmAlerting ? 1500 : 2200);
     synth.speak(utter);
   } catch {
