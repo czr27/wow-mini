@@ -980,9 +980,12 @@ export class RoomWsHub {
 
       case 'ROOM_CHAT': {
         const roomId = msg.roomId || session.roomId;
-        if (!roomId || session.roomId !== roomId) break;
+        if (!roomId) break;
         const room = this.roomManager.getRoom(roomId);
         if (!room) break;
+        const member = room.members.find((m) => m.id === session.playerId && !m.isAi);
+        if (!member && session.roomId !== roomId) break;
+        if (!session.roomId && member) session.roomId = roomId;
         const payload = msg.payload as RoomChatSendPayload | undefined;
         const text = typeof payload?.text === 'string' ? payload.text.trim().slice(0, 200) : '';
         if (!text) break;
@@ -1010,7 +1013,6 @@ export class RoomWsHub {
           break;
         }
 
-        const member = room.members.find((m) => m.id === session.playerId && !m.isAi);
         const chatMsg: RoomChatMessage = {
           id: `chat_${now}_${Math.random().toString(36).slice(2, 7)}`,
           roomId,
