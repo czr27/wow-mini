@@ -63,6 +63,11 @@ export const MandokirEncounter: BossEncounterModule = {
         range: 400,
         targetKind: 'RANGED_TARGET',
         description: '秒杀随机玩家；灵魂链复活（次数有限）',
+        dbm: {
+          advice: '点名斩首，灵魂链自动复活',
+          voiceText: '注意斩首',
+          severity: 'INFO',
+        },
         execute: (boss, engine) => {
           if (ai.mandoSoulsLeft == null) ai.mandoSoulsLeft = SOUL_REVIVE_MAX;
           const pool = living(engine).filter(u => u.role !== 'TANK');
@@ -73,10 +78,8 @@ export const MandokirEncounter: BossEncounterModule = {
           ai.mandoLevelUp = (ai.mandoLevelUp || 0) + 1;
           if ((ai.mandoSoulsLeft || 0) > 0) {
             ai.mandoSoulsLeft! -= 1;
-            // 灵魂复活
-            t.hp = Math.round(t.maxHp * 0.5);
-            t.alive = true;
-            t.isAlive = true;
+            // 灵魂复活（通过引擎 resurrectUnit 同步联机客户端）
+            engine.resurrectUnit(t.id, 0.5, 0.5);
             engine.effectsManager?.addFloatingText({
               targetId: t.id,
               text: `👻 灵魂复活（剩 ${ai.mandoSoulsLeft}）`,

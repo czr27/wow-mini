@@ -127,16 +127,18 @@ export function removeBuffFromEffect(
 ): void {
   const spellId = effect.removeSpellId || effect.spellId;
   const b = effect.buff;
+  const effectiveSourceId =
+    effect.sourceId && effect.sourceId !== 'server' ? effect.sourceId : undefined;
   const existing = target.buffs.find(
-    (x) => x.spellId === spellId && (!effect.sourceId || x.sourceUnitId === effect.sourceId)
+    (x) => x.spellId === spellId && (!effectiveSourceId || x.sourceUnitId === effectiveSourceId)
   );
   if (!existing) {
-    engine.auraManager.removeBuff(target, spellId, effect.sourceId);
+    engine.auraManager.removeBuff(target, spellId, effectiveSourceId);
     return;
   }
   // No stack hint → remove entire aura
   if (b?.stacks == null && b?.stackDelta == null) {
-    engine.auraManager.removeBuff(target, spellId, effect.sourceId);
+    engine.auraManager.removeBuff(target, spellId, effectiveSourceId);
     return;
   }
   const maxStacks = existing.maxStacks || b?.maxStacks || existing.stacks || 1;

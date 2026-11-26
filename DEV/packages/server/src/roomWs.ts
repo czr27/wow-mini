@@ -25,7 +25,7 @@ import { RoomVoteTracker } from './roomVotes.js';
 /** WebSocket 断开后短暂等待重连，再踢出/改 AI */
 const DISCONNECT_AI_MS = 5000;
 /** 客户端约每 15s 发 PING；超过该时长无 PING 视为心跳超时 */
-const HEARTBEAT_TIMEOUT_MS = 40_000;
+const HEARTBEAT_TIMEOUT_MS = 45_000;
 /** 心跳扫描周期 */
 const HEARTBEAT_SWEEP_MS = 5_000;
 
@@ -583,10 +583,10 @@ export class RoomWsHub {
   }
 
   private onMessage(ws: WebSocket, msg: NetEnvelope) {
+    const activeSession = this.sessionsByWs.get(ws);
+    if (activeSession) activeSession.lastPongMs = Date.now();
     if (msg.type === 'PING') {
       this.send(ws, { type: 'PONG', timeMs: Date.now() });
-      const session = this.sessionsByWs.get(ws);
-      if (session) session.lastPongMs = Date.now();
       return;
     }
 

@@ -129,9 +129,11 @@ export const VenoxisEncounter: BossEncounterModule = {
     ai.venoxisFightMs = (ai.venoxisFightMs || 0) + deltaMs;
     if (!ai.venoxisPhase) ai.venoxisPhase = 'human';
 
-    // 毒性链接：过近掉血，拉开 ≥80 扯断
+    // 毒性链接：过近掉血，拉开 ≥80 扯断（仅剩 1 人时也自动解除）
     const linked = living(engine).filter(u => u.buffs?.some(b => b.spellId === TOXIC_LINK_ID));
-    if (linked.length >= 2) {
+    if (linked.length === 1) {
+      engine.auraManager.removeBuff(linked[0], TOXIC_LINK_ID);
+    } else if (linked.length >= 2) {
       const d = dist(linked[0].position || {}, linked[1].position || {});
       if (d >= 80) {
         for (const u of linked) {

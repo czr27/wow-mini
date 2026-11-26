@@ -2544,6 +2544,15 @@ export const CombatCanvas: React.FC<Props> = ({
   const lastPlayerPosForFacingRef = useRef<{ x: number; y: number } | null>(null);
   const unitMoveDirRef = useRef<Record<string, { dx: number; dy: number }>>({});
   const companionPositionsRef = useRef<Record<string, { x: number; y: number }>>({});
+  /** 远端单位/首领 目标位置 + 速度矢量推算缓存（消除坐标广播跳帧感，定期权威纠偏） */
+  const remoteKinematicsRef = useRef<Record<string, {
+    targetX: number;
+    targetY: number;
+    vx: number;
+    vy: number;
+    lastTargetAtMs: number;
+    lastFrameAtMs: number;
+  }>>({});
   /** AI 多动症：站桩计时 + 单次小幅踱步偏移（限制在走路区内且 ≤5 码） */
   const companionFidgetRef = useRef<Record<string, {
     idleMs: number;
@@ -3411,10 +3420,11 @@ export const CombatCanvas: React.FC<Props> = ({
       }
       lastTravelElapsedRef.current = elapsed;
 
-      // Guest: mirror host trash + lead BEFORE packStillAlive / draw decisions
-      if (isNetworkGuestLive) {
-        const guestMaze = readGuestMazeSync();
-        if (guestMaze) {
+      // Guest: mirror host trash + lead ONLY when host actually publishes maze sync (P2P).
+      // In server-authoritative mode no host maze sync is broadcast, so guests run the exact same deterministic maze walk & trash combat.
+      const guestMaze = isNetworkGuestLive ? readGuestMazeSync() : null;
+      const hasHostMazeSync = Boolean(isNetworkGuestLive && typeof guestMaze?.mazeLeadDist === 'number');
+      if (hasHostMazeSync && guestMaze) {
           if (typeof guestMaze.mazeLeadDist === 'number') {
             // Soft follow host lead (avoid guest-side teleport when snapshot jumps)
             const cur = mazeLeadDistRef.current;
@@ -3455,7 +3465,6 @@ export const CombatCanvas: React.FC<Props> = ({
               });
             }
           }
-        }
       }
 
       // Prim 迷宫：场景可刷 ≥6 堆，时间线只打 isEncounter 的 2–3 堆
@@ -3569,7 +3578,7 @@ export const CombatCanvas: React.FC<Props> = ({
 
       // Host/solo: revive before fight / soft deadline kill. Guests only mirror host trash.
       // Ambient (non-encounter) packs stay as scenery and are never force-killed.
-      if (!isNetworkGuestLive) {
+      if (!hasHostMazeSync) {
         trashMobsRef.current.forEach((mob) => {
           if (!mob.isEncounter) return;
           const win = packWindows.find((w) => w.packIndex === mob.packIndex);
@@ -3630,7 +3639,7 @@ export const CombatCanvas: React.FC<Props> = ({
         mazeRetaliateAccMsRef.current += frameMs;
         mazeHealAccMsRef.current += frameMs;
 
-        if (!isNetworkGuestLive && activePackMobs.length > 0 && mazeDpsAccMsRef.current >= mazeDpsNextMsRef.current) {
+        if (!hasHostMazeSync && activePackMobs.length > 0 && mazeDpsAccMsRef.current >= mazeDpsNextMsRef.current) {
           mazeDpsAccMsRef.current = 0;
           const dpsGap = Math.round((50 + Math.floor(Math.random() * 50)) / MAZE_TRAVERSE_SPEED_SCALE);
           mazeDpsNextMsRef.current = Math.max(28, dpsGap);
@@ -3726,7 +3735,7 @@ export const CombatCanvas: React.FC<Props> = ({
         }
 
         // Trash returns light damage onto the party (prefer tank, never lethal wipe)
-        if (!isNetworkGuestLive && activePackMobs.length > 0 && livingAllies.length > 0 && mazeRetaliateAccMsRef.current >= Math.round(130 / MAZE_TRAVERSE_SPEED_SCALE)) {
+        if (!hasHostMazeSync && activePackMobs.length > 0 && livingAllies.length > 0 && mazeRetaliateAccMsRef.current >= Math.round(130 / MAZE_TRAVERSE_SPEED_SCALE)) {
           mazeRetaliateAccMsRef.current = 0;
           const attacker = activePackMobs[Math.floor(Math.random() * activePackMobs.length)];
           const tank = livingAllies.find(u => u.role === 'TANK');
@@ -3797,7 +3806,7 @@ export const CombatCanvas: React.FC<Props> = ({
         }
 
         // Light healer top-ups so the skirmish breathes (damage in, heal out)
-        if (!isNetworkGuestLive && livingAllies.length > 0 && mazeHealAccMsRef.current >= Math.round(160 / MAZE_TRAVERSE_SPEED_SCALE)) {
+        if (!hasHostMazeSync && livingAllies.length > 0 && mazeHealAccMsRef.current >= Math.round(160 / MAZE_TRAVERSE_SPEED_SCALE)) {
           mazeHealAccMsRef.current = 0;
           const healer = livingAllies.find(u => u.role === 'HEALER');
           const hurt = [...livingAllies]
@@ -3838,7 +3847,7 @@ export const CombatCanvas: React.FC<Props> = ({
       }
 
       // Host/solo: publish AFTER HP chips so guests see bars drain (not full→tombstone)
-      if (!isNetworkGuestLive) {
+      if (runPhase === 'TRAVEL_RECOVERY' && !hasHostMazeSync) {
         const nowSct = Date.now();
         const recentSct = encounterSCTRef.current
           .filter((s) => nowSct - s.createdAt < 1200)
@@ -3952,7 +3961,7 @@ export const CombatCanvas: React.FC<Props> = ({
       } else if (
         runPhase === 'TRAVEL_RECOVERY' &&
         canMove &&
-        !isNetworkGuestLive
+        !hasHostMazeSync
       ) {
         // Host/solo: smooth lead chase — never snap when encounter stopDist engages
         // Guests already soft-follow host mazeLeadDist above
@@ -4993,6 +5002,18 @@ export const CombatCanvas: React.FC<Props> = ({
           hitFxSeenIdsRef.current = new Set(Array.from(hitFxSeenIdsRef.current).slice(-80));
         }
       }
+      // 随 Boss 移动的地面光环（如旋风斩、过载碾压）：锚定平滑后的 bossPosRef，消除帧间抖动
+      if (bossUnit) {
+        for (const eff of groundEffects) {
+          if (
+            eff.ownerId === bossUnit.id &&
+            (eff.spellId === 'whirlwind' || eff.spellId === 'overdrive')
+          ) {
+            eff.x = bossPosRef.current.x;
+            eff.y = bossPosRef.current.y;
+          }
+        }
+      }
       // Ground AoE rings = terrain layer (under class pulse / boss / chars)
       aoeRingsRef.current = syncPersistentRingsFromGround(
         aoeRingsRef.current,
@@ -5277,12 +5298,70 @@ export const CombatCanvas: React.FC<Props> = ({
         ctx.restore();
       }
 
-      // Networked guests: pull boss toward host-authoritative position.
+      const stepRemotePosition = (
+        kinId: string,
+        pos: { x: number; y: number },
+        targetPos: { x: number; y: number }
+      ) => {
+        const nowMs = performance.now();
+        let kin = remoteKinematicsRef.current[kinId];
+        if (!kin) {
+          kin = {
+            targetX: targetPos.x,
+            targetY: targetPos.y,
+            vx: 0,
+            vy: 0,
+            lastTargetAtMs: nowMs,
+            lastFrameAtMs: nowMs,
+          };
+          remoteKinematicsRef.current[kinId] = kin;
+          pos.x = targetPos.x;
+          pos.y = targetPos.y;
+          return;
+        }
+        const dtTargetSec = (nowMs - kin.lastTargetAtMs) / 1000;
+        const dxTarget = targetPos.x - kin.targetX;
+        const dyTarget = targetPos.y - kin.targetY;
+        const targetMoved = Math.hypot(dxTarget, dyTarget);
+        if (targetMoved > 0.5) {
+          if (targetMoved > 220) {
+            // 远距离传送/重置直接权威覆盖
+            kin.vx = 0;
+            kin.vy = 0;
+            pos.x = targetPos.x;
+            pos.y = targetPos.y;
+          } else if (dtTargetSec >= 0.03 && dtTargetSec <= 0.6) {
+            const rawVx = dxTarget / dtTargetSec;
+            const rawVy = dyTarget / dtTargetSec;
+            const speed = Math.hypot(rawVx, rawVy);
+            const maxSpeed = 420;
+            const scale = speed > maxSpeed ? maxSpeed / speed : 1;
+            kin.vx = kin.vx * 0.35 + rawVx * scale * 0.65;
+            kin.vy = kin.vy * 0.35 + rawVy * scale * 0.65;
+          }
+          kin.targetX = targetPos.x;
+          kin.targetY = targetPos.y;
+          kin.lastTargetAtMs = nowMs;
+        } else if (nowMs - kin.lastTargetAtMs > 180) {
+          kin.vx *= 0.7;
+          kin.vy *= 0.7;
+        }
+
+        const dtFrameSec = Math.min(0.05, Math.max(0.004, (nowMs - kin.lastFrameAtMs) / 1000));
+        kin.lastFrameAtMs = nowMs;
+        const leadSec = Math.min(0.18, Math.max(0, (nowMs - kin.lastTargetAtMs) / 1000));
+        const predX = kin.targetX + kin.vx * leadSec;
+        const predY = kin.targetY + kin.vy * leadSec;
+        const blend = 1 - Math.exp(-14 * dtFrameSec);
+        pos.x += (predX - pos.x) * blend;
+        pos.y += (predY - pos.y) * blend;
+      };
+
+      // Networked guests: pull boss toward host/server-authoritative position using velocity dead-reckoning.
       // Host keeps local chase AI — do not lerp-overwrite host boss pose.
       if (syncRemotePositions && isNetworkGuestRef.current) {
         if (bossUnit?.position) {
-          bossPosRef.current.x += (bossUnit.position.x - bossPosRef.current.x) * 0.4;
-          bossPosRef.current.y += (bossUnit.position.y - bossPosRef.current.y) * 0.4;
+          stepRemotePosition(`boss_${bossUnit.id}`, bossPosRef.current, bossUnit.position);
         }
       }
 
@@ -5369,8 +5448,7 @@ export const CombatCanvas: React.FC<Props> = ({
           !!u.position &&
           (isNetworkGuestRef.current || !!u.isHumanControlled);
         if (followHostPos) {
-          pos.x += (u.position.x - pos.x) * 0.4;
-          pos.y += (u.position.y - pos.y) * 0.4;
+          stepRemotePosition(u.id, pos, u.position);
           return;
         }
 

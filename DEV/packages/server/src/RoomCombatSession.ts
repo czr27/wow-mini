@@ -226,7 +226,7 @@ export class RoomCombatSession {
       if (removed && unit && !this.isServerAuthorityUnit(unit.id) && buffIdOrSpellId) {
         this.pendingEffects.push({
           effectId: `srv_eff_${++this.srvEffectSeq}`,
-          sourceId: sourceId || 'server',
+          sourceId: sourceId || '',
           targetId: unit.id,
           spellId: buffIdOrSpellId,
           removeSpellId: buffIdOrSpellId,
@@ -768,7 +768,8 @@ export class RoomCombatSession {
   /** Advance one 50ms simulation tick on the server. */
   tick(deltaMs = TICK_MS) {
     if (this.disposed) return;
-    this.tickCount++;
+    try {
+      this.tickCount++;
 
     // Keep RSM wipeVoteTimer held while server vote tracker is authoritative
     if (this.rsm.phase === 'WIPE_VOTE') {
@@ -877,6 +878,9 @@ export class RoomCombatSession {
 
     if (phaseChanged && this.rsm.phase === 'SUMMARY') {
       this.callbacks.onEnterSummary(this.roomId);
+    }
+    } catch (err) {
+      console.error(`[RoomCombatSession] tick error in room ${this.roomId}:`, err);
     }
   }
 
