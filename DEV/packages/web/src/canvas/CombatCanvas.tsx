@@ -5770,10 +5770,85 @@ export const CombatCanvas: React.FC<Props> = ({
             depth: viewDepthKey(pos.x, pos.y, viewCam),
             paint: () => {
               withUprightAt(ctx, viewCam, pos, (sp) => {
-                drawClassCharacter(ctx, u, sp, !!isPlayer, u.id === selectedUnitId, tickCount, idx, {
+                const isAsphyxiated = Boolean(u.buffs?.some((b) => b.spellId === 'asphyxiate'));
+                const isIceTombed = Boolean(u.buffs?.some((b) => b.spellId === 'ice_tomb'));
+                const isStunned =
+                  !isAsphyxiated &&
+                  !isIceTombed &&
+                  Boolean(u.buffs?.some((b) => (b.tags as string[] | undefined)?.includes('STUN')));
+                const isSilenced =
+                  !isAsphyxiated &&
+                  !isIceTombed &&
+                  !isStunned &&
+                  Boolean(u.buffs?.some((b) => (b.tags as string[] | undefined)?.includes('SILENCE')));
+
+                // 窒息术：人物悬空 + 暗影窒息锁链环
+                const drawSp = isAsphyxiated
+                  ? { x: sp.x, y: sp.y - 14 - Math.sin(tickCount * 0.25 + idx) * 2.5 }
+                  : sp;
+
+                if (isAsphyxiated) {
+                  ctx.save();
+                  ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+                  ctx.beginPath();
+                  ctx.ellipse(sp.x, sp.y + 8, 11, 4.5, 0, 0, Math.PI * 2);
+                  ctx.fill();
+                  ctx.restore();
+                }
+
+                drawClassCharacter(ctx, u, drawSp, !!isPlayer, u.id === selectedUnitId, tickCount, idx, {
                   showName: showNm && !showHp,
                   facingRad: viewRelativeFacingRad(wFacing, viewCam),
                 });
+
+                if (isAsphyxiated) {
+                  const pulse = 0.65 + 0.35 * Math.sin(tickCount * 0.32 + idx);
+                  ctx.save();
+                  ctx.strokeStyle = `rgba(168, 85, 247, ${0.85 * pulse})`;
+                  ctx.lineWidth = 2;
+                  ctx.beginPath();
+                  ctx.ellipse(drawSp.x, drawSp.y - 6, 15, 7, 0, 0, Math.PI * 2);
+                  ctx.stroke();
+                  ctx.strokeStyle = `rgba(216, 180, 254, ${0.7 * pulse})`;
+                  ctx.lineWidth = 1.2;
+                  ctx.beginPath();
+                  ctx.ellipse(drawSp.x, drawSp.y - 14, 10, 4.5, 0, 0, Math.PI * 2);
+                  ctx.stroke();
+                  ctx.restore();
+                } else if (isIceTombed) {
+                  ctx.save();
+                  ctx.fillStyle = 'rgba(56, 189, 248, 0.32)';
+                  ctx.strokeStyle = 'rgba(186, 230, 253, 0.9)';
+                  ctx.lineWidth = 2;
+                  ctx.beginPath();
+                  ctx.moveTo(drawSp.x, drawSp.y - 30);
+                  ctx.lineTo(drawSp.x + 16, drawSp.y - 10);
+                  ctx.lineTo(drawSp.x + 11, drawSp.y + 10);
+                  ctx.lineTo(drawSp.x - 11, drawSp.y + 10);
+                  ctx.lineTo(drawSp.x - 16, drawSp.y - 10);
+                  ctx.closePath();
+                  ctx.fill();
+                  ctx.stroke();
+                  ctx.restore();
+                } else if (isStunned || isSilenced) {
+                  ctx.save();
+                  const angle = tickCount * 0.18 + idx;
+                  ctx.strokeStyle = isStunned ? 'rgba(250, 204, 21, 0.85)' : 'rgba(147, 197, 253, 0.85)';
+                  ctx.lineWidth = 1.6;
+                  ctx.beginPath();
+                  ctx.ellipse(drawSp.x, drawSp.y - 24, 10, 4, 0, 0, Math.PI * 2);
+                  ctx.stroke();
+                  if (isStunned) {
+                    for (let k = 0; k < 2; k++) {
+                      const a = angle + k * Math.PI;
+                      ctx.fillStyle = '#FDE047';
+                      ctx.beginPath();
+                      ctx.arc(drawSp.x + Math.cos(a) * 10, drawSp.y - 24 + Math.sin(a) * 4, 2.2, 0, Math.PI * 2);
+                      ctx.fill();
+                    }
+                  }
+                  ctx.restore();
+                }
               });
             },
           });

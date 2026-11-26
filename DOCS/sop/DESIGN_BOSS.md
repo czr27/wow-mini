@@ -28,8 +28,9 @@
    - **高威胁大招个性狠话（不重复随机）** — `DEV/packages/engine/src/bosses/core/BossTrashTalk.ts`：每个首领必须在 `BOSS_TRASH_TALK_LINES[bossId]` 中配置至少 **4 句**贴合自身人设与技能风格的狠话（如用毒者强调“最新研制的毒药”、炮手强调火力轰炸、奥法强调禁言/爆轰等），**不同 Boss 之间台词不得雷同**；引擎在释放高威胁技能时通过 `BossTrashTalkDeck` 洗牌袋机制随机抽取，确保一轮内**不重复**播报。
 4. **仇恨与坦伤校验** — `DEV/packages/engine/src/engine/ThreatManager.ts`
    - 确保首领普攻与顺劈优先锁定第一仇恨目标（近战 110% / 远程 130% OT 阈值），坦克阵亡时平滑转火第二仇恨。
-4. **Canvas 像素形象与预警渲染** — `DEV/packages/web/src/canvas/CombatCanvas.tsx`
+4. **Canvas 像素形象、预警与机制特效渲染** — `DEV/packages/web/src/canvas/CombatCanvas.tsx` / `DEV/packages/web/src/combat/bossLinkFx.ts`
    - 为新 Boss 添加高辨识度像素造型（或复用模板配色），确保预警光环使用纯净半透明色（红=敌方危险区、绿=友方治疗圈、橙=友伤提示）。
+   - **空间与持续性机制必须有对应视觉特效**：凡涉及空间连线/拉开扯断（如 `toxic_link`、`resonating_crystal`、`conductive_crystal` → `bossLinkFx.ts`）、控场/形变（如 `asphyxiate` 悬空窒息环、`ice_tomb` 冰晶包裹、`STUN`/`SILENCE` 头顶状态环）、随人移动的警戒圈（如 `chest_bomb` 55px 爆炸圈）等，**必须**在 Canvas 实装对应特效，并由光环（`APPLY_BUFF`/`REMOVE_BUFF`）或 `groundEffects` 权威驱动，保证单机与联机同步可见；禁止“只扣血/只飘字但画面无特效”。
 5. **数值压力核对**
    - 确认普通、英雄（血量 1.5x / 输出 1.2x）、自定义难度下坦克可承压、治疗在通用 AI 规则下不会瞬间 OOM 或无解秒杀。
 
