@@ -297,3 +297,19 @@ export class BossTrashTalkDeck {
     return this.lines.length;
   }
 }
+
+/** 从指定 Boss 的专属狠话池中随机抽取一句（支持排除已播报过的句子） */
+export function pickBossTrashTalkLine(
+  bossId: string,
+  exclude?: Iterable<string>
+): string {
+  const normalized = bossId.replace(/^boss_/, '').replace(/_\d+$/, '');
+  const pool =
+    BOSS_TRASH_TALK_LINES[bossId] ||
+    BOSS_TRASH_TALK_LINES[normalized] ||
+    DEFAULT_TRASH_TALK_LINES;
+  const blocked = exclude ? new Set(exclude) : null;
+  const candidates = blocked ? pool.filter((l) => !blocked.has(l)) : pool;
+  const finalPool = candidates.length > 0 ? candidates : pool;
+  return finalPool[Math.floor(Math.random() * finalPool.length)];
+}

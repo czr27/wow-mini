@@ -48,6 +48,7 @@ import {
   getUnitHaste,
   RANGE_40YD_PX,
   useHeroicWill,
+  pickBossTrashTalkLine,
 } from '@cata-raid-sim/engine';
 import {
   hasSufficientPlayerResources,
@@ -1494,13 +1495,20 @@ export function App() {
       const pullKey = `pull_${bossIdx}_${bossUnit.id}`;
       if (!bossChatSpokenRef.current.has(pullKey)) {
         bossChatSpokenRef.current.add(pullKey);
-        emitBossChat(bossUnit.id, bossUnit.name, '你们竟敢闯入我的领地，受死吧！');
+        const pullLine = pickBossTrashTalkLine(bossUnit.id);
+        bossChatSpokenRef.current.add(`line_${bossUnit.id}_${pullLine}`);
+        emitBossChat(bossUnit.id, bossUnit.name, pullLine);
       }
       if (bossUnit.maxHp > 0 && bossUnit.hp > 0 && bossUnit.hp / bossUnit.maxHp <= 0.35) {
         const lowHpKey = `lowhp_${bossIdx}_${bossUnit.id}`;
         if (!bossChatSpokenRef.current.has(lowHpKey)) {
           bossChatSpokenRef.current.add(lowHpKey);
-          emitBossChat(bossUnit.id, bossUnit.name, '够了！见识一下真正的力量吧！');
+          const usedForBoss = Array.from(bossChatSpokenRef.current)
+            .filter((k) => k.startsWith(`line_${bossUnit.id}_`))
+            .map((k) => k.slice(`line_${bossUnit.id}_`.length));
+          const lowHpLine = pickBossTrashTalkLine(bossUnit.id, usedForBoss);
+          bossChatSpokenRef.current.add(`line_${bossUnit.id}_${lowHpLine}`);
+          emitBossChat(bossUnit.id, bossUnit.name, lowHpLine);
         }
       }
     } else if (
