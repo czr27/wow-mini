@@ -203,6 +203,16 @@ export function handlePlayerCastSlot(slotIdx: number, ctx: HandlePlayerCastSlotC
   const player = engine.friendlyUnits.find(u => u.isPlayer) || (ctx.currentChar ? engine.getUnit(ctx.currentChar.id) : undefined);
   const boss = engine.bossUnit;
 
+  // 联网房间内与 3001 服务端断开时禁止本地施法（防止离线打 Boss）
+  if (ctx.activeRoomId && !ctx.netConnected) {
+    window.dispatchEvent(
+      new CustomEvent('cata_ui_error', {
+        detail: { text: '⚠️ 与游戏服务器 (3001) 连接已断开，无法施法！' },
+      })
+    );
+    return;
+  }
+
   // Asphyxiate / hard stun / silence: cannot act
   const ccInfo = getUnitCrowdControlInfo(player);
   if (player && ccInfo.isControlled) {

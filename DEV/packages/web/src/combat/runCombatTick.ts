@@ -191,6 +191,11 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
   engine.resourceManager.manaRegenMultiplier =
     rsm.phase === 'TRAVEL_RECOVERY' ? TRAVEL_MANA_REGEN_MULTIPLIER : 1;
 
+  // 联网房间内一旦与 3001 服务端断开，严禁回退到本地单机 Boss/AI 结算，立即冻结战斗等待重连
+  if (ctx.activeRoomIdRef.current && !netClient.connected) {
+    return;
+  }
+
   // Networked players (both host & guest): own skills/pets authority — resolve local cast; world from server
   const isNetworkedPlayer =
     (ctx.isNetworkHostRef.current || ctx.isNetworkGuestRef.current) &&

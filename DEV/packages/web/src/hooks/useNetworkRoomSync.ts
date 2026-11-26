@@ -343,6 +343,13 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
         // Only mark offline if the socket is truly gone (ignore stale close races)
         if (!netClient.connected) {
           d().setNetConnected(false);
+          if (d().activeRoomIdRef.current) {
+            window.dispatchEvent(
+              new CustomEvent('cata_ui_error', {
+                detail: { text: '⚠️ 与游戏服务器 (3001) 断开连接，战斗已暂停等待重连…' },
+              })
+            );
+          }
         }
       }
       if (msg.type === 'SESSION_KICKED') {
