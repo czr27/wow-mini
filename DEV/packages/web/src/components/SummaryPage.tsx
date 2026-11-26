@@ -105,10 +105,10 @@ export const SummaryPage: React.FC<Props> = ({
     : (encounters.length > 0 && encounters.every(e => e.result === 'KILL'));
 
   return (
-    <div className="w-full max-w-5xl mx-auto bg-[#131326] border-2 border-amber-500/70 rounded-2xl shadow-2xl p-6 text-gray-200 select-none space-y-5 animate-in fade-in">
+    <div className="w-full max-w-5xl mx-auto bg-[#131326] border-2 border-amber-500/70 rounded-2xl shadow-2xl p-6 text-gray-200 select-none flex flex-col gap-4 max-h-[88vh] overflow-hidden animate-in fade-in">
       
       {/* Header Banner */}
-      <div className="flex flex-wrap items-center justify-between border-b border-amber-500/30 pb-4 gap-3">
+      <div className="shrink-0 flex flex-wrap items-center justify-between border-b border-amber-500/30 pb-4 gap-3">
         <div>
           <div className="flex items-center space-x-2">
             <span className="text-3xl">{isTrulyCleared ? '🎉' : '⚔️'}</span>
@@ -161,7 +161,7 @@ export const SummaryPage: React.FC<Props> = ({
       </div>
 
       {/* View Switcher Pills */}
-      <div className="flex flex-wrap gap-2">
+      <div className="shrink-0 flex flex-wrap gap-2">
         <button
           onClick={() => setViewMode('OVERALL')}
           className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${
@@ -200,7 +200,7 @@ export const SummaryPage: React.FC<Props> = ({
 
       {/* Wipe Defeat Banner if current view is a wipe */}
       {typeof viewMode === 'number' && encounters[viewMode]?.result === 'WIPE' && (
-        <div className="bg-red-950/70 border-2 border-red-600/80 rounded-xl p-3 text-xs text-red-200 flex flex-wrap items-center justify-between gap-2 shadow-lg">
+        <div className="shrink-0 bg-red-950/70 border-2 border-red-600/80 rounded-xl p-3 text-xs text-red-200 flex flex-wrap items-center justify-between gap-2 shadow-lg">
           <div className="flex items-center space-x-2">
             <span className="text-xl">💀</span>
             <div>
@@ -248,9 +248,9 @@ export const SummaryPage: React.FC<Props> = ({
           0
         );
         return (
-      <div className="bg-[#181832] border border-[#2b2b4c] rounded-xl overflow-hidden shadow">
+      <div className="bg-[#181832] border border-[#2b2b4c] rounded-xl shadow flex-1 min-h-0 overflow-y-auto overflow-x-auto">
         <table className="w-full text-xs text-left">
-          <thead className="bg-[#101020] text-gray-400 uppercase text-[10px] tracking-wider border-b border-[#242442]">
+          <thead className="sticky top-0 z-20 bg-[#101020] text-gray-400 uppercase text-[10px] tracking-wider border-b border-[#242442]">
             <tr>
               <th className="py-2.5 px-3">成员</th>
               <th className="py-2.5 px-3">职业</th>
@@ -334,7 +334,7 @@ export const SummaryPage: React.FC<Props> = ({
       })()}
 
       {/* Export & Navigation Footer */}
-      <div className="flex flex-wrap items-center justify-between border-t border-[#252540] pt-4 gap-2">
+      <div className="shrink-0 flex flex-wrap items-center justify-between border-t border-[#252540] pt-4 gap-2">
         <button
           onClick={onExportJson}
           className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-blue-300 border border-slate-600 rounded-lg text-xs font-bold flex items-center space-x-1 shadow"

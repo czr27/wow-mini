@@ -147,7 +147,7 @@ export const VenoxisEncounter: BossEncounterModule = {
         }
       } else if (Math.floor((ai.venoxisFightMs || 0) / 1000) !== Math.floor(((ai.venoxisFightMs || 0) - deltaMs) / 1000)) {
         for (const u of linked) {
-          engine.dealDamage(boss, u, 4500, 'NATURE', false, '毒性链接');
+          engine.dealDamage(boss, u, 14_000, 'NATURE', true, '毒性链接(未拉开)');
         }
       }
     }

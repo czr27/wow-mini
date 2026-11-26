@@ -28,6 +28,7 @@ import {
   buildUsableCandidatesForUnit,
   selectAoeHealTargets,
   selectAoeEnemyTargets,
+  resolveUnitFacingRad,
   selectChainJumpTargets,
   selectRaidBuffTargets,
   RANGE_10YD_PX,
@@ -820,6 +821,14 @@ export function runFriendlyAiCombatTick(ctx: FriendlyAiCombatTickCtx): void {
         const tauntSp = ownedSpells.find(sp => sp.isTaunt && ctx.isAiCdReady(u.id, sp.shortId, sp.cooldownMs || 8000));
         if (tauntSp) {
           ctx.markAiCdUsed(u.id, tauntSp.shortId);
+          u.targetId = tankLooseAdd.id;
+          if (u.position && tankLooseAdd.position) {
+            u.facingRad = resolveUnitFacingRad({
+              position: u.position,
+              targetPos: tankLooseAdd.position,
+              fallbackFacingRad: u.facingRad,
+            });
+          }
           engine.threatManager.applyTaunt(tankLooseAdd.id, u.id);
           engine.effectsManager?.addFloatingText({
             targetId: tankLooseAdd.id,
@@ -832,6 +841,14 @@ export function runFriendlyAiCombatTick(ctx: FriendlyAiCombatTickCtx): void {
         const tauntSp = ownedSpells.find(sp => sp.isTaunt && ctx.isAiCdReady(u.id, sp.shortId, sp.cooldownMs || 8000));
         if (tauntSp) {
           ctx.markAiCdUsed(u.id, tauntSp.shortId);
+          u.targetId = boss.id;
+          if (u.position && boss.position) {
+            u.facingRad = resolveUnitFacingRad({
+              position: u.position,
+              targetPos: boss.position,
+              fallbackFacingRad: u.facingRad,
+            });
+          }
           engine.threatManager.applyTaunt(boss.id, u.id);
           engine.effectsManager?.addFloatingText({
             targetId: boss.id,
@@ -902,6 +919,14 @@ export function runFriendlyAiCombatTick(ctx: FriendlyAiCombatTickCtx): void {
           ? engine.enemyUnits.find(e => e.id === finished.targetId) || boss
           : engine.friendlyUnits.find(a => a.id === finished.targetId);
         if (sp && targetUnit && (targetUnit.alive || targetUnit.isAlive) && targetUnit.hp > 0) {
+          u.targetId = targetUnit.id;
+          if (u.position && targetUnit.position) {
+            u.facingRad = resolveUnitFacingRad({
+              position: u.position,
+              targetPos: targetUnit.position,
+              fallbackFacingRad: u.facingRad,
+            });
+          }
           if (deductCasterSpellResources(engine, u, sp, finished.manaCost)) {
             if (sp.cooldownMs > 0) ctx.markAiCdUsed(u.id, sp.shortId);
             executeAiNormalizedSpell(engine, ctx.livingEnemies, boss, u, sp, targetUnit, individualMod, critMod, tankPauseThreat);
@@ -1003,6 +1028,15 @@ export function runFriendlyAiCombatTick(ctx: FriendlyAiCombatTickCtx): void {
       const targetUnit = decision.targetUnit || (roleFilter === 'HEAL'
         ? [...engine.friendlyUnits].filter(a => (a.alive || a.isAlive) && a.hp > 0).sort((a, b) => (a.hp / a.maxHp) - (b.hp / b.maxHp))[0] || u
         : boss);
+
+      u.targetId = targetUnit.id;
+      if (u.position && targetUnit.position) {
+        u.facingRad = resolveUnitFacingRad({
+          position: u.position,
+          targetPos: targetUnit.position,
+          fallbackFacingRad: u.facingRad,
+        });
+      }
 
       const hastedCastMs = chosen.castMs > 0 ? chosen.castMs : 0;
 

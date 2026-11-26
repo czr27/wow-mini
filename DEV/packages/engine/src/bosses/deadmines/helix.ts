@@ -173,7 +173,7 @@ export const HelixEncounter: BossEncounterModule = {
         }
         if (nearAlly && (bomb.remainingMs || 0) <= 1000) {
           for (const o of living(engine)) {
-            engine.dealDamage(boss, o, 20_000, 'FIRE', true, '胸弹爆炸');
+            engine.dealDamage(boss, o, 42_000, 'FIRE', true, '胸弹爆炸(未分散)');
           }
           engine.auraManager.removeBuff(u, 'chest_bomb');
           engine.effectsManager?.addFloatingText({

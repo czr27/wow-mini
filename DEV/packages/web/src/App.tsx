@@ -1408,15 +1408,40 @@ export function App() {
     if (!player || !(player.isAlive ?? player.alive) || player.hp <= 0) return null;
 
     if (bossUnit?.id === 'ultraxion') {
-      const twilightBuff = player.buffs?.find((b) => b.spellId === 'twilight_realm');
-      if (twilightBuff) {
+      const inRealm = player.buffs?.some((b) => b.spellId === 'twilight_realm');
+      if (!inRealm) return null;
+
+      const fadingBuff = player.buffs?.find((b) => b.spellId === 'fading_light');
+      const bossCast = isNetworkGuestRef.current
+        ? guestBossCasting
+        : bossAiRef.current?.currentCasting
+        ? {
+            spellId: bossAiRef.current.currentCasting.skill.id,
+            elapsedMs: bossAiRef.current.currentCasting.elapsedMs,
+            castTimeMs: bossAiRef.current.currentCasting.skill.castTimeMs || 0,
+          }
+        : null;
+      const isHourOfTwilight = bossCast?.spellId === 'hour_of_twilight';
+
+      if (fadingBuff) {
         return {
           spellId: 'heroic_will',
           name: '英勇意志',
-          cooldownMs: 5000,
+          cooldownMs: 25000,
           maxUses: 1,
-          expiresAtMs: Date.now() + Math.max(0, twilightBuff.remainingMs || 5000),
-          reason: '暮光领域',
+          expiresAtMs: Date.now() + Math.max(0, fadingBuff.remainingMs || 5000),
+          reason: '凋零之光：到期前点击',
+        };
+      }
+      if (isHourOfTwilight && bossCast) {
+        const remMs = Math.max(0, (bossCast.castTimeMs || 5000) - (bossCast.elapsedMs || 0));
+        return {
+          spellId: 'heroic_will',
+          name: '英勇意志',
+          cooldownMs: 25000,
+          maxUses: 1,
+          expiresAtMs: Date.now() + remMs,
+          reason: '暮光时刻：读条结束前点击',
         };
       }
       return null;

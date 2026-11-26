@@ -5746,24 +5746,48 @@ export const CombatCanvas: React.FC<Props> = ({
       }
 
       // 八向朝向：移动中朝移动方向，否则朝释法/打击对象
+      const resolvePosByUnitId = (id: string | null | undefined): { x: number; y: number } | null => {
+        if (!id) return null;
+        if (bossUnit && (id === bossUnit.id || id === 'boss')) {
+          return { ...bossPosRef.current };
+        }
+        const addMatch = livingAdds.find((a) => a.id === id);
+        if (addMatch?.position) {
+          return { x: addMatch.position.x, y: addMatch.position.y };
+        }
+        const sel = units.find((t) => t.id === id);
+        if (sel) {
+          if (sel.isPlayer) return { ...playerPosRef.current };
+          const cp = companionPositionsRef.current[sel.id];
+          if (cp) return { ...cp };
+          if (sel.position) return { x: sel.position.x, y: sel.position.y };
+        }
+        return null;
+      };
+
       const resolveUnitLookTarget = (u: Unit): { x: number; y: number } | null => {
         if (u.role === 'ENEMY' || u.classId === 'BOSS') {
           return bossTargetPos ?? primaryTankPos ?? null;
         }
-        // 当前选中目标（玩家常用）
-        if (selectedUnitId) {
-          if (bossUnit && (selectedUnitId === bossUnit.id || selectedUnitId === 'boss')) {
+        if (u.isPlayer) {
+          // 同步本地玩家选中目标供网络快照共享
+          u.targetId = selectedUnitId ?? null;
+          const selPos = resolvePosByUnitId(selectedUnitId);
+          if (selPos) return selPos;
+          if (bossUnit && ((bossUnit.isAlive ?? bossUnit.alive) && bossUnit.hp > 0)) {
             return { ...bossPosRef.current };
           }
-          const sel = units.find((t) => t.id === selectedUnitId);
-          if (sel) {
-            if (sel.isPlayer) return { ...playerPosRef.current };
-            const cp = companionPositionsRef.current[sel.id];
-            if (cp) return { ...cp };
-            if (sel.position) return { x: sel.position.x, y: sel.position.y };
-          }
+          return null;
         }
-        // 默认：输出/坦克看 Boss；治疗也看 Boss（无选中时）
+        // AI 与远端玩家：优先朝向各自服务器同步的 targetId，绝不使用本地玩家的 selectedUnitId
+        if (u.targetId && u.targetId !== u.id) {
+          const ownTargetPos = resolvePosByUnitId(u.targetId);
+          if (ownTargetPos) return ownTargetPos;
+        }
+        // 若已有服务端同步的朝向弧度，交给 fallbackFacingRad 保持
+        if (typeof u.facingRad === 'number' && Number.isFinite(u.facingRad)) {
+          return null;
+        }
         if (bossUnit && ((bossUnit.isAlive ?? bossUnit.alive) && bossUnit.hp > 0)) {
           return { ...bossPosRef.current };
         }

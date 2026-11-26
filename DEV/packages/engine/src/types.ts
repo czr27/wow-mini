@@ -142,6 +142,10 @@ export interface Unit {
   despawnAtElapsedMs?: number;
   /** Canonical short spell id that spawned this timed pet (e.g. feral_spirit). */
   summonSpellId?: string;
+  /** Current target unit id (AI's own target or player's selected target). */
+  targetId?: string | null;
+  /** World-space facing in radians (synced across host/guests). */
+  facingRad?: number;
   isAlive: boolean;
   alive?: boolean;
   hp: number;

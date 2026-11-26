@@ -350,7 +350,7 @@ export const MorchokEncounter: BossEncounterModule = {
         continue;
       }
       const living = livingFriendlies(engine);
-      const baseFar = Math.round((living.length >= 15 ? 42_000 : 36_000) * furiousMult(ai));
+      const baseFar = Math.round((living.length >= 15 ? 60_000 : 52_000) * furiousMult(ai));
       for (const id of c.linkedIds) {
         const u = living.find(x => x.id === id);
         if (!u) continue;
@@ -375,10 +375,10 @@ export const MorchokEncounter: BossEncounterModule = {
       const pillars = ai.morchokPillars || [];
       while ((ai.morchokBloodTickAcc || 0) >= 1000) {
         ai.morchokBloodTickAcc! -= 1000;
-        const tickDmg = Math.round(18_000 * furiousMult(ai));
+        const tickDmg = Math.round(32_000 * furiousMult(ai));
         for (const u of livingFriendlies(engine)) {
           if (isBehindPillar(u, pillars)) continue;
-          engine.dealDamage(boss, u, tickDmg, 'SHADOW', false, '大地黑血');
+          engine.dealDamage(boss, u, tickDmg, 'SHADOW', true, '大地黑血(未躲柱子)');
         }
       }
       if ((ai.morchokPhaseAcc || 0) <= 0) {

@@ -235,7 +235,7 @@ export const UltraxionEncounter: BossEncounterModule = {
           for (const u of living) {
             if (soakIds.has(u.id)) continue;
             if (isInTwilightRealm(u)) {
-              engine.dealDamage(boss, u, 55_000, 'SHADOW', true, '暮光时刻(未离开)');
+              engine.dealDamage(boss, u, 85_000, 'SHADOW', true, '暮光时刻(未离开)');
             }
           }
           if (soakers.length === 0) {

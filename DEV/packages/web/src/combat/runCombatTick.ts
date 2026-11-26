@@ -607,6 +607,24 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
               reason: '滚转窗口',
             };
           }
+          if (
+            rsm.phase === 'BOSS_COMBAT' &&
+            engine.bossUnit?.id === 'ultraxion' &&
+            ai?.currentCasting?.skill?.id === 'hour_of_twilight'
+          ) {
+            const remMs = Math.max(
+              0,
+              (ai.currentCasting.skill.castTimeMs || 5000) - (ai.currentCasting.elapsedMs || 0)
+            );
+            return {
+              spellId: 'heroic_will',
+              name: '英勇意志',
+              cooldownMs: 25000,
+              maxUses: 1,
+              expiresAtMs: now + remMs,
+              reason: '暮光时刻',
+            };
+          }
           return null;
         })(),
         units: filterHostAuthorityUnits(engine.buildNetworkUnitSnapshots(), engine),

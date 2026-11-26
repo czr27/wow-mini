@@ -277,12 +277,13 @@ export const ZonozzEncounter: BossEncounterModule = {
           const existing = boss.buffs?.find(b => b.spellId === FOCUSED_ANGER_ID);
           if (existing) {
             existing.stacks = stacks;
+            existing.name = `专注愤怒 (${stacks}层 · +${stacks * 15}%易伤)`;
             existing.remainingMs = 60_000;
           } else {
             engine.applyBuff(boss, {
               id: `anger_${Date.now()}`,
               spellId: FOCUSED_ANGER_ID,
-              name: `专注愤怒 (${stacks})`,
+              name: `专注愤怒 (${stacks}层 · +${stacks * 15}%易伤)`,
               kind: 'DEBUFF',
               tags: ['DEBUFF'],
               sourceUnitId: carrier.id,
@@ -294,21 +295,34 @@ export const ZonozzEncounter: BossEncounterModule = {
               school: 'SHADOW',
             });
           }
-          // 易伤窗口：额外打 Boss 一下表现爆发
-          engine.dealDamage(carrier, boss, 80_000 * stacks, 'SHADOW', true, '黑光撞击');
+          // 易伤窗口：撞击对 Boss 造成显著百分比伤害 + 叠加 +15%/层 易伤
+          const impactDmg = Math.max(80_000 * stacks, Math.round((boss.maxHp || 0) * 0.04));
+          engine.dealDamage(carrier, boss, impactDmg, 'SHADOW', true, '黑光撞击');
           engine.effectsManager?.addFloatingText({
             targetId: boss.id,
-            text: `💥 黑光撞击！易伤 ${stacks} 层！`,
+            text: `💥 黑光撞击！Boss 易伤 ${stacks} 层 (+${stacks * 15}%)！`,
             category: 'CRIT',
             isCrit: true,
           });
         } else {
           for (const u of living(engine)) {
-            engine.dealDamage(boss, u, 28_000, 'SHADOW', true, '黑光失败');
+            const failDmg = Math.max(75_000, Math.round((u.maxHp || 100_000) * 0.65));
+            engine.dealDamage(boss, u, failDmg, 'SHADOW', true, '黑光失败');
           }
+          engine.emitDbmAlert?.({
+            title: '💀 黑光球未撞上 Boss！',
+            advice: '全团遭受重创（下次请尽快进入紫色圆环撞击 Boss）',
+            voiceText: '撞球失败',
+            severity: 'CRITICAL',
+            spellId: 'black_blood_ball',
+            bossId: boss.id,
+            source: 'ENCOUNTER',
+            dedupeKey: 'zonozz_ball_fail',
+            cooldownMs: 3000,
+          });
           engine.effectsManager?.addFloatingText({
             targetId: boss.id,
-            text: '💀 黑光未撞上 Boss！',
+            text: '💀 黑光未撞上 Boss！全团重创！',
             category: 'CRIT',
             isCrit: true,
           });

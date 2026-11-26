@@ -66,7 +66,12 @@ export function getIncomingDamageMultiplier(unit: Unit, school: SpellSchool = 'P
     if (row.physicalOnly && school !== 'PHYSICAL') continue;
     if (hasAny(ids, row.ids)) mult *= row.mult;
   }
-  return Math.max(0, Math.min(1, mult));
+  const anger = (unit.buffs || []).find((b) => b.spellId === 'focused_anger');
+  if (anger) {
+    const stacks = Math.max(1, anger.stacks || 1);
+    mult *= 1 + stacks * 0.15;
+  }
+  return Math.max(0, mult);
 }
 
 /**

@@ -2535,6 +2535,8 @@ export class CombatEngine {
     runes?: Unit['runes'];
     absorb: number;
     position: { x: number; y: number };
+    targetId?: string | null;
+    facingRad?: number;
     buffs: Buff[];
     combatStats?: Unit['combatStats'];
   }> {
@@ -2573,6 +2575,8 @@ export class CombatEngine {
         runes: u.runes ? u.runes.map((r) => ({ ...r })) : undefined,
         absorb: u.absorb,
         position: { ...u.position },
+        targetId: u.targetId,
+        facingRad: typeof u.facingRad === 'number' && Number.isFinite(u.facingRad) ? u.facingRad : undefined,
         buffs: u.buffs.map((b) => ({ ...b })),
         combatStats: u.combatStats ? { ...u.combatStats } : undefined,
       };
@@ -2606,6 +2610,8 @@ export class CombatEngine {
       runes?: Unit['runes'];
       absorb: number;
       position: { x: number; y: number };
+      targetId?: string | null;
+      facingRad?: number;
       buffs: Buff[];
       combatStats?: Unit['combatStats'];
     }>
@@ -2704,6 +2710,10 @@ export class CombatEngine {
       if (s.runes) unit.runes = s.runes.map((r) => ({ ...r }));
       unit.absorb = s.absorb;
       unit.position = { ...s.position };
+      if (s.targetId !== undefined) unit.targetId = s.targetId;
+      if (typeof s.facingRad === 'number' && Number.isFinite(s.facingRad)) {
+        unit.facingRad = s.facingRad;
+      }
       unit.buffs = s.buffs.map((b) => ({ ...b }));
       if (s.isHumanControlled != null) unit.isHumanControlled = !!s.isHumanControlled || s.isPlayer;
       if (s.isPet != null || s.unitKind === 'PET') unit.isPet = !!s.isPet || s.unitKind === 'PET';

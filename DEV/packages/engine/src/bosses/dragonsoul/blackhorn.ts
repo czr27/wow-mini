@@ -197,10 +197,10 @@ export const BlackhornEncounter: BossEncounterModule = {
         );
         if (soakers.length === 0) {
           // 无人分摊：重创天火号并全团溅射
-          const shipDmg = is20Man ? 160_000 : 90_000;
+          const shipDmg = is20Man ? 200_000 : 110_000;
           ai.blackhornShipHp = Math.max(0, (ai.blackhornShipHp || 0) - shipDmg);
           for (const u of fri) {
-            engine.dealDamage(boss, u, 28_000, 'SHADOW', true, '暮光猛攻(无人分摊)');
+            engine.dealDamage(boss, u, 55_000, 'SHADOW', true, '暮光猛攻(无人分摊)');
           }
           engine.effectsManager?.addFloatingText({
             targetId: boss.id,

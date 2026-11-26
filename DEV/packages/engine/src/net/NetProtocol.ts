@@ -43,6 +43,8 @@ export interface NetworkUnitSnapshot {
   }>;
   absorb: number;
   position: { x: number; y: number };
+  targetId?: string | null;
+  facingRad?: number;
   buffs: Buff[];
   combatStats?: {
     damageDealt: number;
