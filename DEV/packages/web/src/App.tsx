@@ -1422,7 +1422,7 @@ export function App() {
       return null;
     }
 
-    if (isNetworkGuestRef.current) {
+    if (netClient.connected && activeRoomIdRef.current) {
       if (guestExtraAction?.expiresAtMs && Date.now() > guestExtraAction.expiresAtMs + 500) {
         return null;
       }
@@ -1477,28 +1477,34 @@ export function App() {
     }
 
     let executed = false;
-    if (activeExtraAction.spellId === 'heroic_will' && bossAi) {
-      executed = useHeroicWill(engine, bossAi as any, player);
+    const isNetworkedRoom = Boolean(netClient.connected && activeRoomIdRef.current);
+    if (activeExtraAction.spellId === 'heroic_will') {
+      if (isNetworkedRoom && activeRoomIdRef.current) {
+        engine.auraManager.removeBuff(player, 'twilight_realm');
+        engine.effectsManager?.addFloatingText({
+          targetId: player.id,
+          text: '英勇意志：离开暮光领域',
+          category: 'STATUS',
+          isCrit: false,
+        });
+        netClient.sendPlayerInput(activeRoomIdRef.current, {
+          kind: 'EXTRA_ACTION',
+          playerId: player.id,
+          spellId: 'heroic_will',
+          spellName: '英勇意志',
+        });
+        executed = true;
+      } else if (bossAi) {
+        executed = useHeroicWill(engine, bossAi as any, player);
+      }
     } else if (activeExtraAction.spellId === 'spine_grip') {
       applySpineGrip(engine, player);
-      if (isNetworkGuestRef.current && netClient.connected && activeRoomIdRef.current) {
-        netClient.sendCombatEffect(activeRoomIdRef.current, {
-          effectId: `eff_grip_${now}_${player.id}`,
-          sourceId: player.id,
-          targetId: player.id,
+      if (isNetworkedRoom && activeRoomIdRef.current) {
+        netClient.sendPlayerInput(activeRoomIdRef.current, {
+          kind: 'EXTRA_ACTION',
+          playerId: player.id,
           spellId: 'spine_grip',
           spellName: '抓稳',
-          kind: 'APPLY_BUFF',
-          buff: {
-            spellId: 'spine_grip',
-            name: '抓稳',
-            kind: 'BUFF',
-            tags: ['STAT'],
-            stacks: 1,
-            maxStacks: 1,
-            durationMs: 6000,
-            remainingMs: 6000,
-          },
         });
       }
       executed = true;

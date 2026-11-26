@@ -243,6 +243,7 @@ export interface PlayerInputPayload {
     | 'INTERRUPT'
     | 'MOVE'
     | 'DISPEL'
+    | 'EXTRA_ACTION'
     | 'READY'
     | 'WIPE_VOTE'
     | 'SKIP_TRAVEL_VOTE'

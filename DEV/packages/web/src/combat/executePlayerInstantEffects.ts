@@ -64,6 +64,16 @@ export function executePlayerInstantEffects(ctx: InstantEffectsCtx): boolean {
     onFriendlyUnitsChanged,
   } = ctx;
 
+  const hostileTarget =
+    !isFriendlySpell &&
+    effectiveTarget &&
+    (effectiveTarget.isAlive ?? effectiveTarget.alive) &&
+    effectiveTarget.hp > 0
+      ? effectiveTarget
+      : boss && (boss.isAlive ?? boss.alive) && boss.hp > 0
+        ? boss
+        : undefined;
+
     // ── Dispel Spells ─────────────────────────────────────────────────
     if (
       slot.spellId === 'natures_cure' ||
@@ -1234,23 +1244,23 @@ export function executePlayerInstantEffects(ctx: InstantEffectsCtx): boolean {
         }
         triggerSlotCooldown(normSlotSpell.cooldownMs);
       return true;
-      } else if (boss && boss.alive) {
+      } else if (hostileTarget && (hostileTarget.alive ?? hostileTarget.isAlive)) {
         const isCrit = Math.random() < (player.stats.critChance || 0.3);
         const dmgVal = Math.round(Math.max(4200, normSlotSpell.directDamage || normSlotSpell.dotTotalDamage * 0.35) + power * 0.55);
         if (isCrit) {
           onScreenShake(110);
         }
-        engine.dealDamage(player, boss, dmgVal, normSlotSpell.school, isCrit, normSlotSpell.name);
-        engine.threatManager.addThreat(boss.id, player.id, player.role === 'TANK' ? dmgVal * 3.5 : dmgVal);
+        engine.dealDamage(player, hostileTarget, dmgVal, normSlotSpell.school, isCrit, normSlotSpell.name);
+        engine.threatManager.addThreat(hostileTarget.id, player.id, player.role === 'TANK' ? dmgVal * 3.5 : dmgVal);
         if (normSlotSpell.isDot && normSlotSpell.dotTotalDamage > 0) {
-          engine.applyBuff(boss, {
+          engine.applyBuff(hostileTarget, {
             id: `${normSlotSpell.shortId}_${Date.now()}`,
             spellId: normSlotSpell.shortId,
             name: `${normSlotSpell.name} (DoT)`,
             kind: 'DEBUFF',
             tags: ['DOT'],
             sourceUnitId: player.id,
-            targetUnitId: boss.id,
+            targetUnitId: hostileTarget.id,
             stacks: 1,
             maxStacks: 1,
             durationMs: 15000,
@@ -1265,7 +1275,7 @@ export function executePlayerInstantEffects(ctx: InstantEffectsCtx): boolean {
           spellId: normSlotSpell.shortId || normSlotSpell.id,
           spellName: normSlotSpell.name,
           kind: 'INSTANT',
-          targetId: boss.id,
+          targetId: hostileTarget.id,
         });
         triggerSlotCooldown(normSlotSpell.cooldownMs);
       return true;
@@ -1273,19 +1283,19 @@ export function executePlayerInstantEffects(ctx: InstantEffectsCtx): boolean {
     }
 
     // Default Fallback
-    if (boss && boss.alive) {
+    if (hostileTarget && (hostileTarget.alive ?? hostileTarget.isAlive)) {
       const isCrit = Math.random() < 0.35;
       if (isCrit) {
         onScreenShake(120);
       }
-      engine.dealDamage(player, boss, 6500, 'PHYSICAL', isCrit, slot.name || '攻击');
-      engine.threatManager.addThreat(boss.id, player.id, 6500);
+      engine.dealDamage(player, hostileTarget, 6500, 'PHYSICAL', isCrit, slot.name || '攻击');
+      engine.threatManager.addThreat(hostileTarget.id, player.id, 6500);
       engine.logCombatAction({
         actorId: player.id,
         spellId: slot.spellId || 'attack',
         spellName: slot.name || '攻击',
         kind: 'INSTANT',
-        targetId: boss.id,
+        targetId: hostileTarget.id,
       });
       triggerSlotCooldown();
     }

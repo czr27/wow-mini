@@ -180,8 +180,21 @@ export const MadnessEncounter: BossEncounterModule = {
       ai.madnessPhase = 'limbs';
       ai.madnessLimbOrder = ['arm_left', 'wing_left', 'arm_right', 'wing_right'];
       ai.madnessLimbIndex = 0;
-      // 四肢阶段 Boss 本体近乎不可集火：锁血在 100%
+      // 四肢阶段 Boss 本体受触角护佑不可击杀：锁血 100% 并挂载护盾提示
       boss.hp = boss.maxHp;
+      engine.applyBuff(boss, {
+        id: 'madness_limbs_shield',
+        spellId: 'madness_limbs_shield',
+        name: '四肢护佑（先摧毁触角）',
+        kind: 'BUFF',
+        tags: ['STAT'],
+        sourceUnitId: boss.id,
+        targetUnitId: boss.id,
+        durationMs: 600_000,
+        remainingMs: 600_000,
+        stacks: 1,
+        maxStacks: 1,
+      });
       spawnCurrentLimb(boss, engine, ai);
     }
 
@@ -195,6 +208,7 @@ export const MadnessEncounter: BossEncounterModule = {
         ai.madnessLimbIndex = (ai.madnessLimbIndex || 0) + 1;
         if ((ai.madnessLimbIndex || 0) >= (ai.madnessLimbOrder?.length || 4)) {
           ai.madnessPhase = 'torso';
+          engine.auraManager?.removeBuff?.(boss, 'madness_limbs_shield');
           ai.madnessCataclysmAt = (ai.madnessFightMs || 0) + 120_000;
           for (const s of ai.skills || []) {
             if (s.id === 'torso_assault') s.lastCastMs = -999_999;

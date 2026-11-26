@@ -127,7 +127,7 @@ export function confirmGroundTarget(ctx: ConfirmGroundTargetCtx): void {
       y,
       groundEffectId: id,
       radius: opts.radius,
-      targetId: boss?.id ?? null,
+      targetId: null,
     });
   };
 

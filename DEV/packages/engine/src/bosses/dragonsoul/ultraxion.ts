@@ -62,9 +62,13 @@ export function enterTwilightRealm(engine: CombatEngine, u: Unit, sourceId = 'ul
   });
 }
 
-export function leaveTwilightRealm(u: Unit) {
+export function leaveTwilightRealm(u: Unit, engine?: CombatEngine) {
   if (!u.buffs?.length) return;
-  u.buffs = u.buffs.filter(b => b.spellId !== TWILIGHT_REALM_SPELL_ID);
+  if (engine?.auraManager?.removeBuff) {
+    engine.auraManager.removeBuff(u, TWILIGHT_REALM_SPELL_ID);
+  } else {
+    u.buffs = u.buffs.filter(b => b.spellId !== TWILIGHT_REALM_SPELL_ID);
+  }
 }
 
 /**
@@ -83,7 +87,7 @@ export function useHeroicWill(
   if (cdLeft > 0) return false;
   if (!isInTwilightRealm(unit)) return false;
 
-  leaveTwilightRealm(unit);
+  leaveTwilightRealm(unit, engine);
   bossAi.ultraxWillCdMs!.set(unit.id, HEROIC_WILL_CD_MS);
   bossAi.ultraxOutUntilMs!.set(unit.id, fightMs + outMs);
   engine.effectsManager?.addFloatingText({

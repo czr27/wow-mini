@@ -281,9 +281,10 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
       const closedId = d().activeRoomIdRef.current || d().waitingQueueRoomIdRef.current;
       if (!closedId) return;
       const rsm = d().rsmRef.current;
-      const wasInRun = !!rsm && rsm.phase !== 'LOBBY' && rsm.phase !== 'SUMMARY';
+      const wasInRun = !!rsm && rsm.phase !== 'LOBBY';
       const goSummary =
-        !!(forceSummaryHint || reason === 'host_left' || reason === 'host_timeout') && wasInRun;
+        !!(forceSummaryHint || reason === 'host_left' || reason === 'host_timeout' || reason === 'cleared_summary' || reason === 'wipe_finish') &&
+        wasInRun;
 
       // 超时兜底：房间可能仍在，主动 ROOM_LEAVE；房主广播关闭则服务端已销毁
       if (reason === 'host_timeout' && d().currentChar?.id) {

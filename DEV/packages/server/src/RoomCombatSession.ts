@@ -5,6 +5,7 @@ import {
   LEVEL_80_STATS,
   ReportManager,
   RunStateMachine,
+  applySpineGrip,
   clampPosWithinTankRange,
   computeDungeonPriorityZone,
   createLevel80BaseStats,
@@ -19,11 +20,13 @@ import {
   getUnitMoveSpeedMultiplier,
   inferAiSpecForUnit,
   isAiCdReady,
+  isPriorityMechanicAdd,
   isTotemUnit,
   orderTanksByThreatPriority,
   resolveUnitFacingRad,
   spawnGmWildPack,
   tickEnemyAdds,
+  useHeroicWill,
   markAiCdUsed,
   notifyOom,
   runFriendlyAiCombatTick,
@@ -45,6 +48,7 @@ import {
   type PlayerInputPayload,
   type RoomMember,
   type RunPhase,
+  type TemporaryExtraAction,
   type Unit,
 } from '@cata-raid-sim/engine';
 
@@ -374,7 +378,7 @@ export class RoomCombatSession {
     playerId: string,
     input: PlayerInputPayload
   ): { shouldApply: boolean; ack?: { clientInputId: string; attempt: number } } {
-    const applyMoveIfHuman = () => {
+    const applyImmediateInput = () => {
       if (
         input.kind === 'MOVE' &&
         typeof input.x === 'number' &&
@@ -387,12 +391,22 @@ export class RoomCombatSession {
             u.position = { x: input.x, y: input.y };
           }
         }
+      } else if (input.kind === 'EXTRA_ACTION') {
+        const uid = input.playerId || playerId;
+        const u = uid ? this.engine.getUnit(uid) : undefined;
+        if (u && (u.isAlive ?? u.alive) && u.hp > 0) {
+          if (input.spellId === 'heroic_will' && this.bossAi) {
+            useHeroicWill(this.engine, this.bossAi as any, u);
+          } else if (input.spellId === 'spine_grip') {
+            applySpineGrip(this.engine, u);
+          }
+        }
       }
     };
 
     const cid = input.clientInputId;
     if (!cid) {
-      applyMoveIfHuman();
+      applyImmediateInput();
       return { shouldApply: true };
     }
 
@@ -412,7 +426,7 @@ export class RoomCombatSession {
       if (old) this.processedInputIds.delete(old);
     }
     this.noteAck(cid);
-    applyMoveIfHuman();
+    applyImmediateInput();
     return { shouldApply: true, ack };
   }
 
@@ -1004,10 +1018,20 @@ export class RoomCombatSession {
           u.role === 'TANK'
             ? findLooseAddForTank(u, this.engine.enemyUnits, boss, friendlies)
             : null;
-        const attackTargetPos =
-          looseAddForTank?.position
-            ? { x: looseAddForTank.position.x, y: looseAddForTank.position.y }
-            : bossPos;
+        const priorityAddForDps =
+          u.role === 'DPS'
+            ? this.engine.enemyUnits.find(
+                (e) =>
+                  e.id !== boss.id &&
+                  (e.alive ?? e.isAlive) &&
+                  e.hp > 0 &&
+                  isPriorityMechanicAdd(e)
+              ) ?? null
+            : null;
+        const focusEnemy = looseAddForTank || priorityAddForDps;
+        const attackTargetPos = focusEnemy?.position
+          ? { x: focusEnemy.position.x, y: focusEnemy.position.y }
+          : bossPos;
 
         const dungeonPriorityZone = computeDungeonPriorityZone({
           unit: u,
@@ -1246,6 +1270,20 @@ export class RoomCombatSession {
     const freshDbm = this.engine.drainDbmAlerts();
     if (freshDbm.length > 0) this.pendingDbmAlerts.push(...freshDbm);
 
+    let extraAction: TemporaryExtraAction | null = null;
+    const spineAi = this.bossAi as any;
+    if (this.engine.bossUnit?.id === 'spine' && spineAi?.spineRollAt != null) {
+      const remMs = Math.max(0, spineAi.spineRollAt - (spineAi.spineFightMs || 0));
+      extraAction = {
+        spellId: 'spine_grip',
+        name: '抓稳防翻',
+        cooldownMs: 3000,
+        maxUses: 1,
+        expiresAtMs: now + remMs,
+        reason: '滚转窗口',
+      };
+    }
+
     const worldSnap: NetworkCombatSnapshot = {
       roomId: this.roomId,
       seq,
@@ -1266,6 +1304,7 @@ export class RoomCombatSession {
       bossTargetId: this.engine.bossUnit
         ? this.engine.threatManager.getCurrentTarget?.(this.engine.bossUnit.id) ?? null
         : null,
+      extraAction,
       units: serverAuthUnits,
       casts,
       cooldowns,

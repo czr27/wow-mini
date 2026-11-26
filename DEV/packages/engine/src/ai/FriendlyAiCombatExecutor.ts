@@ -10,6 +10,7 @@ import {
   isTankHealthy,
   orderTanksByThreatPriority,
   selectDpsPriorityEnemies,
+  isPriorityMechanicAdd,
   getUnitPersonality,
   evaluateUniversalAIDecision,
   getSpellsForClassSpec,
@@ -637,6 +638,9 @@ export function isTankThreatStableForEnemy(
   dpsUnit: Unit,
   livingTanks?: Unit[],
 ): boolean {
+  // 机制优先转火目标（触角/源质箭/冰墓/传导水晶/屏障/软泥等）：不要求坦克先建立 3000 仇恨，DPS AI 立即转火
+  if (isPriorityMechanicAdd(enemy)) return true;
+
   const tanks =
     livingTanks ??
     engine.friendlyUnits.filter((t) => t.role === 'TANK' && (t.isAlive ?? t.alive) && t.hp > 0);

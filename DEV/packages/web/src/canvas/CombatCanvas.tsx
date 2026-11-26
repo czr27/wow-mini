@@ -15,6 +15,7 @@ import {
   evaluateGroundFormationPosition,
   computeDungeonPriorityZone,
   findLooseAddForTank,
+  isPriorityMechanicAdd,
   orderTanksByThreatPriority,
   clampPosWithinTankRange,
   GroundTargetState,
@@ -5461,10 +5462,20 @@ export const CombatCanvas: React.FC<Props> = ({
           u.role === 'TANK'
             ? findLooseAddForTank(u, enemyUnitsRef.current, bossUnit, units)
             : null;
-        const attackTargetPos =
-          looseAddForTank?.position
-            ? { x: looseAddForTank.position.x, y: looseAddForTank.position.y }
-            : bossPos;
+        const priorityAddForDps =
+          u.role === 'DPS'
+            ? enemyUnitsRef.current.find(
+                (e) =>
+                  (!bossUnit || e.id !== bossUnit.id) &&
+                  (e.alive ?? e.isAlive) &&
+                  e.hp > 0 &&
+                  isPriorityMechanicAdd(e)
+              ) ?? null
+            : null;
+        const focusEnemy = looseAddForTank || priorityAddForDps;
+        const attackTargetPos = focusEnemy?.position
+          ? { x: focusEnemy.position.x, y: focusEnemy.position.y }
+          : bossPos;
 
         const allyPositions = units
           .filter((a) => (a.isAlive ?? a.alive) && a.hp > 0 && !isTotemUnit(a))

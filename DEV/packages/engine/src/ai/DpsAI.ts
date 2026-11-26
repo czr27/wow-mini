@@ -22,7 +22,7 @@ import {
   getUnitResourceAmount,
 } from './SkillMetricEvaluator.js';
 
-const PRIORITY_ADD_PREFIXES = [
+export const PRIORITY_ADD_PREFIXES = [
   'jindo_brittle_barrier',
   'hagara_ice_tomb',
   'hagara_conductive_crystal',
@@ -38,20 +38,29 @@ const PRIORITY_ADD_PREFIXES = [
   'helix_lumbering_oaf',
 ];
 
+export function isPriorityMechanicAdd(enemy: Unit): boolean {
+  return Boolean(
+    enemy.summonSpellId &&
+      PRIORITY_ADD_PREFIXES.some((p) => enemy.summonSpellId!.startsWith(p))
+  );
+}
+
 export function selectDpsPriorityEnemies(livingEnemies: Unit[], boss: Unit | undefined): Unit[] {
   if (livingEnemies.length <= 1) return livingEnemies;
   const priorityAdd = livingEnemies.find(
-    (e) =>
-      (!boss || e.id !== boss.id) &&
-      !!e.summonSpellId &&
-      PRIORITY_ADD_PREFIXES.some((p) => e.summonSpellId!.startsWith(p))
+    (e) => (!boss || e.id !== boss.id) && isPriorityMechanicAdd(e)
   );
   if (priorityAdd) {
     return [priorityAdd, ...livingEnemies.filter((e) => e.id !== priorityAdd.id)];
   }
   // If boss has immunity/deflection buff, switch to any living add
   const bossImmune = boss?.buffs?.some(
-    (b) => b.spellId === 'arcane_bubble' || b.spellId === 'vanessa_deflection' || b.spellId === 'divine_shield' || b.spellId === 'ice_block'
+    (b) =>
+      b.spellId === 'arcane_bubble' ||
+      b.spellId === 'vanessa_deflection' ||
+      b.spellId === 'divine_shield' ||
+      b.spellId === 'ice_block' ||
+      b.spellId === 'madness_limbs_shield'
   );
   if (bossImmune && boss) {
     const anyAdd = livingEnemies.find((e) => e.id !== boss.id);

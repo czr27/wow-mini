@@ -51,6 +51,7 @@ export class RoomWsHub {
   private combatSessions = new Map<string, RoomCombatSession>();
   /** Per-room throttle for host combat → lobby list sync (rooms stay isolated). */
   private lastCombatMetaPush = new Map<string, { phase?: string; atMs: number }>();
+  private summaryRetentionTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
   constructor() {
@@ -71,6 +72,10 @@ export class RoomWsHub {
       cs.dispose();
     }
     this.combatSessions.clear();
+    for (const t of this.summaryRetentionTimers.values()) {
+      clearTimeout(t);
+    }
+    this.summaryRetentionTimers.clear();
   }
 
   getCombatSession(roomId: string): RoomCombatSession | undefined {
@@ -104,8 +109,19 @@ export class RoomWsHub {
         }
       },
       onEnterSummary: (rid) => {
-        // 团灭并不重试 / 通关结算：销毁房间战斗会话并在无重试时销毁房间
-        this.destroyRoomAndNotify(rid, 'wipe_finish', true);
+        // 通关或团灭结算：保留房间 10 秒共享结算数据，供玩家查看并手动返回大厅；超时无人离开再自动销毁
+        if (this.summaryRetentionTimers.has(rid)) return;
+        const t = setTimeout(() => {
+          this.summaryRetentionTimers.delete(rid);
+          const r = this.roomManager.getRoom(rid);
+          if (!r) return;
+          const reason = r.status === 'CLEARED' ? 'cleared_summary' : 'wipe_finish';
+          this.destroyRoomAndNotify(rid, reason, true);
+        }, 10_000);
+        if (typeof (t as any).unref === 'function') {
+          (t as any).unref();
+        }
+        this.summaryRetentionTimers.set(rid, t);
       },
       onRoomMetaUpdate: (rid, snap) => {
         this.applyCombatSnapMeta(rid, snap);
@@ -192,6 +208,11 @@ export class RoomWsHub {
 
   /** Destroy room and notify all clients. Mid-run host leave sets forceSummary for guests. */
   private destroyRoomAndNotify(roomId: string, reason: string, forceSummary: boolean) {
+    const sumTimer = this.summaryRetentionTimers.get(roomId);
+    if (sumTimer) {
+      clearTimeout(sumTimer);
+      this.summaryRetentionTimers.delete(roomId);
+    }
     this.combatSessions.get(roomId)?.dispose();
     this.combatSessions.delete(roomId);
     this.votes.clearRoom(roomId);

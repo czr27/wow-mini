@@ -42,6 +42,15 @@ export function resolvePlayerCast(
     const boss = engine.bossUnit;
     if (!player || (!player.isAlive && !player.alive)) return false;
 
+    const hostileTarget =
+      (castTargetId
+        ? engine.enemyUnits.find(u => u.id === castTargetId && (u.isAlive ?? u.alive) && u.hp > 0)
+        : null) ||
+      (selectedTargetId
+        ? engine.enemyUnits.find(u => u.id === selectedTargetId && (u.isAlive ?? u.alive) && u.hp > 0)
+        : null) ||
+      (boss && (boss.isAlive ?? boss.alive) && boss.hp > 0 ? boss : undefined);
+
     const normSpell = getSpellByAnyId(spellId, player.classId);
     const isRevive =
       spellId === 'revive' ||
@@ -59,7 +68,7 @@ export function resolvePlayerCast(
 
     // ── 目标存活与射程校验：若目标已死亡或超出范围，施法失败且绝对不进CD！──
     if (isHarmful) {
-      if (!boss || (!boss.isAlive && !boss.alive) || boss.hp <= 0) {
+      if (!hostileTarget || (!hostileTarget.isAlive && !hostileTarget.alive) || hostileTarget.hp <= 0) {
         engine.effectsManager?.addFloatingText({
           targetId: player.id,
           text: '❌ 目标已死亡',
@@ -163,31 +172,31 @@ export function resolvePlayerCast(
         engine.threatManager.addThreat(boss.id, player.id, 21500);
       }
     } else if (spellId === 'starsurge') {
-      if (boss && boss.alive) {
+      if (hostileTarget && hostileTarget.alive) {
         onScreenShake(150);
-        engine.dealDamage(player, boss, 28000, 'ARCANE', true, '星涌术');
-        engine.threatManager.addThreat(boss.id, player.id, 28000);
+        engine.dealDamage(player, hostileTarget, 28000, 'ARCANE', true, '星涌术');
+        engine.threatManager.addThreat(hostileTarget.id, player.id, 28000);
       }
     } else if (spellId === 'lightning_bolt') {
-      if (boss && boss.alive) {
+      if (hostileTarget && hostileTarget.alive) {
         const isCrit = Math.random() < 0.28;
         const sp = getSpellByAnyId('lightning_bolt', 'SHAMAN');
         const base = sp?.directDamage || 8500;
         const dmg = Math.round(base + (player.stats.spellPower || 3800) * 0.86);
-        engine.dealDamage(player, boss, dmg, 'NATURE', isCrit, '闪电箭');
-        engine.threatManager.addThreat(boss.id, player.id, dmg);
+        engine.dealDamage(player, hostileTarget, dmg, 'NATURE', isCrit, '闪电箭');
+        engine.threatManager.addThreat(hostileTarget.id, player.id, dmg);
         // 大地之流回蓝后同步资源条
         syncUnitResources(player);
       }
     } else if (spellId === 'lava_burst') {
-      if (boss && boss.alive) {
+      if (hostileTarget && hostileTarget.alive) {
         onScreenShake(120);
         const sp = getSpellByAnyId('lava_burst', 'SHAMAN');
         const base = sp?.directDamage || 14000;
         // 熔岩爆裂：有烈焰震击时必然暴击；这里按技能描述保底暴击
         const dmg = Math.round((base + (player.stats.spellPower || 3800) * 0.86) * 2.0);
-        engine.dealDamage(player, boss, dmg, 'FIRE', true, '熔岩爆裂');
-        engine.threatManager.addThreat(boss.id, player.id, dmg);
+        engine.dealDamage(player, hostileTarget, dmg, 'FIRE', true, '熔岩爆裂');
+        engine.threatManager.addThreat(hostileTarget.id, player.id, dmg);
       }
     } else if (spellId === 'chain_lightning') {
       const enemies = engine.enemyUnits.filter(e => (e.isAlive ?? e.alive) && e.hp > 0).slice(0, 4);
@@ -423,23 +432,23 @@ export function resolvePlayerCast(
             radius: pose.radius,
           });
         }
-      } else if (boss && boss.alive) {
+      } else if (hostileTarget && hostileTarget.alive) {
         const power = normSpell.school === 'PHYSICAL' ? apPower : spPower;
         const dmgVal = Math.round(Math.max(5200, normSpell.directDamage || normSpell.dotTotalDamage * 0.35) + power * 0.65);
         if (isCrit) {
           onScreenShake(110);
         }
-        engine.dealDamage(player, boss, dmgVal, normSpell.school, isCrit, normSpell.name);
-        engine.threatManager.addThreat(boss.id, player.id, dmgVal);
+        engine.dealDamage(player, hostileTarget, dmgVal, normSpell.school, isCrit, normSpell.name);
+        engine.threatManager.addThreat(hostileTarget.id, player.id, dmgVal);
         if (normSpell.isDot && normSpell.dotTotalDamage > 0) {
-          engine.applyBuff(boss, {
+          engine.applyBuff(hostileTarget, {
             id: `${normSpell.shortId}_${Date.now()}`,
             spellId: normSpell.shortId,
             name: `${normSpell.name} (DoT)`,
             kind: 'DEBUFF',
             tags: ['DOT'],
             sourceUnitId: player.id,
-            targetUnitId: boss.id,
+            targetUnitId: hostileTarget.id,
             stacks: 1,
             maxStacks: 1,
             durationMs: 15000,
@@ -454,7 +463,7 @@ export function resolvePlayerCast(
           spellId: normSpell.shortId || normSpell.id,
           spellName: normSpell.name,
           kind: 'CAST_LAND',
-          targetId: boss.id,
+          targetId: hostileTarget.id,
         });
       }
     }
@@ -469,13 +478,13 @@ export function resolvePlayerCast(
       const stHeal = new Set([
         'healing_wave', 'nourish', 'healing_surge', 'greater_healing_wave', 'healing_touch', 'regrowth',
       ]);
-      if (stDmg.has(sid) && boss && (boss.alive || boss.isAlive)) {
+      if (stDmg.has(sid) && hostileTarget && (hostileTarget.alive || hostileTarget.isAlive)) {
         engine.logCombatAction({
           actorId: player.id,
           spellId: sid,
           spellName: spellId,
           kind: 'CAST_LAND',
-          targetId: boss.id,
+          targetId: hostileTarget.id,
         });
       } else if (stHeal.has(sid)) {
         const target =
