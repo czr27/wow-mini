@@ -1676,7 +1676,7 @@ export function App() {
       markRoomRecentlyLeft(waitingQueueRoomId);
     }
     if (activeRoomId && currentChar) {
-      if (isNetworkHostRef.current || (!netClient.connected && roomManager.getRoom(activeRoomId)?.hostId === currentChar.id)) {
+      if (!netClient.connected && roomManager.getRoom(activeRoomId)?.hostId === currentChar.id) {
         roomFacadeRef.current.closeRoom(activeRoomId, 'host_left');
       } else {
         roomFacadeRef.current.leaveRoom(activeRoomId, currentChar.id);

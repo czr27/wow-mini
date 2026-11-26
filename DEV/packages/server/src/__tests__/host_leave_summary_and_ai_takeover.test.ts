@@ -157,9 +157,9 @@ describe('联机退局：房主结算 / 非房主 AI 接续', () => {
     hub.dispose();
   });
 
-  it('2. 房主返回大厅（ROOM_CLOSED host_left）→ forceSummary，客人进结算', () => {
+  it('2. 房主返回大厅（ROOM_CLOSED host_left）→ 仍有其他玩家时顺延移交房主；无人继承才销毁', () => {
     const hub = new RoomWsHub();
-    const { host, guest, roomId } = startCombatRoom(hub);
+    const { host, guest, guest2, roomId } = startCombatRoom(hub);
 
     host.inject({
       type: 'ROOM_CLOSED',
@@ -168,12 +168,16 @@ describe('联机退局：房主结算 / 非房主 AI 接续', () => {
       payload: { roomId, reason: 'host_left' },
     });
 
-    assert.equal(hub.roomManager.getRoom(roomId), undefined);
-    const closed = guest.lastOfType('ROOM_CLOSED');
-    assert.ok(closed);
-    const payload = closed!.payload as { reason?: string; forceSummary?: boolean };
-    assert.equal(payload.reason, 'host_left');
-    assert.equal(payload.forceSummary, true);
+    const roomAfter = hub.roomManager.getRoom(roomId);
+    assert.ok(roomAfter, '仍有其他玩家时不应销毁房间');
+    assert.equal(roomAfter!.hostId, 'g_leave', '房主应移交给下个玩家');
+    assert.equal(guest.lastOfType('ROOM_CLOSED'), undefined, '其余玩家不应收到 ROOM_CLOSED');
+    assert.ok(guest.lastOfType('HOST_TRANSFER'), '其余玩家应收到 HOST_TRANSFER');
+
+    guest.inject({ type: 'ROOM_LEAVE', roomId, timeMs: Date.now() });
+    guest2.inject({ type: 'ROOM_LEAVE', roomId, timeMs: Date.now() });
+    assert.equal(hub.roomManager.getRoom(roomId), undefined, '所有玩家离开后房间才销毁');
+    hub.dispose();
   });
 
   it('3. 非房主战斗中离开 → MEMBER_REPLACE_AI，人数不变，人类减 1，AI 接续', () => {

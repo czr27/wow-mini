@@ -566,11 +566,25 @@ export class RoomWsHub {
       }, 120);
     }
 
-    // 房主会话已不存在或不属于该房 → 幽灵房兜底清理
+    // 房主会话已不存在或不属于该房 → 优先移交在线玩家，无人可继承才销毁
     // （断线 5s 宽限期内 session 仍在且 roomId 未清，不会误删，方便重连）
     for (const room of [...this.roomManager.listRooms()]) {
       const hostSession = this.sessionsByPlayer.get(room.hostId);
       if (hostSession && hostSession.roomId === room.id) continue;
+
+      const hasOnlineSuccessor = room.members.some(
+        (m) =>
+          m.id !== room.hostId &&
+          m.isPlayer &&
+          !m.isAi &&
+          this.sessionsByPlayer.get(m.id)?.roomId === room.id
+      );
+      if (hasOnlineSuccessor) {
+        this.removeOrReplacePlayerFromRoom(room.id, room.hostId, 'host_timeout', {
+          autoFillInLobby: true,
+        });
+        continue;
+      }
 
       const inRun = room.status === 'IN_COMBAT' || room.status === 'OUT_OF_COMBAT';
       this.destroyRoomAndNotify(room.id, 'host_timeout', inRun);
@@ -824,7 +838,7 @@ export class RoomWsHub {
       }
 
       case 'ROOM_CLOSED': {
-        // Host requests destroy (return lobby / wipe FINISH)
+        // Host requests leave/destroy: transfer to next human player when possible unless wipe_finish/explicit destroy
         const roomId = msg.roomId || session.roomId;
         if (!roomId) break;
         const room = this.roomManager.getRoom(roomId);
@@ -834,9 +848,18 @@ export class RoomWsHub {
           break;
         }
         const reason = (msg.payload as any)?.reason || 'destroyed';
+        const hasOtherHuman = room.members.some(
+          (m) => m.id !== session.playerId && m.isPlayer && !m.isAi
+        );
+        session.roomId = null;
+        if (reason === 'host_left' && hasOtherHuman) {
+          this.removeOrReplacePlayerFromRoom(roomId, session.playerId, reason, {
+            autoFillInLobby: true,
+          });
+          break;
+        }
         const inRun = room.status === 'IN_COMBAT' || room.status === 'OUT_OF_COMBAT';
         const forceSummary = inRun || reason === 'host_left';
-        session.roomId = null;
         this.destroyRoomAndNotify(roomId, reason, forceSummary);
         break;
       }
