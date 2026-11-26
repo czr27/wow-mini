@@ -1513,6 +1513,38 @@ function hasAura(unit: Unit, spellId: string): boolean {
   return unit.buffs.some(b => b.spellId === spellId);
 }
 
+/** 默认战斗站位（单机与服务端共用 SSOT，开怪与空闲回位一致） */
+export function getCombatFormationPos(
+  u: Unit,
+  idx: number,
+  bossPos: { x: number; y: number },
+  hpPct = 1
+): { x: number; y: number } {
+  if (u.role === 'TANK') {
+    const tankOffset = idx % 2 === 0 ? -12 : 16;
+    return hpPct >= 0.6
+      ? { x: 445, y: 180 + tankOffset }
+      : { x: 400, y: 180 + tankOffset };
+  }
+  if (isMeleeDps(u)) {
+    const meleeAngle = Math.PI - 0.45 + (idx % 4) * 0.32;
+    const meleeDist = 48 + ((idx * 6) % 12);
+    return {
+      x: bossPos.x + Math.cos(meleeAngle) * meleeDist,
+      y: bossPos.y + Math.sin(meleeAngle) * meleeDist,
+    };
+  }
+  const col = idx % 3;
+  const row = Math.floor(idx / 3);
+  const nameCode = u.name ? u.name.charCodeAt(0) : 65;
+  const hashX = ((idx * 31 + nameCode) % 17) - 8;
+  const hashY = ((idx * 43 + nameCode) % 21) - 10;
+  return {
+    x: 210 + col * 50 + hashX,
+    y: 105 + (row % 5) * 36 + hashY,
+  };
+}
+
 function auraStacks(unit: Unit, spellId: string): number {
   return unit.buffs.find(b => b.spellId === spellId)?.stacks ?? 0;
 }

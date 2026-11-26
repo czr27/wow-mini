@@ -5,14 +5,23 @@ import {
   LEVEL_80_STATS,
   ReportManager,
   RunStateMachine,
+  clampPosWithinTankRange,
+  computeDungeonPriorityZone,
   createLevel80BaseStats,
   ensureDkRunes,
+  evaluateGroundFormationPosition,
+  findLooseAddForTank,
+  getCombatFormationPos,
   getDungeonConfig,
   getOrCreateUnitAIPersonality,
   getRoleBySpec,
   getUnitHaste,
+  getUnitMoveSpeedMultiplier,
   inferAiSpecForUnit,
   isAiCdReady,
+  isTotemUnit,
+  orderTanksByThreatPriority,
+  resolveUnitFacingRad,
   spawnGmWildPack,
   tickEnemyAdds,
   markAiCdUsed,
@@ -61,6 +70,7 @@ export class RoomCombatSession {
   private bossAi: BossAI | null = null;
   private approachedBossId: string | null = null;
   private aiCasts: Record<string, AiActiveCast> = {};
+  private aiCurrentCasts: Record<string, any> = {};
   private aiCooldowns: Record<string, number> = {};
   private aiPersonalities = new Map<string, AIPersonality>();
   private addLastAttackMs = new Map<string, number>();
@@ -906,25 +916,125 @@ export class RoomCombatSession {
 
   private tickServerAiTeammates(boss: Unit) {
     const deltaMs = TICK_MS;
-    const stepPx = 7; // ~140px/s
-    // 1. 被动资源回复 & AI 走位（坦克/近战贴近 Boss，远程/治疗保持 320px 内）
-    for (const u of this.engine.friendlyUnits) {
-      if (!(u as any).isAi || !(u.isAlive ?? u.alive) || u.hp <= 0) continue;
-      const isMelee =
-        u.role === 'TANK' ||
-        u.classId === 'WARRIOR' ||
-        u.classId === 'ROGUE' ||
-        u.classId === 'DK' ||
-        (u.classId === 'PALADIN' && u.role !== 'HEALER') ||
-        u.classId === 'DRUID';
-      const desiredRange = isMelee ? 70 : 320;
-      const dx = boss.position.x - u.position.x;
-      const dy = boss.position.y - u.position.y;
-      const dist = Math.hypot(dx, dy);
-      if (dist > desiredRange && dist > 0) {
-        const move = Math.min(stepPx, dist - desiredRange);
-        u.position.x += (dx / dist) * move;
-        u.position.y += (dy / dist) * move;
+    const baseStepPx = 7; // ~140px/s (2.4px/frame @60fps ≈ 144px/s)
+    const groundEffects = this.engine.effectsManager?.groundEffects || [];
+    const friendlies = this.engine.friendlyUnits;
+    const livingAllies = friendlies.filter(
+      (a) => (a.isAlive ?? a.alive) && a.hp > 0 && !isTotemUnit(a)
+    );
+    const friendlyUnitIds = new Set(friendlies.filter((x) => x.role !== 'ENEMY').map((x) => x.id));
+    const bossPos = boss.position || { x: 500, y: 180 };
+    const bossTargetId = this.engine.getBossTargetId() || null;
+    const bossTargetUnit =
+      (bossTargetId
+        ? friendlies.find((t) => t.id === bossTargetId && (t.isAlive ?? t.alive) && t.hp > 0)
+        : null) ?? null;
+    const bossFacingRad = resolveUnitFacingRad({
+      position: bossPos,
+      isMoving: false,
+      moveDx: 0,
+      moveDy: 0,
+      targetPos: bossTargetUnit?.position ?? null,
+      fallbackFacingRad: (boss as { facingRad?: number }).facingRad,
+    });
+    const primaryTank =
+      orderTanksByThreatPriority(friendlies.filter((t) => t.role === 'TANK'))[0] ??
+      friendlies.find((t) => t.role === 'TANK' && (t.isAlive ?? t.alive) && t.hp > 0);
+    const primaryTankPos = primaryTank?.position ? { ...primaryTank.position } : undefined;
+    const aggroIsNonTank = !!(bossTargetUnit && bossTargetUnit.role !== 'TANK');
+
+    let nearestHealerPos: { x: number; y: number } | undefined;
+    let bestHealerDist = Infinity;
+    for (const h of livingAllies) {
+      if (h.role !== 'HEALER' || !h.position) continue;
+      const d = Math.hypot(h.position.x - bossPos.x, h.position.y - bossPos.y);
+      if (d < bestHealerDist) {
+        bestHealerDist = d;
+        nearestHealerPos = { x: h.position.x, y: h.position.y };
+      }
+    }
+
+    const allyPositions = livingAllies.map((a) => ({
+      id: a.id,
+      role: a.role,
+      x: a.position?.x ?? 200,
+      y: a.position?.y ?? 180,
+    }));
+
+    // 1. 被动资源回复 & 完整智能 AI 走位（躲红圈、拉小怪、吃绿圈、机制集中/分散、离坦25码、控场移速为0）
+    friendlies.forEach((u, idx) => {
+      if (!(u as any).isAi || !(u.isAlive ?? u.alive) || u.hp <= 0) return;
+      const pos = u.position || { x: 220, y: 180 };
+      if (!u.position) u.position = pos;
+
+      const moveSpeedMult = getUnitMoveSpeedMultiplier(u);
+      if (moveSpeedMult <= 0) {
+        (u as any).isMoving = false;
+      } else {
+        const hpPct = u.maxHp > 0 ? u.hp / u.maxHp : 1;
+        const defaultTarget = getCombatFormationPos(u, idx, bossPos, hpPct);
+        const looseAddForTank =
+          u.role === 'TANK'
+            ? findLooseAddForTank(u, this.engine.enemyUnits, boss, friendlies)
+            : null;
+        const attackTargetPos =
+          looseAddForTank?.position
+            ? { x: looseAddForTank.position.x, y: looseAddForTank.position.y }
+            : bossPos;
+
+        const dungeonPriorityZone = computeDungeonPriorityZone({
+          unit: u,
+          boss,
+          bossPos,
+          allies: allyPositions,
+          groundEffects,
+          bossCastingSpellName: this.bossAi?.currentCasting?.skill?.name,
+        });
+        const formationResult = evaluateGroundFormationPosition({
+          currentPos: pos,
+          unit: u,
+          groundEffects,
+          defaultTarget,
+          bossPos,
+          attackTargetPos,
+          tankPos: primaryTank && primaryTank.id !== u.id ? primaryTankPos : undefined,
+          bossFacingRad,
+          bossTargetUnitId: bossTargetId,
+          aggroIsNonTank,
+          nearestHealerPos,
+          isPrimaryTank: !!primaryTank && primaryTank.id === u.id,
+          dungeonPriorityZone,
+          friendlyUnitIds,
+        });
+
+        let targetX = formationResult.targetPos.x;
+        let targetY = formationResult.targetPos.y;
+        if (
+          primaryTank &&
+          primaryTank.id !== u.id &&
+          primaryTankPos &&
+          formationResult.reason !== 'DODGE_HAZARD' &&
+          formationResult.tradeOffDecision !== 'SEEK_HEAL_ZONE' &&
+          formationResult.tradeOffDecision !== 'STAY_IN_CURRENT_HEAL_ZONE'
+        ) {
+          const stacked = clampPosWithinTankRange({ x: targetX, y: targetY }, primaryTankPos);
+          targetX = stacked.x;
+          targetY = stacked.y;
+        }
+        targetX = Math.max(30, Math.min(750, targetX));
+        targetY = Math.max(30, Math.min(330, targetY));
+
+        const dx = targetX - pos.x;
+        const dy = targetY - pos.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist > 2) {
+          const step = Math.min(baseStepPx * moveSpeedMult, dist);
+          pos.x = Math.max(30, Math.min(750, pos.x + (dx / dist) * step));
+          pos.y = Math.max(30, Math.min(330, pos.y + (dy / dist) * step));
+          (u as any).isMoving = dist > 5;
+        } else {
+          (u as any).isMoving = false;
+        }
       }
 
       const haste = getUnitHaste(u, LEVEL_80_MAX_HASTE);
@@ -940,11 +1050,11 @@ export class RoomCombatSession {
         u.focus = Math.min(100, (u.focus ?? 100) + (6.5 * (1 + haste) * deltaMs) / 1000);
       }
       syncUnitResources(u);
-    }
+    });
 
     // 2. 运行完整 10 职业 / 30 专精通用 AI 战斗决策循环
     const livingEnemies = this.engine.enemyUnits.filter((e) => (e.isAlive ?? e.alive) && e.hp > 0);
-    const bossThreatTargetId = this.engine.getBossTargetId() || null;
+    const bossThreatTargetId = bossTargetId;
 
     tickEnemyAdds(this.engine, boss, deltaMs, this.addLastAttackMs);
 
@@ -958,7 +1068,7 @@ export class RoomCombatSession {
       bossAi: this.bossAi,
       aiCasts: this.aiCasts,
       aiCooldowns: this.aiCooldowns,
-      currentCasts: {},
+      currentCasts: this.aiCurrentCasts,
       getUnitAIPersonality: (u) => getOrCreateUnitAIPersonality(this.aiPersonalities, u),
       inferAiSpecForUnit,
       isAiCdReady: (unitId, spellKey, cdMs) => isAiCdReady(this.aiCooldowns, unitId, spellKey, cdMs),
