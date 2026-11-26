@@ -12,7 +12,7 @@ import {
   ensureMinimumBootAudio,
   type BgmPhase,
 } from './utils/bgmManager.js';
-import { speakDbmVoice } from './utils/dbmVoice.js';
+import { speakDbmVoice, speakBossTrashTalkVoice } from './utils/dbmVoice.js';
 import {
   CombatEngine,
   RunStateMachine,
@@ -1243,7 +1243,7 @@ export function App() {
   }, [raidSquads, selectedSquadIndex, selectedTargetId]);
 
   // Cast Player Spell (P6e: gates in combat/handlePlayerCastSlot)
-  const handleCastSlot = (slotIdx: number) => {
+  const handleCastSlot = (slotIdx: number, opts?: { selfCast?: boolean }) => {
     handlePlayerCastSlot(slotIdx, {
       getPlayerSlots,
       engine: engineRef.current,
@@ -1265,6 +1265,7 @@ export function App() {
       setGroundTargetState,
       lastPlayerMoveMs: lastPlayerMoveMsRef.current,
       selectedTargetId,
+      selfCast: opts?.selfCast,
       setSelectedTargetId,
       setCastTargetId: (id) => { castTargetIdRef.current = id; },
       runPhase,
@@ -1585,6 +1586,9 @@ export function App() {
       if (activeRoomIdRef.current && chat.roomId && chat.roomId !== activeRoomIdRef.current) return;
       setRoomChatMessages((prev) => {
         if (prev.some((m) => m.id === chat.id)) return prev;
+        if (chat.senderKind === 'BOSS' && dbmVoiceEnabledRef.current) {
+          speakBossTrashTalkVoice(chat.text, chat.senderId);
+        }
         const next = [...prev, chat];
         return next.length > 120 ? next.slice(next.length - 120) : next;
       });
@@ -1636,7 +1640,27 @@ export function App() {
       atMs: Date.now(),
     };
     setRoomChatMessages((prev) => [...prev.slice(-119), localMsg]);
+    if (dbmVoiceEnabledRef.current) {
+      speakBossTrashTalkVoice(text, bossId);
+    }
   }, []);
+
+  // Boss mid-fight skill trash talk (🗣️「...」 floating text) → evil old-man TTS
+  const spokenTrashTalkIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!dbmVoiceEnabledRef.current || floatingTexts.length === 0) return;
+    for (const fct of floatingTexts) {
+      if (!fct?.id || spokenTrashTalkIdsRef.current.has(fct.id)) continue;
+      if (fct.id.startsWith('tt_') || fct.text?.startsWith('🗣️「')) {
+        spokenTrashTalkIdsRef.current.add(fct.id);
+        if (spokenTrashTalkIdsRef.current.size > 200) {
+          const first = spokenTrashTalkIdsRef.current.values().next().value;
+          if (first) spokenTrashTalkIdsRef.current.delete(first);
+        }
+        speakBossTrashTalkVoice(fct.text, fct.sourceId || fct.targetId);
+      }
+    }
+  }, [floatingTexts]);
 
   // Boss red-text yells under specific combat conditions (host-authoritative)
   useEffect(() => {

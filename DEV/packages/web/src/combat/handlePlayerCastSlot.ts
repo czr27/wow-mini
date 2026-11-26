@@ -165,6 +165,7 @@ export type HandlePlayerCastSlotCtx = {
   setGroundTargetState: (s: GroundTargetState | null) => void;
   lastPlayerMoveMs: number;
   selectedTargetId: string | null;
+  selfCast?: boolean;
   setSelectedTargetId: (id: string | null) => void;
   setCastTargetId: (id: string | null) => void;
   runPhase: string;
@@ -456,7 +457,7 @@ export function handlePlayerCastSlot(slotIdx: number, ctx: HandlePlayerCastSlotC
         (slot.spellId !== 'lifebloom' || isValidLifebloomTarget(selectedRaw, engine))
           ? selectedRaw
           : null;
-      effectiveTarget = hoveredFriendly || selectedFriendly || player;
+      effectiveTarget = ctx.selfCast ? player : hoveredFriendly || selectedFriendly || player;
       if (slot.spellId === 'lifebloom' && !isValidLifebloomTarget(effectiveTarget, engine)) {
         engine.effectsManager?.addFloatingText({
           targetId: player.id,

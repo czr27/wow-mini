@@ -166,7 +166,6 @@ export const SkillBookModal: React.FC<Props> = ({
 
       const parts: string[] = [];
       if (e.ctrlKey) parts.push('CTRL');
-      if (e.altKey) parts.push('ALT');
       if (e.shiftKey) parts.push('SHIFT');
       parts.push(baseKey);
 

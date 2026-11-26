@@ -105,9 +105,16 @@ export const SpringvaleEncounter: BossEncounterModule = {
             facingRad: facing,
             coneAngleRad: Math.PI / 3, // 60°
           });
-          // Resolve cone after brief telegraph (engine clock — avoid setTimeout for sync)
+          // Resolve cone after brief telegraph (store cone geometry so cleanup of visual doesn't skip hit!)
           (bossAi as any)._perfidiousResolveAt = engine.nowMs + 1500;
           (bossAi as any)._perfidiousOwnerId = boss.id;
+          (bossAi as any)._perfidiousCone = {
+            x: bPos.x,
+            y: bPos.y,
+            facingRad: facing,
+            halfAngleRad: Math.PI / 6,
+            radius: 120,
+          };
         },
       },
       {
@@ -217,11 +224,34 @@ export const SpringvaleEncounter: BossEncounterModule = {
     // Resolve delayed cone damage on engine clock
     if (ai._perfidiousResolveAt != null && engine.nowMs >= ai._perfidiousResolveAt) {
       ai._perfidiousResolveAt = undefined;
+      const cone = (ai as any)._perfidiousCone as
+        | { x: number; y: number; facingRad: number; halfAngleRad: number; radius: number }
+        | undefined;
+      (ai as any)._perfidiousCone = undefined;
       for (const u of engine.friendlyUnits) {
         if (!(u.alive && u.isAlive)) continue;
-        const inCone = engine.effectsManager?.isPositionInHazard?.(u.position);
+        const pos = u.position || { x: 0, y: 0 };
+        let inCone = false;
+        if (cone) {
+          const dx = pos.x - cone.x;
+          const dy = pos.y - cone.y;
+          const d = Math.hypot(dx, dy);
+          if (d <= cone.radius) {
+            if (d < 5) {
+              inCone = true;
+            } else {
+              let diff = Math.atan2(dy, dx) - cone.facingRad;
+              while (diff > Math.PI) diff -= Math.PI * 2;
+              while (diff < -Math.PI) diff += Math.PI * 2;
+              inCone = Math.abs(diff) <= cone.halfAngleRad;
+            }
+          }
+        } else {
+          inCone = !!engine.effectsManager?.isPositionInHazard?.(pos);
+        }
         if (inCone) {
-          engine.dealDamage(boss, u, 35000, 'SHADOW', false, '背信之盾');
+          const cleaveDmg = Math.max(48_000, Math.round((u.maxHp || 100_000) * 0.55));
+          engine.dealDamage(boss, u, cleaveDmg, 'SHADOW', true, '背信之盾');
         }
       }
     }

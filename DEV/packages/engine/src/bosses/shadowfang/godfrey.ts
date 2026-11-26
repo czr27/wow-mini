@@ -172,6 +172,13 @@ export const GodfreyEncounter: BossEncounterModule = {
             coneAngleRad: Math.PI / 3, // 60°
           });
           ai._barrageResolveAt = engine.nowMs + 3000;
+          (ai as any)._barrageCone = {
+            x: bPos.x,
+            y: bPos.y,
+            facingRad: facing,
+            halfAngleRad: Math.PI / 6,
+            radius: 130,
+          };
         },
       },
     ];
@@ -181,13 +188,36 @@ export const GodfreyEncounter: BossEncounterModule = {
     const ai = bossAiRaw as GodfreyAiState;
     if (ai._barrageResolveAt == null || engine.nowMs < ai._barrageResolveAt) return;
     ai._barrageResolveAt = undefined;
+    const cone = (ai as any)._barrageCone as
+      | { x: number; y: number; facingRad: number; halfAngleRad: number; radius: number }
+      | undefined;
+    (ai as any)._barrageCone = undefined;
     if (!boss.alive || !boss.isAlive || boss.hp <= 0) return;
 
     for (const u of engine.friendlyUnits) {
       if (!(u.alive && u.isAlive)) continue;
-      const isInCone = engine.effectsManager?.isPositionInHazard?.(u.position);
+      const pos = u.position || { x: 0, y: 0 };
+      let isInCone = false;
+      if (cone) {
+        const dx = pos.x - cone.x;
+        const dy = pos.y - cone.y;
+        const d = Math.hypot(dx, dy);
+        if (d <= cone.radius) {
+          if (d < 5) {
+            isInCone = true;
+          } else {
+            let diff = Math.atan2(dy, dx) - cone.facingRad;
+            while (diff > Math.PI) diff -= Math.PI * 2;
+            while (diff < -Math.PI) diff += Math.PI * 2;
+            isInCone = Math.abs(diff) <= cone.halfAngleRad;
+          }
+        }
+      } else {
+        isInCone = !!engine.effectsManager?.isPositionInHazard?.(pos);
+      }
       if (isInCone) {
-        engine.dealDamage(boss, u, 32000, 'PHYSICAL', true, '双枪弹幕');
+        const coneDmg = Math.max(55_000, Math.round((u.maxHp || 100_000) * 0.65));
+        engine.dealDamage(boss, u, coneDmg, 'PHYSICAL', true, '双枪弹幕');
       } else {
         engine.dealDamage(boss, u, 11000, 'PHYSICAL', false, '弹幕流弹飞溅');
       }

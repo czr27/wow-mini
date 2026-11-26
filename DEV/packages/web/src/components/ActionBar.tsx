@@ -99,7 +99,7 @@ interface Props {
   slots: ActionSlot[];
   gcdRemainingMs: number;
   gcdTotalMs?: number;
-  onCastSlot: (slotIdx: number) => void;
+  onCastSlot: (slotIdx: number, opts?: { selfCast?: boolean }) => void;
   onSwapSlots?: (srcIdx: number, destIdx: number) => void;
   onAssignSlot?: (slotIdx: number, spellId: string) => void;
   onClearSlot?: (slotIdx: number) => void;
@@ -347,7 +347,7 @@ export const ActionBar: React.FC<Props> = ({
   }, []);
 
   // 统一施法触发：受控拦截 + 资源不足拦截 + 超出施法距离拦截 + 界面红字报错
-  const handleSlotCast = useCallback((idx: number) => {
+  const handleSlotCast = useCallback((idx: number, opts?: { selfCast?: boolean }) => {
     if (isPlayerDead) return;
 
     if (crowdControl?.isControlled) {
@@ -365,13 +365,13 @@ export const ActionBar: React.FC<Props> = ({
       return;
     }
 
-    // 2. 检查超出施法距离（目标太远了）
-    if (outOfRangeSpells?.[slot.spellId]) {
+    // 2. 检查超出施法距离（目标太远了；Alt 自我施法始终对自己生效，不拦截距离）
+    if (!opts?.selfCast && outOfRangeSpells?.[slot.spellId]) {
       triggerUIError('目标太远了');
       return;
     }
 
-    onCastSlot(idx);
+    onCastSlot(idx, opts);
   }, [isPlayerDead, slots, insufficientResourceSpells, spellResourceErrors, outOfRangeSpells, triggerUIError, onCastSlot]);
 
   // 全局键盘监听器：精确记录键盘按下（保持按压效果）与弹起（立即恢复），同时监听窗口失焦与全局鼠标抬起
@@ -404,9 +404,9 @@ export const ActionBar: React.FC<Props> = ({
         baseKey = e.key.toUpperCase();
       }
 
+      // Alt 不可用作技能绑定键；按住 Alt + 技能键吸收 Alt 并触发自我施法
       const modParts: string[] = [];
       if (e.ctrlKey) modParts.push('CTRL');
-      if (e.altKey) modParts.push('ALT');
       if (e.shiftKey) modParts.push('SHIFT');
       modParts.push(baseKey);
       const keySig = modParts.join('+');
@@ -424,11 +424,11 @@ export const ActionBar: React.FC<Props> = ({
             slotIdx: idx,
             requiresShift: normalized.includes('SHIFT'),
             requiresCtrl: normalized.includes('CTRL'),
-            requiresAlt: normalized.includes('ALT'),
+            requiresAlt: false,
           });
           setPressedSlots((prev) => (prev[idx] ? prev : { ...prev, [idx]: true }));
 
-          handleSlotCast(idx);
+          handleSlotCast(idx, e.altKey ? { selfCast: true } : undefined);
           break;
         }
       }

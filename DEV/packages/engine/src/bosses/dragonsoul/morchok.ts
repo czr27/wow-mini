@@ -341,23 +341,40 @@ export const MorchokEncounter: BossEncounterModule = {
       });
     }
 
-    // 共鸣水晶爆炸
+    // 共鸣水晶：连线 AI 主动靠近吸收 + 到期爆炸
     const fightMs = ai.morchokFightMs || 0;
+    const living = livingFriendlies(engine);
     const pending: MorchokCrystal[] = [];
     for (const c of ai.morchokCrystals) {
       if (fightMs < c.explodeAtFightMs) {
+        // AI 队友被点名共鸣水晶连线时主动向水晶移动
+        for (const id of c.linkedIds) {
+          const u = living.find(x => x.id === id);
+          if (!u || u.isPlayer || u.isHumanControlled || !u.position) continue;
+          const dx = c.x - u.position.x;
+          const dy = c.y - u.position.y;
+          const d = Math.hypot(dx, dy);
+          if (d > 22) {
+            const step = Math.min(d - 22, (115 * Math.max(0, deltaMs)) / 1000);
+            u.position = {
+              x: u.position.x + (dx / d) * step,
+              y: u.position.y + (dy / d) * step,
+            };
+          }
+        }
         pending.push(c);
         continue;
       }
-      const living = livingFriendlies(engine);
-      const baseFar = Math.round((living.length >= 15 ? 60_000 : 52_000) * furiousMult(ai));
       for (const id of c.linkedIds) {
         const u = living.find(x => x.id === id);
         if (!u) continue;
         u.buffs = (u.buffs || []).filter(b => b.spellId !== RESONATING_CRYSTAL_LINK_ID);
         const d = dist(u.position || { x: 0, y: 0 }, c);
+        const baseFar = Math.round(
+          Math.max(living.length >= 15 ? 95_000 : 75_000, (u.maxHp || 100_000) * 0.85) * furiousMult(ai)
+        );
         const amt = crystalExplosionDamage(d, baseFar);
-        engine.dealDamage(boss, u, amt, 'NATURE', false, '共鸣水晶');
+        engine.dealDamage(boss, u, amt, 'NATURE', d > 60, '共鸣水晶');
         engine.effectsManager?.addFloatingText({
           targetId: u.id,
           text: d <= 40 ? '💎 近距吸收（低伤）' : '💎 过远！高伤',

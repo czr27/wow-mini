@@ -28,8 +28,8 @@ export class ResourceManager {
   /**
    * Base mana regen rate per second (ratio of maxMp).
    * Unset or <= 0 defaults to raid/dungeon tier adaptivity:
-   *  - 20-man raid: 0.0115 /s (1.15%/s ~ 1100 mana/s with spirit & raid auras)
-   *  - 5-man dungeon: 0.0085 /s (0.85%/s ~ 765 mana/s)
+   *  - 20-man raid: 0.0065 /s (0.65%/s ~ 650 mana/s with spirit & raid auras)
+   *  - 5-man dungeon: 0.0045 /s (0.45%/s ~ 425 mana/s)
    */
   baseManaRegenRate?: number;
 
@@ -84,7 +84,7 @@ export class ResourceManager {
     let baseRate = this.baseManaRegenRate;
     if (typeof baseRate !== 'number' || baseRate <= 0) {
       const isRaid = this.engine.friendlyUnits.length > 5;
-      baseRate = isRaid ? 0.0115 : 0.0085;
+      baseRate = isRaid ? 0.0065 : 0.0045;
     }
     if (unit.role === 'DPS') {
       baseRate += 0.0025; // 法系 DPS 冥想/暴击回蓝支持

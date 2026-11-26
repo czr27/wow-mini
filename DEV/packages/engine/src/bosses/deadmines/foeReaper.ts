@@ -168,7 +168,8 @@ export const FoeReaperEncounter: BossEncounterModule = {
       for (const u of living(engine)) {
         const tPos = u.position || { x: 0, y: 0 };
         if (inCone(bPos, tPos, facing, (Math.PI / 180) * 35, 140)) {
-          engine.dealDamage(boss, u, Math.round(32_000 * mult), 'PHYSICAL', true, '收割');
+          const harvestDmg = Math.max(45_000, Math.round((u.maxHp || 100_000) * 0.55)) * mult;
+          engine.dealDamage(boss, u, harvestDmg, 'PHYSICAL', true, '收割');
         }
       }
     }
