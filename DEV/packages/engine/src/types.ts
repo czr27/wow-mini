@@ -656,6 +656,8 @@ export interface CombatDisplayPrefs {
   enableDbm: boolean;
   /** DBM 短语音播报（4字左右战术短语音，默认开启） */
   enableDbmVoice: boolean;
+  /** Boss 垃圾话语音播报（默认关闭） */
+  enableBossTrashTalkVoice?: boolean;
   /** 战斗统计 (Details!) 是否按 Boss 房间自动清空计算 */
   detailsResetPerBossRoom?: boolean;
 }
@@ -753,6 +755,7 @@ export const DEFAULT_COMBAT_DISPLAY_PREFS: CombatDisplayPrefs = {
   isoFxHeightShadow: true,
   enableDbm: true,
   enableDbmVoice: true,
+  enableBossTrashTalkVoice: false,
   detailsResetPerBossRoom: false,
 };
 
@@ -777,6 +780,7 @@ export function resolveCombatDisplayPrefs(
   merged.isoFxHeightShadow = merged.isoFxHeightShadow !== false;
   merged.enableDbm = merged.enableDbm !== false;
   merged.enableDbmVoice = merged.enableDbmVoice !== false;
+  merged.enableBossTrashTalkVoice = merged.enableBossTrashTalkVoice === true;
   return merged;
 }
 

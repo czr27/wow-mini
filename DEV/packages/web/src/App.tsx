@@ -278,6 +278,7 @@ export function App() {
   const [showGmPanel, setShowGmPanel] = useState<boolean>(true);
   const gmRoleClickRef = useRef<{ count: number; lastAt: number }>({ count: 0, lastAt: 0 });
   const dbmVoiceEnabledRef = useRef<boolean>(true);
+  const bossTrashTalkVoiceEnabledRef = useRef<boolean>(false);
   const dbmRecentTitlesRef = useRef<Map<string, number>>(new Map());
   const pushDbmAlerts = useCallback((incoming: DbmAlert[]) => {
     if (!incoming || incoming.length === 0) return;
@@ -400,7 +401,9 @@ export function App() {
   }, []);
 
   const currentChar = account?.characters.find(c => c.id === selectedCharId) || account?.characters[0] || null;
-  dbmVoiceEnabledRef.current = resolveCombatDisplayPrefs(currentChar?.uiLayout?.combatDisplay).enableDbmVoice;
+  const displayPrefs = resolveCombatDisplayPrefs(currentChar?.uiLayout?.combatDisplay);
+  dbmVoiceEnabledRef.current = displayPrefs.enableDbmVoice;
+  bossTrashTalkVoiceEnabledRef.current = !!displayPrefs.enableBossTrashTalkVoice;
 
   // Persisted Raid Target Marks per account character (新开本对同名称玩家的标记保存在账号角色中)
   const [savedRaidMarks, setSavedRaidMarks] = useState<Record<string, string>>(() => {
@@ -1586,7 +1589,7 @@ export function App() {
       if (activeRoomIdRef.current && chat.roomId && chat.roomId !== activeRoomIdRef.current) return;
       setRoomChatMessages((prev) => {
         if (prev.some((m) => m.id === chat.id)) return prev;
-        if (chat.senderKind === 'BOSS' && dbmVoiceEnabledRef.current) {
+        if (chat.senderKind === 'BOSS' && bossTrashTalkVoiceEnabledRef.current) {
           speakBossTrashTalkVoice(chat.text, chat.senderId);
         }
         const next = [...prev, chat];
@@ -1640,7 +1643,7 @@ export function App() {
       atMs: Date.now(),
     };
     setRoomChatMessages((prev) => [...prev.slice(-119), localMsg]);
-    if (dbmVoiceEnabledRef.current) {
+    if (bossTrashTalkVoiceEnabledRef.current) {
       speakBossTrashTalkVoice(text, bossId);
     }
   }, []);
@@ -1648,7 +1651,7 @@ export function App() {
   // Boss mid-fight skill trash talk (🗣️「...」 floating text) → evil old-man TTS
   const spokenTrashTalkIdsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    if (!dbmVoiceEnabledRef.current || floatingTexts.length === 0) return;
+    if (!bossTrashTalkVoiceEnabledRef.current || floatingTexts.length === 0) return;
     for (const fct of floatingTexts) {
       if (!fct?.id || spokenTrashTalkIdsRef.current.has(fct.id)) continue;
       if (fct.id.startsWith('tt_') || fct.text?.startsWith('🗣️「')) {

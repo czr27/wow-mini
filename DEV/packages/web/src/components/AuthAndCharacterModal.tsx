@@ -1481,6 +1481,7 @@ export const AuthAndCharacterModal: React.FC<Props> = ({
                           <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2 pt-2 border-t border-[#20203a]">
                             <Check label="DBM 文字播报" k="enableDbm" />
                             <Check label="DBM 语音播报" k="enableDbmVoice" />
+                            <Check label="Boss 垃圾话语音" k="enableBossTrashTalkVoice" />
                           </div>
                           <div className="flex flex-wrap items-center justify-between gap-2 pt-1.5 border-t border-[#20203a]">
                             <button
