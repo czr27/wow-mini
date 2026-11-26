@@ -28,16 +28,26 @@ function applyStayTick(boss: any, engine: any) {
   });
 }
 
+function removeAsphyxiateBuff(engine: any, u: any) {
+  if (!u?.buffs?.length) return;
+  if (engine?.auraManager?.removeBuff) {
+    engine.auraManager.removeBuff(u, 'asphyxiate');
+  } else {
+    u.buffs = u.buffs.filter((b: any) => b.spellId !== 'asphyxiate');
+  }
+}
+
 function applyAsphyxiateStun(engine: any, bossId: string, durationMs: number) {
   for (const u of engine.friendlyUnits) {
     if (!(u.alive ?? u.isAlive)) continue;
-    u.buffs = (u.buffs || []).filter((b: any) => b.spellId !== 'asphyxiate');
+    removeAsphyxiateBuff(engine, u);
     engine.applyBuff(u, {
       id: `asphyxiate_${Date.now()}_${u.id}`,
       spellId: 'asphyxiate',
       name: '窒息（空中昏迷）',
       kind: 'DEBUFF',
       tags: ['CC', 'STUN'],
+      moveSpeedMod: 0,
       sourceUnitId: bossId,
       targetUnitId: u.id,
       durationMs,
@@ -51,8 +61,7 @@ function applyAsphyxiateStun(engine: any, bossId: string, durationMs: number) {
 
 function clearAsphyxiateStun(engine: any) {
   for (const u of engine.friendlyUnits) {
-    if (!u.buffs?.length) continue;
-    u.buffs = u.buffs.filter((b: any) => b.spellId !== 'asphyxiate');
+    removeAsphyxiateBuff(engine, u);
   }
 }
 

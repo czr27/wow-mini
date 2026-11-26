@@ -302,6 +302,8 @@ export interface CombatEffectBuffPayload {
   school?: string;
   tickIntervalMs?: number;
   tickValue?: number;
+  /** Movement speed multiplier (e.g. 0 = cannot move, 0.5 = 50% slow). */
+  moveSpeedMod?: number;
   /** When true, lifebloom-style shared timer (no per-stack peel). */
   sharedTimer?: boolean;
 }

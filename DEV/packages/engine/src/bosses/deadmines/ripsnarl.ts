@@ -65,6 +65,7 @@ export const RipsnarlEncounter: BossEncounterModule = {
             name: '恐惧',
             kind: 'DEBUFF',
             tags: ['STUN', 'DEBUFF'],
+            moveSpeedMod: 0,
             sourceUnitId: boss.id,
             targetUnitId: t.id,
             durationMs: 2500,

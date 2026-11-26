@@ -88,6 +88,10 @@ export interface Buff {
    * For stacking auras like mortal_wound, engine may also derive from stacks when unset.
    */
   healingReceivedMod?: number;
+  /**
+   * Multiplier applied to movement speed while this aura is active (e.g. 0 = rooted/stunned, 0.5 = 50% slow).
+   */
+  moveSpeedMod?: number;
   /** Each stack's independent remaining ms for rolling HoTs like Lifebloom */
   stackRemainingMs?: number[];
   /** Debuff category for cleansing: MAGIC, CURSE, POISON, DISEASE */

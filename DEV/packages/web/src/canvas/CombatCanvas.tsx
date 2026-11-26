@@ -31,6 +31,7 @@ import {
   isPosInHazard,
   resolveCombatDisplayPrefs,
   isEnemyActorUnit,
+  getUnitMoveSpeedMultiplier,
   type CombatDisplayPrefs,
   type MazeLayout,
 } from '@cata-raid-sim/engine';
@@ -3356,10 +3357,14 @@ export const CombatCanvas: React.FC<Props> = ({
         if (keys.has('d') || keys.has('arrowright')) moveX += 1;
       }
 
-      // Lock movement if dead or if in travel phase with dead members waiting for resurrection
+      // Lock movement if dead, stunned/rooted (moveSpeedMod === 0), or if in travel phase with dead members waiting for resurrection
       const pUnit = units.find(u => u.isPlayer);
       const isPlayerAlive = !!(pUnit && (pUnit.isAlive ?? pUnit.alive) && pUnit.hp > 0);
-      const canMove = !(runPhase === 'TRAVEL_RECOVERY' && hasDeadMembers) && isPlayerAlive;
+      const moveSpeedMult = getUnitMoveSpeedMultiplier(pUnit);
+      const canMove = !(runPhase === 'TRAVEL_RECOVERY' && hasDeadMembers) && isPlayerAlive && moveSpeedMult > 0;
+      if (moveSpeedMult <= 0 && (moveX !== 0 || moveY !== 0)) {
+        clickTargetRef.current = null;
+      }
 
       // ── Dungeon Labyrinth Corridors (Different Mazes per Dungeon Tier) ──
       const is20Man = dungeonTierRef.current === '20man';
@@ -3869,9 +3874,10 @@ export const CombatCanvas: React.FC<Props> = ({
         setAutoNav(false);
         const worldIntent = screenDirToWorld(moveX, moveY, viewCam);
         const len = Math.hypot(worldIntent.x, worldIntent.y) || 1;
-        // Balanced speed: combat vs maze
+        // Balanced speed: combat vs maze (scaled by aura moveSpeedMod)
         const speed =
-          runPhase === 'TRAVEL_RECOVERY' ? PLAYER_MAZE_MOVE_SPEED : PLAYER_COMBAT_MOVE_SPEED;
+          (runPhase === 'TRAVEL_RECOVERY' ? PLAYER_MAZE_MOVE_SPEED : PLAYER_COMBAT_MOVE_SPEED) *
+          moveSpeedMult;
         playerMoveDirRef.current = { dx: worldIntent.x / len, dy: worldIntent.y / len };
         playerPosRef.current.x += (worldIntent.x / len) * speed;
         playerPosRef.current.y += (worldIntent.y / len) * speed;
@@ -3894,7 +3900,7 @@ export const CombatCanvas: React.FC<Props> = ({
         const dy = autoApproachTarget.targetY - playerPosRef.current.y;
         const dist = Math.hypot(dx, dy);
         if (dist > autoApproachTarget.desiredDist) {
-          const speed = PLAYER_COMBAT_MOVE_SPEED;
+          const speed = PLAYER_COMBAT_MOVE_SPEED * moveSpeedMult;
           playerMoveDirRef.current = { dx: dx / dist, dy: dy / dist };
           playerPosRef.current.x += (dx / dist) * Math.min(speed, dist);
           playerPosRef.current.y += (dy / dist) * Math.min(speed, dist);
@@ -3921,7 +3927,8 @@ export const CombatCanvas: React.FC<Props> = ({
         const dist = Math.hypot(dx, dy);
         if (dist > 4) {
           const speed =
-            runPhase === 'TRAVEL_RECOVERY' ? PLAYER_MAZE_MOVE_SPEED : PLAYER_COMBAT_MOVE_SPEED;
+            (runPhase === 'TRAVEL_RECOVERY' ? PLAYER_MAZE_MOVE_SPEED : PLAYER_COMBAT_MOVE_SPEED) *
+            moveSpeedMult;
           playerMoveDirRef.current = { dx: dx / dist, dy: dy / dist };
           playerPosRef.current.x += (dx / dist) * Math.min(speed, dist);
           playerPosRef.current.y += (dy / dist) * Math.min(speed, dist);

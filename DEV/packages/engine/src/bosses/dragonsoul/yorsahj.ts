@@ -68,6 +68,7 @@ function applyFuseEffects(boss: Unit, engine: CombatEngine, colors: BloodColor[]
             name: '精神控制(简化)',
             kind: 'DEBUFF',
             tags: ['STUN', 'DEBUFF'],
+            moveSpeedMod: 0,
             sourceUnitId: boss.id,
             targetUnitId: u.id,
             durationMs: 4000,

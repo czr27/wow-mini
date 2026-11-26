@@ -449,6 +449,34 @@ export function getUnitCrowdControlInfo(
 }
 
 /**
+ * 统一判定单位当前移动速度倍率（如窒息/冰墓/昏迷/定身返回 0，减速按 moveSpeedMod 乘算）。
+ */
+export function getUnitMoveSpeedMultiplier(
+  unit: { buffs?: Buff[] } | null | undefined
+): number {
+  if (!unit?.buffs?.length) return 1;
+  let mult = 1;
+  for (const b of unit.buffs) {
+    if (typeof b.moveSpeedMod === 'number' && Number.isFinite(b.moveSpeedMod)) {
+      mult *= Math.max(0, b.moveSpeedMod);
+      continue;
+    }
+    const tags = b.tags as string[] | undefined;
+    if (
+      b.spellId === 'asphyxiate' ||
+      b.spellId === 'ice_tomb' ||
+      tags?.includes('STUN') ||
+      tags?.includes('CC') ||
+      tags?.includes('ROOT') ||
+      tags?.includes('FREEZE')
+    ) {
+      return 0;
+    }
+  }
+  return Math.max(0, Math.min(3, mult));
+}
+
+/**
  * [E-02] CombatEngine — 20 Hz战斗循环主控制器
  *
  * 每50ms推进一次战斗状态：

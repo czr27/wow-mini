@@ -222,6 +222,7 @@ export function withNetworkVitals<T>(engine: CombatEngine, fn: () => T): T {
         school: partial.school,
         tickIntervalMs: after?.tickIntervalMs ?? partial.tickIntervalMs,
         tickValue: after?.tickValue ?? partial.tickValue,
+        moveSpeedMod: after?.moveSpeedMod ?? partial.moveSpeedMod,
         sharedTimer: spellId === 'lifebloom',
       },
     };

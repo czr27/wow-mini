@@ -30,6 +30,15 @@ function dist(a: { x: number; y: number }, b: { x: number; y: number }): number 
   return Math.hypot((a.x || 0) - (b.x || 0), (a.y || 0) - (b.y || 0));
 }
 
+function removeIceTombBuff(engine: CombatEngine, u: Unit) {
+  if (!u.buffs?.length) return;
+  if (engine.auraManager?.removeBuff) {
+    engine.auraManager.removeBuff(u, ICE_TOMB_SPELL_ID);
+  } else {
+    u.buffs = u.buffs.filter(b => b.spellId !== ICE_TOMB_SPELL_ID);
+  }
+}
+
 function clearPhaseAdds(engine: CombatEngine) {
   for (const e of [...engine.enemyUnits]) {
     if (
@@ -42,8 +51,7 @@ function clearPhaseAdds(engine: CombatEngine) {
     }
   }
   for (const u of engine.friendlyUnits) {
-    if (!u.buffs?.length) continue;
-    u.buffs = u.buffs.filter(b => b.spellId !== ICE_TOMB_SPELL_ID);
+    removeIceTombBuff(engine, u);
   }
 }
 
@@ -65,6 +73,7 @@ function enterFrostPhase(boss: Unit, engine: CombatEngine, ai: HagaraAiState) {
       name: '冰霜之墓',
       kind: 'DEBUFF',
       tags: ['CC', 'STUN', 'DEBUFF'],
+      moveSpeedMod: 0,
       sourceUnitId: boss.id,
       targetUnitId: u.id,
       durationMs: 25_000,
@@ -283,7 +292,7 @@ export const HagaraEncounter: BossEncounterModule = {
             e.id.includes(u.id),
         );
         if (!addAlive) {
-          u.buffs = u.buffs.filter(b => b.spellId !== ICE_TOMB_SPELL_ID);
+          removeIceTombBuff(engine, u);
           engine.effectsManager?.addFloatingText({
             targetId: u.id,
             text: '❄️ 冰墓已破！',

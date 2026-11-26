@@ -143,7 +143,7 @@ export class RoomCombatSession {
             effectId: `srv_eff_${++this.srvEffectSeq}`,
             sourceId: this.engine.bossUnit?.id || 'server',
             targetId: target.id,
-            spellId: spellName || 'asphyxiate',
+            spellId: spellName === '窒息术' ? 'asphyxiate' : spellName || 'asphyxiate',
             spellName: spellName || '窒息术',
             kind: 'DAMAGE',
             amount: drained,
@@ -212,6 +212,7 @@ export class RoomCombatSession {
             school: buff.school,
             tickIntervalMs: buff.tickIntervalMs,
             tickValue: buff.tickValue,
+            moveSpeedMod: buff.moveSpeedMod,
           },
           atMs: Date.now(),
         });

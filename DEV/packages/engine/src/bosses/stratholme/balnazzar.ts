@@ -41,6 +41,7 @@ export const BalnazzarEncounter: BossEncounterModule = {
             name: '心灵控制',
             kind: 'DEBUFF',
             tags: ['STUN', 'DEBUFF'],
+            moveSpeedMod: 0,
             sourceUnitId: boss.id,
             targetUnitId: t.id,
             durationMs: 6000,

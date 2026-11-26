@@ -86,6 +86,7 @@ export function applyBuffFromEffect(
     existing.name = formatStackName(b.spellId, b.name || existing.name, nextStacks);
     if (b.tickIntervalMs != null) existing.tickIntervalMs = b.tickIntervalMs;
     if (b.tickValue != null) existing.tickValue = b.tickValue;
+    if (b.moveSpeedMod != null) existing.moveSpeedMod = b.moveSpeedMod;
     if (shared) delete existing.stackRemainingMs;
     return;
   }
@@ -104,6 +105,7 @@ export function applyBuffFromEffect(
     school: (b.school as any) || (shared ? 'NATURE' : 'PHYSICAL'),
     tickIntervalMs: b.tickIntervalMs,
     tickValue: b.tickValue,
+    moveSpeedMod: b.moveSpeedMod,
   });
   if (shared) {
     const just = target.buffs.find(
@@ -162,6 +164,14 @@ export function applyCombatEffectToEngine(
       if (!target || !unitAlive(target)) return;
       const amt = Math.max(0, Math.round(effect.amount || 0));
       if (amt <= 0) return;
+      if (
+        effect.spellId === 'asphyxiate' ||
+        effect.spellId === '窒息术' ||
+        effect.spellName === '窒息术'
+      ) {
+        engine.drainHpTowardFloor(target, amt, 1, effect.spellName || '窒息术');
+        return;
+      }
       if (source) {
         engine.dealDamage(
           source,
