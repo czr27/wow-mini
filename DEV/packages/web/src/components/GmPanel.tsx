@@ -119,25 +119,40 @@ export const GmPanel: React.FC<Props> = ({
         onClick={() => {
           if (!hasMovedRef.current) setIsCollapsed((v) => !v);
         }}
-        className="flex items-center justify-between px-3 py-2 border-b border-amber-500/30 bg-amber-950/35 rounded-t-xl cursor-grab active:cursor-grabbing"
+        className={`flex items-center justify-between px-3 py-2 bg-amber-950/35 cursor-grab active:cursor-grabbing ${
+          isCollapsed ? 'rounded-xl' : 'rounded-t-xl border-b border-amber-500/30'
+        }`}
       >
         <div className="flex items-center gap-1.5">
           <span className="text-xs">🛠️</span>
           <span className="text-xs font-extrabold text-amber-300 tracking-wide">GM 测试面板</span>
-          <span className="text-[10px] text-amber-200/70">({isCollapsed ? '展开' : '折叠'})</span>
         </div>
-        <button
-          type="button"
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={(e) => {
-            e.stopPropagation();
-            onDisableGm();
-          }}
-          title="退出 GM 模式（可再次连点角色分工图标12下解锁）"
-          className="text-[10px] px-1.5 py-0.5 rounded bg-gray-800/80 hover:bg-red-900/70 text-gray-300 hover:text-red-200 border border-gray-600/60 transition cursor-pointer"
-        >
-          🔒 退出GM
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              onDisableGm();
+            }}
+            title="退出 GM 模式（可再次连点角色分工图标12下解锁）"
+            className="text-[10px] px-1.5 py-0.5 rounded bg-gray-800/80 hover:bg-red-900/70 text-gray-300 hover:text-red-200 border border-gray-600/60 transition cursor-pointer"
+          >
+            🔒 退出GM
+          </button>
+          <button
+            type="button"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              setIsCollapsed((v) => !v);
+            }}
+            title={isCollapsed ? '展开面板' : '折叠面板'}
+            className="text-xs text-amber-200 hover:text-white px-1.5 py-0.5 rounded hover:bg-white/10 transition cursor-pointer leading-none"
+          >
+            {isCollapsed ? '▲' : '▼'}
+          </button>
+        </div>
       </div>
 
       {!isCollapsed && (

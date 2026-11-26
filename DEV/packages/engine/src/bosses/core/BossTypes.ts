@@ -31,6 +31,8 @@ export interface BossSkill {
   targetKind?: TargetKind;
   /** 可选：副本设计期显式声明的 DBM 战术建议；未声明时引擎自动推导 */
   dbm?: BossSkillDbmMeta;
+  /** 可选：该技能专属的狠话台词池（未填时使用首领默认个性狠话池） */
+  trashTalk?: string[];
   execute: (boss: Unit, engine: CombatEngine) => void;
 }
 

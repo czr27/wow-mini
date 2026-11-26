@@ -29,6 +29,7 @@ import {
   resolveUnitFacingRad,
   FIDGET_MAX_PX,
   isPosInHazard,
+  isFriendlyGroundEffect,
   resolveCombatDisplayPrefs,
   isEnemyActorUnit,
   getUnitMoveSpeedMultiplier,
@@ -5097,19 +5098,23 @@ export const CombatCanvas: React.FC<Props> = ({
           ctx.strokeStyle = isBad ? '#F3E8FF' : '#DCFCE7';
           ctx.lineWidth = 1.5;
           ctx.stroke();
-          ctx.fillStyle = '#FFFFFF';
-          ctx.font = 'bold 10px sans-serif';
-          ctx.textAlign = 'center';
-          ctx.fillText(isBad ? '☠️ 坏食物' : '🍖 好食物', effect.x, effect.y - 11);
+          withUprightAt(ctx, viewCam, { x: effect.x, y: effect.y }, (sp) => {
+            ctx.fillStyle = '#FFFFFF';
+            ctx.font = 'bold 10px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText(isBad ? '☠️ 坏食物' : '🍖 好食物', sp.x, sp.y - 11);
+          });
         } else if (effect.spellId === 'glubtok_firewall') {
           ctx.fillStyle = 'rgba(249, 115, 22, 0.9)';
           ctx.beginPath();
           ctx.arc(effect.x, effect.y, 8, 0, Math.PI * 2);
           ctx.fill();
-          ctx.fillStyle = '#FDE047';
-          ctx.font = 'bold 10px sans-serif';
-          ctx.textAlign = 'center';
-          ctx.fillText('🔥 火墙', effect.x, effect.y - 12);
+          withUprightAt(ctx, viewCam, { x: effect.x, y: effect.y }, (sp) => {
+            ctx.fillStyle = '#FDE047';
+            ctx.font = 'bold 10px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('🔥 火墙', sp.x, sp.y - 12);
+          });
         } else if (effect.spellId === 'morchok_pillar') {
           const px = effect.x;
           const py = effect.y;
@@ -5146,12 +5151,14 @@ export const CombatCanvas: React.FC<Props> = ({
           ctx.strokeStyle = '#D6D3D1';
           ctx.lineWidth = 1;
           ctx.stroke();
-          ctx.font = 'bold 10px sans-serif';
-          ctx.textAlign = 'center';
-          ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
-          ctx.fillText('🛡️ 碎石柱安全区', px + 1, py - 33);
-          ctx.fillStyle = '#6EE7B7';
-          ctx.fillText('🛡️ 碎石柱安全区', px, py - 34);
+          withUprightAt(ctx, viewCam, { x: px, y: py }, (sp) => {
+            ctx.font = 'bold 10px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+            ctx.fillText('🛡️ 碎石柱安全区', sp.x + 1, sp.y - 33);
+            ctx.fillStyle = '#6EE7B7';
+            ctx.fillText('🛡️ 碎石柱安全区', sp.x, sp.y - 34);
+          });
         } else if (effect.spellId === 'resonating_crystal') {
           const cx = effect.x;
           const cy = effect.y;
@@ -5174,12 +5181,14 @@ export const CombatCanvas: React.FC<Props> = ({
           ctx.strokeStyle = '#DBEAFE';
           ctx.lineWidth = 1.2;
           ctx.stroke();
-          ctx.font = 'bold 10px sans-serif';
-          ctx.textAlign = 'center';
-          ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
-          ctx.fillText('💎 靠近吸收', cx + 1, cy - 25);
-          ctx.fillStyle = '#93C5FD';
-          ctx.fillText('💎 靠近吸收', cx, cy - 26);
+          withUprightAt(ctx, viewCam, { x: cx, y: cy }, (sp) => {
+            ctx.font = 'bold 10px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+            ctx.fillText('💎 靠近吸收', sp.x + 1, sp.y - 25);
+            ctx.fillStyle = '#93C5FD';
+            ctx.fillText('💎 靠近吸收', sp.x, sp.y - 26);
+          });
         } else if ((effect.spellId || '').startsWith('cauldron_marker_')) {
           const cx = effect.x;
           const cy = effect.y;
@@ -5198,12 +5207,14 @@ export const CombatCanvas: React.FC<Props> = ({
           ctx.strokeStyle = '#E2E8F0';
           ctx.lineWidth = 1;
           ctx.stroke();
-          ctx.font = 'bold 10px sans-serif';
-          ctx.textAlign = 'center';
-          ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
-          ctx.fillText(label, cx + 1, cy - 13);
-          ctx.fillStyle = '#FFFFFF';
-          ctx.fillText(label, cx, cy - 14);
+          withUprightAt(ctx, viewCam, { x: cx, y: cy }, (sp) => {
+            ctx.font = 'bold 10px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+            ctx.fillText(label, sp.x + 1, sp.y - 13);
+            ctx.fillStyle = '#FFFFFF';
+            ctx.fillText(label, sp.x, sp.y - 14);
+          });
         } else if (effect.spellId === 'zonozz_ball_target') {
           const zx = effect.x;
           const zy = effect.y;
@@ -5234,12 +5245,14 @@ export const CombatCanvas: React.FC<Props> = ({
             ctx.restore();
           }
           const sec = Math.max(0, (effect.remainingMs || 0) / 1000).toFixed(1);
-          ctx.font = 'bold 11px sans-serif';
-          ctx.textAlign = 'center';
-          ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
-          ctx.fillText(`⚫ 撞球目标区 (${sec}s)`, zx + 1, zy + zr + 15);
-          ctx.fillStyle = '#E9D5FF';
-          ctx.fillText(`⚫ 撞球目标区 (${sec}s)`, zx, zy + zr + 14);
+          withUprightAt(ctx, viewCam, { x: zx, y: zy + zr }, (sp) => {
+            ctx.font = 'bold 11px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+            ctx.fillText(`⚫ 撞球目标区 (${sec}s)`, sp.x + 1, sp.y + 15);
+            ctx.fillStyle = '#E9D5FF';
+            ctx.fillText(`⚫ 撞球目标区 (${sec}s)`, sp.x, sp.y + 14);
+          });
         } else if (effect.spellId === 'twilight_onslaught_soak') {
           const sx = effect.x;
           const sy = effect.y;
@@ -5252,12 +5265,14 @@ export const CombatCanvas: React.FC<Props> = ({
           ctx.arc(sx, sy, sr, 0, Math.PI * 2);
           ctx.stroke();
           ctx.setLineDash([]);
-          ctx.font = 'bold 11px sans-serif';
-          ctx.textAlign = 'center';
-          ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
-          ctx.fillText(`🟣 集合分摊 (${sec}s)`, sx + 1, sy - sr - 7);
-          ctx.fillStyle = '#F3E8FF';
-          ctx.fillText(`🟣 集合分摊 (${sec}s)`, sx, sy - sr - 8);
+          withUprightAt(ctx, viewCam, { x: sx, y: sy - sr }, (sp) => {
+            ctx.font = 'bold 11px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+            ctx.fillText(`🟣 集合分摊 (${sec}s)`, sp.x + 1, sp.y - 7);
+            ctx.fillStyle = '#F3E8FF';
+            ctx.fillText(`🟣 集合分摊 (${sec}s)`, sp.x, sp.y - 8);
+          });
         }
         ctx.restore();
       }
@@ -5394,6 +5409,7 @@ export const CombatCanvas: React.FC<Props> = ({
           bossCastingSpellName: (bossUnit as { castingSpellName?: string } | undefined)?.castingSpellName,
         });
 
+        const friendlyUnitIds = new Set(units.filter((x) => x.role !== 'ENEMY').map((x) => x.id));
         const formationResult = evaluateGroundFormationPosition({
           currentPos: pos,
           unit: u,
@@ -5408,6 +5424,7 @@ export const CombatCanvas: React.FC<Props> = ({
           nearestHealerPos,
           isPrimaryTank: !!primaryTank && primaryTank.id === u.id,
           dungeonPriorityZone,
+          friendlyUnitIds,
         });
 
         targetX = formationResult.targetPos.x;
@@ -5473,7 +5490,11 @@ export const CombatCanvas: React.FC<Props> = ({
                     x: formationResult.targetPos.x + ox,
                     y: formationResult.targetPos.y + oy,
                   };
-                  if (groundEffects.some((g) => isPosInHazard(trial, g))) {
+                  if (
+                    groundEffects.some(
+                      (g) => !isFriendlyGroundEffect(g, friendlyUnitIds) && isPosInHazard(trial, g)
+                    )
+                  ) {
                     ox = 0;
                     oy = 0;
                   }
@@ -5803,12 +5824,14 @@ export const CombatCanvas: React.FC<Props> = ({
         ctx.arc(cPos.x, cPos.y, 55, 0, Math.PI * 2);
         ctx.stroke();
         ctx.setLineDash([]);
-        ctx.font = 'bold 10px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
-        ctx.fillText('💣 胸弹范围(远离)', cPos.x + 1, cPos.y - 61);
-        ctx.fillStyle = '#FCA5A5';
-        ctx.fillText('💣 胸弹范围(远离)', cPos.x, cPos.y - 62);
+        withUprightAt(ctx, viewCam, cPos, (sp) => {
+          ctx.font = 'bold 10px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+          ctx.fillText('💣 胸弹范围(远离)', sp.x + 1, sp.y - 61);
+          ctx.fillStyle = '#FCA5A5';
+          ctx.fillText('💣 胸弹范围(远离)', sp.x, sp.y - 62);
+        });
         ctx.restore();
       }
 
@@ -5842,29 +5865,31 @@ export const CombatCanvas: React.FC<Props> = ({
         ctx.arc(cPos.x, cPos.y, 20 + pulse * 5, 0, Math.PI * 2);
         ctx.stroke();
 
-        // Floating Void Orb above carrier
-        const orbY = cPos.y - 38 + Math.sin(tickCount * 0.16) * 3;
-        const grad = ctx.createRadialGradient(cPos.x, orbY, 2, cPos.x, orbY, 14);
-        grad.addColorStop(0, '#09090B');
-        grad.addColorStop(0.55, '#6D28D9');
-        grad.addColorStop(1, 'rgba(192, 132, 252, 0)');
-        ctx.fillStyle = grad;
-        ctx.beginPath();
-        ctx.arc(cPos.x, orbY, 14, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = '#FDE047';
-        ctx.lineWidth = 1.5;
-        ctx.beginPath();
-        ctx.arc(cPos.x, orbY, 9, 0, Math.PI * 2);
-        ctx.stroke();
-
         const sec = Math.max(0, (ballBuff.remainingMs || 0) / 1000).toFixed(1);
-        ctx.font = 'bold 11px sans-serif';
-        ctx.textAlign = 'center';
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
-        ctx.fillText(`⚫ 持球！去撞Boss (${sec}s)`, cPos.x + 1, orbY - 15);
-        ctx.fillStyle = '#FDE047';
-        ctx.fillText(`⚫ 持球！去撞Boss (${sec}s)`, cPos.x, orbY - 16);
+        withUprightAt(ctx, viewCam, cPos, (sp) => {
+          // Floating Void Orb above carrier (upright circle)
+          const orbY = sp.y - 38 + Math.sin(tickCount * 0.16) * 3;
+          const grad = ctx.createRadialGradient(sp.x, orbY, 2, sp.x, orbY, 14);
+          grad.addColorStop(0, '#09090B');
+          grad.addColorStop(0.55, '#6D28D9');
+          grad.addColorStop(1, 'rgba(192, 132, 252, 0)');
+          ctx.fillStyle = grad;
+          ctx.beginPath();
+          ctx.arc(sp.x, orbY, 14, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.strokeStyle = '#FDE047';
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.arc(sp.x, orbY, 9, 0, Math.PI * 2);
+          ctx.stroke();
+
+          ctx.font = 'bold 11px sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.85)';
+          ctx.fillText(`⚫ 持球！去撞Boss (${sec}s)`, sp.x + 1, orbY - 15);
+          ctx.fillStyle = '#FDE047';
+          ctx.fillText(`⚫ 持球！去撞Boss (${sec}s)`, sp.x, orbY - 16);
+        });
         ctx.restore();
       }
 
@@ -6054,16 +6079,18 @@ export const CombatCanvas: React.FC<Props> = ({
           ctx.arc(x, y, 2.5, 0, Math.PI * 2);
           ctx.fill();
 
-          ctx.fillStyle = '#ffffff';
-          ctx.font = 'bold 11px sans-serif';
-          ctx.textAlign = 'center';
-          ctx.shadowColor = '#000000';
-          ctx.shadowBlur = 4;
-          ctx.fillText(`左键释放 【${name}】`, x, y + radius + 18);
-          ctx.shadowBlur = 0;
-          ctx.fillStyle = '#9ca3af';
-          ctx.font = '9px sans-serif';
-          ctx.fillText('右键或ESC取消', x, y + radius + 30);
+          withUprightAt(ctx, viewCam, { x, y: y + radius }, (sp) => {
+            ctx.fillStyle = '#ffffff';
+            ctx.font = 'bold 11px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.shadowColor = '#000000';
+            ctx.shadowBlur = 4;
+            ctx.fillText(`左键释放 【${name}】`, sp.x, sp.y + 18);
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = '#9ca3af';
+            ctx.font = '9px sans-serif';
+            ctx.fillText('右键或ESC取消', sp.x, sp.y + 30);
+          });
         } else {
           ctx.shadowBlur = 0;
           ctx.fillStyle = `rgba(20, 20, 30, ${Math.min(0.55, ringAlpha)})`;
@@ -6080,13 +6107,15 @@ export const CombatCanvas: React.FC<Props> = ({
           ctx.lineTo(x, y + 6);
           ctx.stroke();
 
-          ctx.fillStyle = '#f87171';
-          ctx.font = 'bold 10px sans-serif';
-          ctx.textAlign = 'center';
-          ctx.fillText('❌ 超出施法范围 (光圈变暗不可释放)', x, y + radius + 18);
-          ctx.fillStyle = '#9ca3af';
-          ctx.font = '9px sans-serif';
-          ctx.fillText('右键或ESC取消', x, y + radius + 30);
+          withUprightAt(ctx, viewCam, { x, y: y + radius }, (sp) => {
+            ctx.fillStyle = '#f87171';
+            ctx.font = 'bold 10px sans-serif';
+            ctx.textAlign = 'center';
+            ctx.fillText('❌ 超出施法范围 (光圈变暗不可释放)', sp.x, sp.y + 18);
+            ctx.fillStyle = '#9ca3af';
+            ctx.font = '9px sans-serif';
+            ctx.fillText('右键或ESC取消', sp.x, sp.y + 30);
+          });
         }
 
         ctx.restore();

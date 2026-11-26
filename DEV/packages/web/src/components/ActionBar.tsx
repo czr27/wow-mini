@@ -626,7 +626,7 @@ export const ActionBar: React.FC<Props> = ({
 
       {/* 受控/沉默状态横幅提示 */}
       {crowdControl?.isControlled && !isPlayerDead && (
-        <div className="mb-1 px-3 py-0.5 rounded-full bg-red-950/90 border border-red-500/80 text-red-200 text-[11px] font-bold shadow-lg backdrop-blur-sm pointer-events-none select-none">
+        <div className="absolute -top-8 left-1/2 -translate-x-1/2 z-40 whitespace-nowrap text-center px-3 py-0.5 rounded-full bg-red-950/90 border border-red-500/80 text-red-200 text-[11px] font-bold shadow-lg backdrop-blur-sm pointer-events-none select-none">
           ⛓️ {crowdControl.spellName || '受控中'}
           {crowdControl.remainingMs && crowdControl.remainingMs > 0
             ? ` (${Math.max(1, Math.ceil(crowdControl.remainingMs / 1000))}s)`
@@ -639,10 +639,10 @@ export const ActionBar: React.FC<Props> = ({
       {uiErrorMessage && (
         <div
           key={uiErrorMessage.id}
-          className="absolute -top-7 left-1/2 -translate-x-1/2 z-50 pointer-events-none flex items-center justify-center animate-bounce select-none"
+          className={`absolute ${crowdControl?.isControlled && !isPlayerDead ? '-top-16' : '-top-7'} left-1/2 -translate-x-1/2 z-50 pointer-events-none flex items-center justify-center animate-bounce select-none`}
         >
-          <div className="px-3.5 py-0.5 rounded bg-black/85 border border-red-600/80 shadow-[0_0_15px_rgba(239,68,68,0.85)] backdrop-blur-sm">
-            <span className="font-sans font-black text-[13.5px] text-red-500 tracking-wider drop-shadow-[0_2px_4px_rgba(0,0,0,1)]">
+          <div className="px-3.5 py-0.5 rounded bg-black/85 border border-red-600/80 shadow-[0_0_15px_rgba(239,68,68,0.85)] backdrop-blur-sm whitespace-nowrap text-center">
+            <span className="font-sans font-black text-[13.5px] text-red-500 tracking-wider drop-shadow-[0_2px_4px_rgba(0,0,0,1)] whitespace-nowrap">
               {uiErrorMessage.text}
             </span>
           </div>

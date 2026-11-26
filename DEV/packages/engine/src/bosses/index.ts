@@ -9,6 +9,7 @@ import { BaseBossAI, BossAI } from './core/BaseBossAI.js';
 export * from './core/BossTypes.js';
 export * from './core/BossRegistry.js';
 export * from './core/BaseBossAI.js';
+export * from './core/BossTrashTalk.js';
 export * from './core/BossTargetPicker.js';
 export * from './core/FiveManShell.js';
 export * from './shadowfang/index.js';

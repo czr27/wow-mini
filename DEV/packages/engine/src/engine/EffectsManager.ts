@@ -79,6 +79,8 @@ export class EffectsManager {
     for (const eff of this.groundEffects) {
       if (eff.remainingMs <= 0) continue;
       if (eff.kind === 'DAMAGE_ZONE') {
+        const owner = eff.ownerId ? this.engine.units.get(eff.ownerId) : undefined;
+        if (owner && owner.role !== 'ENEMY') continue;
         if (this.isPositionInEffect(pos, eff)) return true;
       } else if (eff.kind === 'CONE_WARNING') {
         const facing = eff.facingRad ?? Math.PI;

@@ -14,6 +14,10 @@ import {
   deriveBossSkillDbmRule,
   type BossSkillDbmRule,
 } from '../../engine/DbmManager.js';
+import {
+  BossTrashTalkDeck,
+  isHighThreatBossSkill,
+} from './BossTrashTalk.js';
 
 /**
  * [BaseBossAI] 公共首领控制逻辑基类
@@ -44,8 +48,11 @@ export class BaseBossAI {
   public dbmRulesMap = new Map<string, BossSkillDbmRule>();
   private dbmPreWarnedCycle = new Map<string, number>();
   private dbmLastAnnouncedCastSkillId: string | null = null;
+  private trashTalkDeck: BossTrashTalkDeck;
+  private lastTrashTalkAtMs = -10_000;
 
   constructor(public bossId: string, public dungeonId?: string) {
+    this.trashTalkDeck = new BossTrashTalkDeck(bossId);
     this.initBossSkills();
   }
 
@@ -246,6 +253,7 @@ export class BaseBossAI {
         this.lastSkillAtMs = engine.nowMs;
         this.dbmLastAnnouncedCastSkillId = chosen.id;
         this.emitSkillDbmAlert(engine, chosen, 'CAST_START');
+        this.maybeEmitTrashTalk(boss, engine, chosen);
       } else {
         chosen.execute(boss, engine);
         chosen.lastCastMs = engine.nowMs;
@@ -253,6 +261,7 @@ export class BaseBossAI {
         this.lastSkillAtMs = engine.nowMs;
         this.emitSkillHitFx(boss, engine, chosen, 'INSTANT');
         this.emitSkillDbmAlert(engine, chosen, 'INSTANT');
+        this.maybeEmitTrashTalk(boss, engine, chosen);
       }
     }
   }
@@ -310,6 +319,32 @@ export class BaseBossAI {
       source: rule.source,
       dedupeKey: `cast_${this.bossId}_${skill.id}`,
       cooldownMs: 1800,
+    });
+  }
+
+  /** 高威胁大招触发时，按 Boss 个性洗牌袋输出不重复随机狠话 */
+  private maybeEmitTrashTalk(
+    boss: Unit,
+    engine: CombatEngine,
+    skill: BossSkill
+  ): void {
+    const rule = this.dbmRulesMap.get(skill.id);
+    if (!isHighThreatBossSkill(skill, rule)) return;
+    if (engine.nowMs - this.lastTrashTalkAtMs < 4000) return;
+    this.lastTrashTalkAtMs = engine.nowMs;
+
+    const line =
+      skill.trashTalk && skill.trashTalk.length > 0
+        ? skill.trashTalk[Math.floor(Math.random() * skill.trashTalk.length)]
+        : this.trashTalkDeck.nextLine();
+
+    engine.effectsManager?.addFloatingText({
+      id: `tt_${boss.id}_${engine.nowMs}_${Math.random()}`,
+      targetId: boss.id,
+      sourceId: boss.id,
+      text: `🗣️「${line}」`,
+      category: 'STATUS',
+      isCrit: true,
     });
   }
 

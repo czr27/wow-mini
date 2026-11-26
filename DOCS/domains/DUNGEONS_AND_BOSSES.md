@@ -37,7 +37,7 @@
 |---|---|---|
 | **副本状态机** | `DEV/packages/engine/src/engine/RunStateMachine.ts` | 副本阶段流转、首领队列（5 人本 7s / 20 人 14s 赶路）、全员复活门禁、灭团统计与战报生成 |
 | **副本规格与难度基线** | `DEV/packages/engine/src/engine/TierProfile.ts`<br>`DEV/packages/engine/src/types.ts` | 5 人本 / 20 人团本血量/伤害基准（`BOSS_KILL_TIME_SEC` 动态 AI 秒伤预算模型）、`NORMAL` / `HEROIC` / `CUSTOM`（10 项独立系数 `CustomDifficultySettings`） |
-| **首领数据与模块化 AI** | `DEV/packages/engine/src/bosses/<dungeon>/`<br>`DEV/packages/engine/src/bosses/core/{BaseBossAI,BossRegistry}.ts` | 首领技能时间轴、读条打断窗口、扇形/毒圈地面预警、点名 Debuff 与狂暴；`ai/BossAI.ts` 仅保留兼容重导出，禁止向其堆砌业务代码 |
+| **首领数据与模块化 AI** | `DEV/packages/engine/src/bosses/<dungeon>/`<br>`DEV/packages/engine/src/bosses/core/{BaseBossAI,BossRegistry,BossTrashTalk}.ts` | 首领技能时间轴、读条打断窗口、扇形/毒圈地面预警、点名 Debuff、狂暴与高威胁大招个性狠话台词（洗牌袋不重复随机）；`ai/BossAI.ts` 仅保留兼容重导出，禁止向其堆砌业务代码 |
 | **地面法阵与几何判定** | `DEV/packages/engine/src/engine/EffectsManager.ts` | 圆形半径/60°扇形区域真实范围判定、治疗圈与敌方毒圈共存 |
 | **DBM 预警与权威播报** | `DEV/packages/engine/src/engine/DbmManager.ts` | 首领技能自动推导规则、显式 `skill.dbm` 语义覆盖、小怪/危险区运行时触发与房主权威同步队列 |
 | **房间配置映射** | `DEV/packages/engine/src/room/RoomTypes.ts`<br>`DEV/packages/engine/src/room/RoomManager.ts` | `DUNGEON_ROLE_QUOTAS`（现支持 6 大副本：影牙城堡、死亡矿井、血色修道院、斯坦索姆、祖尔格拉布、巨龙之魂）、房间难度与自定义系数同步到引擎 |

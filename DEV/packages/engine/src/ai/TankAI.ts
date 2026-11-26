@@ -407,6 +407,8 @@ export interface GroundFormationTradeOffInput {
   isPrimaryTank?: boolean;
   /** 副本机制优先走位区域（集中/分散）：优先级低于躲避红圈，高于自身施法/战斗距离 */
   dungeonPriorityZone?: DungeonPriorityZone | null;
+  /** 友方单位 ID 集合：用于区分玩家/友方 AoE（不躲避）与敌方红圈（需躲避） */
+  friendlyUnitIds?: Set<string>;
 }
 
 export type GroundFormationDecision =
@@ -531,6 +533,27 @@ export function applyTankStackConstraint(
  */
 export function isPosInEffect(pos: { x: number; y: number }, effect: GroundEffect): boolean {
   return Math.hypot(pos.x - effect.x, pos.y - effect.y) <= effect.radius;
+}
+
+/**
+ * 判断地面效果是否由友方/玩家施放（如暴风雪、凋零、奉献、烈焰风暴等），友方 AoE 不应被坦克/AI/Boss 当作敌方红圈躲避。
+ */
+export function isFriendlyGroundEffect(
+  eff: GroundEffect,
+  friendlyUnitIds?: Set<string>
+): boolean {
+  const oid = eff.ownerId;
+  if (!oid) return false;
+  if (friendlyUnitIds && friendlyUnitIds.size > 0) {
+    return friendlyUnitIds.has(oid);
+  }
+  return (
+    oid === 'player' ||
+    oid.startsWith('player_') ||
+    oid.startsWith('ai_') ||
+    oid.startsWith('pet_') ||
+    oid.startsWith('guest_')
+  );
 }
 
 /**
@@ -925,13 +948,17 @@ function evaluateGroundFormationPositionCore(
     isPrimaryTank,
     aggroIsNonTank = false,
     dungeonPriorityZone,
+    friendlyUnitIds,
   } = input;
 
   const greenZones = groundEffects.filter((e) => isSeekableHealGroundEffect(e));
   const yellowZones = groundEffects.filter((e) => isFriendlyBuffGroundEffect(e));
   const stackZonesHealthy = [...greenZones, ...yellowZones];
   const activeHazards = groundEffects.filter(
-    (e) => (e.kind === 'DAMAGE_ZONE' || e.kind === 'CONE_WARNING') && e.remainingMs > 0
+    (e) =>
+      (e.kind === 'DAMAGE_ZONE' || e.kind === 'CONE_WARNING') &&
+      e.remainingMs > 0 &&
+      !isFriendlyGroundEffect(e, friendlyUnitIds)
   );
 
   const isMelee = isMeleeDps(unit);
