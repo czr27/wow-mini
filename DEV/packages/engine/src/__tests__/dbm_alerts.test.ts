@@ -104,7 +104,7 @@ describe('DBM 精简播报、短语音与顶替规则', () => {
     assert.equal(asphyxAlerts[0].voiceText, '准备抬血');
   });
 
-  it('4. 召唤增援小怪触发「先杀小怪」，地面普通红圈不再自动刷屏', () => {
+  it('4. 召唤增援小怪与地面普通红圈均不再自动触发「先杀小怪」等刷屏 DBM', () => {
     const engine = new CombatEngine();
     spawnCombatUnit(engine, {
       id: 'add_1',
@@ -127,9 +127,7 @@ describe('DBM 精简播报、短语音与顶替规则', () => {
     });
 
     const alerts = engine.drainDbmAlerts();
-    assert.equal(alerts.length, 1);
-    assert.equal(alerts[0].advice, '先杀小怪');
-    assert.equal(alerts[0].voiceText, '先杀小怪');
+    assert.equal(alerts.length, 0);
   });
 
   it('5. 沃登绿/红魔药交替触发「保持移动」与「站立不动」并共用 replaceKey', () => {
@@ -217,7 +215,7 @@ describe('DBM 精简播报、短语音与顶替规则', () => {
     assert.equal(herodAi.skills.find((s) => s.id === 'whirlwind')?.dbm?.voiceText, '注意远离');
   });
 
-  it('8. 同波次刷出多只小怪时自动合并为一条 DBM 提示，不刷屏', () => {
+  it('8. 同波次刷出多只小怪时不自动刷出「先杀小怪」DBM 提示', () => {
     const engine = new CombatEngine();
     for (let i = 1; i <= 4; i++) {
       spawnCombatUnit(engine, {
@@ -231,10 +229,7 @@ describe('DBM 精简播报、短语音与顶替规则', () => {
       });
     }
     const alerts = engine.drainDbmAlerts();
-    assert.equal(alerts.length, 1);
-    assert.equal(alerts[0].title, '增援：虚空触须 ×4');
-    assert.equal(alerts[0].advice, '先杀小怪');
-    assert.equal(alerts[0].replaceKey, 'runtime_add_wave');
+    assert.equal(alerts.length, 0);
   });
 
   it('9. 普通可打断填充技能不触发「注意打断」，仅高威胁/强负面可打断技能报警', () => {

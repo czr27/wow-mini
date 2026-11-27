@@ -23,7 +23,7 @@
 │  · App.tsx                     顶层装配壳（状态 + deps 装配；见 L1 §4）    │
 ├─────────────────────────────────────────────────────────────────────────┤
 │  DEV/packages/server/src/      Node.js 服务端（Phase 3 多人联机服务）    │
-│  · roomWs.ts & roomVotes.ts    WebSocket 大厅广播、战斗快照中继与投票协调 │
+│  · roomWs.ts / roomVotes.ts / RoomCombatSession.ts 大厅广播、权威会话与投票 │
 ├─────────────────────────────────────────────────────────────────────────┤
 │  DEV/packages/engine/src/      纯引擎核心层（纯 TS，零 DOM 依赖，可单测） │
 │  · engine/                     20Hz 战斗引擎、施法状态机、光环/CD/仇恨   │
@@ -46,12 +46,13 @@
 | **修改房间组队、AI 槽位、开战/退房生命周期** | `DOCS/domains/UI_AND_ROOMS.md` | `DOCS/sop/MODIFY_UI_AND_HUD.md` | `npx --yes tsx --test DEV/packages/engine/src/__tests__/room_lifecycle_and_sync.test.ts` |
 | **新增 5 人地下城或 20 人团本** | `DOCS/domains/DUNGEONS_AND_BOSSES.md` | `DOCS/sop/ADD_DUNGEON.md` | `npx --yes tsx --test DEV/packages/engine/src/__tests__/room_lifecycle_and_sync.test.ts` |
 | **设计/调整 Boss 技能、预警、转阶段机制** | `DOCS/domains/DUNGEONS_AND_BOSSES.md` | `DOCS/sop/DESIGN_BOSS.md` | `npx --yes tsx --test DEV/packages/engine/src/__tests__/classes_and_universal_ai.test.ts` |
+| **修改多人联机同步、权威边界、投票或重连协议** | `DOCS/domains/NETWORK_AND_SYNC.md` | `DOCS/domains/UI_AND_ROOMS.md`（参考大厅/Hook 边界） | `npx --yes tsx --test DEV/packages/server/src/__tests__/combat_sync_authority.test.ts DEV/packages/server/src/__tests__/multiplayer_room_ws_flow.test.ts` |
 
 ---
 
 ## 3. 全局架构红线（不可违背的不变量）
 
-1. **80 级满级满急速基线**：全职业属性、技能施法/冷却与 AI 决策均基于 `LEVEL_80_MAX_HASTE = 0.50` 与三档 GCD（`NORMAL` 1.5s 受急速缩至 1.0s、`ROGUE` 固定 1.0s、`OFF_GCD` 0ms），统一由 `ClassRegistry` 计算。
+1. **80 级满级满急速基线**：全职业属性、技能施法/冷却与 AI 决策均基于 `LEVEL_80_MAX_HASTE = 0.50` 与三档 GCD（`NORMAL` 1.5s 受急速缩至 1.0s、`ROGUE` 固定 1.0s、`OFF_GCD` 0ms），由 `TierProfile.ts`（`getEffectiveGcdMs` / `getHastedCastTimeMs`）与 `ClassRegistry.ts`（`gcdCategory` 等技能元数据）协同计算。
 2. **三类施法语义红线（瞬发 / 读条 / 引导）**：
    - **瞬发**：起手即扣资源、进 GCD、进技能 CD、生效。
    - **读条（非引导）**：起手仅校验资源并启动读条与 GCD，**不扣资源、不进技能 CD**；读条成功结束才扣资源并进 CD；中途打断无效果、不扣资源、不进 CD。

@@ -50,6 +50,7 @@ export class BaseBossAI {
   private dbmLastAnnouncedCastSkillId: string | null = null;
   private trashTalkDeck: BossTrashTalkDeck;
   private lastTrashTalkAtMs = -10_000;
+  private dbmVoicedCastKey = '';
 
   constructor(public bossId: string, public dungeonId?: string) {
     this.trashTalkDeck = new BossTrashTalkDeck(bossId);
@@ -159,6 +160,35 @@ export class BaseBossAI {
         this.emitSkillDbmAlert(engine, this.currentCasting.skill, 'CAST_START');
       }
       this.currentCasting.elapsedMs += deltaMs;
+      // 长读条：剩余 ≤2s 时补发语音（文字横幅沿用同 replaceKey 顶替）
+      {
+        const cs = this.currentCasting.skill;
+        const rule = this.dbmRulesMap.get(cs.id);
+        if (
+          rule &&
+          rule.announceOnCast &&
+          cs.castTimeMs > 2500 &&
+          this.dbmVoicedCastKey !== `${cs.id}_${cs.lastCastMs}` &&
+          cs.castTimeMs - this.currentCasting.elapsedMs <= 2000 &&
+          typeof engine.emitDbmAlert === 'function'
+        ) {
+          this.dbmVoicedCastKey = `${cs.id}_${cs.lastCastMs}`;
+          engine.emitDbmAlert({
+            title: `即将生效：${cs.name}`,
+            advice: rule.advice,
+            voiceText: rule.voiceText,
+            replaceKey: `skill_${this.bossId}_${cs.id}`,
+            severity: rule.severity,
+            ttlMs: 2500,
+            roleHint: rule.roleHint,
+            spellId: cs.id,
+            bossId: this.bossId,
+            source: rule.source,
+            dedupeKey: `voice_${this.bossId}_${cs.id}`,
+            cooldownMs: 1800,
+          });
+        }
+      }
       if (this.currentCasting.elapsedMs >= this.currentCasting.skill.castTimeMs) {
         // 施法完成！
         const finished = this.currentCasting.skill;
@@ -282,6 +312,7 @@ export class BaseBossAI {
           title: `即将施放：${skill.name} (${sec}s)`,
           advice: rule.advice,
           voiceText: rule.voiceText,
+          silent: true,
           replaceKey: `skill_${this.bossId}_${skill.id}`,
           severity: rule.severity === 'CRITICAL' ? 'WARN' : rule.severity,
           ttlMs: Math.min(3500, Math.max(2000, remaining + 600)),
@@ -306,10 +337,13 @@ export class BaseBossAI {
     if (!rule || !rule.announceOnCast) return;
     if (phase === 'INSTANT' && rule.severity === 'INFO') return;
     const prefix = phase === 'CAST_START' ? '正在施放' : '首领技能';
+    // 长读条（>2.5s）开始时只出文字，语音推迟到读条剩余约 2s 再喊，避免提前 5~9 秒
+    const deferVoice = phase === 'CAST_START' && skill.castTimeMs > 2500;
     engine.emitDbmAlert({
       title: `${prefix}：${skill.name}`,
       advice: rule.advice,
       voiceText: rule.voiceText,
+      silent: deferVoice,
       replaceKey: `skill_${this.bossId}_${skill.id}`,
       severity: rule.severity,
       ttlMs: rule.ttlMs,

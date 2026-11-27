@@ -25,6 +25,9 @@ import type {
   OwnerSnapshot,
   DbmAlert,
   GmCommandPayload,
+  PurgePayload,
+  RoomChatMessage,
+  SummarySettlePayload,
 } from '@cata-raid-sim/engine';
 import {
   roomManager,
@@ -162,6 +165,8 @@ export type NetworkRoomSyncDeps = {
   setFloatingTexts: Dispatch<SetStateAction<FloatingCombatText[]>>;
   onDbmAlerts?: (alerts: DbmAlert[]) => void;
   onGmCommand?: (cmd: GmCommandPayload) => void;
+  /** V2 房间聊天消费回调（按 id 去重） */
+  onRoomChat?: (msg: RoomChatMessage) => void;
   setGuestBossCasting: Dispatch<
     SetStateAction<{
       spellName: string;
@@ -554,6 +559,11 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
         const body = msg.payload as { roomId: string; reason?: string; forceSummary?: boolean };
         const closedId = body.roomId || msg.roomId;
         if (closedId) d().roomFacadeRef.current.deleteRoom(closedId);
+        // V2: 已在结算界面（收到 SUMMARY_SETTLE 后房间被即刻销毁）时保持停留在结算页直到玩家手动关闭
+        if (d().rsmRef.current?.phase === 'SUMMARY') {
+          d().setRoomsTick((t) => t + 1);
+          return;
+        }
         if (
           closedId &&
           (d().activeRoomIdRef.current === closedId || d().waitingQueueRoomIdRef.current === closedId)
@@ -562,6 +572,46 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
           leaveActiveRoomAsGuest(body.reason || 'host_left', body.forceSummary);
         } else {
           d().setRoomsTick((t) => t + 1);
+        }
+      }
+      if (msg.type === 'SUMMARY_SETTLE' && msg.payload) {
+        const settle = msg.payload as SummarySettlePayload;
+        const roomId = settle.roomId || msg.roomId || d().activeRoomIdRef.current;
+        if (roomId) netClient.sendSummaryAck(roomId);
+        // V2: 收到结算后停止心跳检测，防止房间销毁后意外被踢出结算页
+        netClient.setHeartbeatPaused(true);
+        const rsm = d().rsmRef.current;
+        if (rsm) {
+          rsm.isCleared = !!settle.cleared;
+          rsm.totalRunDurationSec = settle.totalDurationSec ?? rsm.totalRunDurationSec;
+          if (Array.isArray(settle.encounterReports)) {
+            mergeHostEncounterReports(rsm, settle.encounterReports);
+          }
+          rsm.phase = 'SUMMARY';
+        }
+        d().setTotalDurationSec?.(Math.round(settle.totalDurationSec || 0));
+        d().setRunPhase('SUMMARY');
+      }
+      if (msg.type === 'PURGE' && msg.payload) {
+        const body = msg.payload as PurgePayload;
+        const engine = d().engineRef.current;
+        if (body.ownerId && engine) {
+          clearOwnerCombatSpawns(engine, body.ownerId, { reportDespawn: false });
+          clearAuthorityPresence(body.ownerId);
+          mergeOwnerSnapshotUnits(engine, {
+            ownerId: body.ownerId,
+            timeMs: Date.now(),
+            units: [],
+            purge: true,
+          });
+          d().setFriendlyUnits([...engine.friendlyUnits]);
+          d().setGroundEffects([...(engine.effectsManager?.groundEffects || [])]);
+        }
+      }
+      if (msg.type === 'ROOM_CHAT' && msg.payload) {
+        const chatMsg = msg.payload as RoomChatMessage;
+        if (chatMsg?.id) {
+          d().onRoomChat?.(chatMsg);
         }
       }
       if (msg.type === 'ROOM_START' && msg.payload) {
@@ -816,21 +866,32 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
         // Own GCD/CD stay local — do not snap from host gcds/cooldowns (latency hitch).
       }
       if (msg.type === 'CAST_INTERRUPT' && msg.payload) {
-        const body = msg.payload as { unitId: string; spellId?: string };
-        // Host-forced stop (reject / remote interrupt). Self ESC/MOVE already cleared locally.
+        const body = msg.payload as { unitId: string; spellId?: string; castSeq?: number };
+        // V2: 非权威方仅在当前绘制读条的 castSeq 匹配时才杀读条，防误杀后续同名新读条
         if (d().currentChar && body.unitId === d().currentChar.id) {
-          const local = d().playerCastRef.current;
-          if (!body.spellId || !local || local.spellId === body.spellId) {
+          const local = d().playerCastRef.current as (PlayerCastState & { castSeq?: number }) | null;
+          const seqMatch =
+            body.castSeq == null || local?.castSeq == null || local.castSeq === body.castSeq;
+          if (seqMatch && (!body.spellId || !local || local.spellId === body.spellId)) {
             d().playerCastRef.current = null;
             d().setPlayerCast(null);
           }
         }
-        const castsRef = d().companionCastsRef ?? fallbackCompanionCastsRef;
-        const nextCasts = { ...castsRef.current };
-        delete nextCasts[body.unitId];
-        castsRef.current = nextCasts;
-        d().setCompanionCasts(nextCasts);
-        d().guestCastTimelinesRef.current = d().guestCastTimelinesRef.current.filter((c) => c.unitId !== body.unitId);
+        const existingTl = d().guestCastTimelinesRef.current.find((c) => c.unitId === body.unitId);
+        const tlSeqMatch =
+          body.castSeq == null ||
+          existingTl?.castSeq == null ||
+          existingTl.castSeq === body.castSeq;
+        if (tlSeqMatch) {
+          const castsRef = d().companionCastsRef ?? fallbackCompanionCastsRef;
+          const nextCasts = { ...castsRef.current };
+          delete nextCasts[body.unitId];
+          castsRef.current = nextCasts;
+          d().setCompanionCasts(nextCasts);
+          d().guestCastTimelinesRef.current = d().guestCastTimelinesRef.current.filter(
+            (c) => c.unitId !== body.unitId
+          );
+        }
       }
       if (msg.type === 'PLAYER_INPUT' && msg.payload) {
         const input = msg.payload as PlayerInputPayload;
@@ -853,6 +914,10 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
       }
       if (msg.type === 'GM_COMMAND' && msg.payload) {
         const gmCmd = msg.payload as GmCommandPayload;
+        // V2: 发出方本地已直接消费，回收自己发出的广播时跳过防重复消费
+        if (gmCmd.senderId && d().currentChar?.id && gmCmd.senderId === d().currentChar.id) {
+          return;
+        }
         if (d().isNetworkHostRef.current || d().isNetworkGuestRef.current) {
           d().onGmCommand?.(gmCmd);
         }

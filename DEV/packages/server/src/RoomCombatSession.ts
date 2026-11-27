@@ -97,6 +97,8 @@ export class RoomCombatSession {
 
   private appliedEffectIds = new Set<string>();
   private appliedEffectOrder: string[] = [];
+  /** V2 GM 指令按 id 幂等去重 */
+  private processedGmIds = new Set<string>();
 
   // Gather queues for COMBAT_BATCH (~200ms)
   private pendingEffects: CombatEffect[] = [];
@@ -567,6 +569,14 @@ export class RoomCombatSession {
 
   /** 服务端权威执行 GM 指令（影响 AI 队友、Boss/小怪、地面效果与副本进度） */
   handleGmCommand(cmd: GmCommandPayload): void {
+    if (cmd.id) {
+      if (this.processedGmIds.has(cmd.id)) return;
+      this.processedGmIds.add(cmd.id);
+      if (this.processedGmIds.size > 256) {
+        const first = this.processedGmIds.values().next().value;
+        if (first) this.processedGmIds.delete(first);
+      }
+    }
     const activeEnemies = () => [
       ...(this.engine.bossUnit && (this.engine.bossUnit.alive ?? this.engine.bossUnit.isAlive) && this.engine.bossUnit.hp > 0
         ? [this.engine.bossUnit]
@@ -1271,9 +1281,9 @@ export class RoomCombatSession {
     if (freshDbm.length > 0) this.pendingDbmAlerts.push(...freshDbm);
 
     let extraAction: TemporaryExtraAction | null = null;
-    const spineAi = this.bossAi as any;
-    if (this.engine.bossUnit?.id === 'spine' && spineAi?.spineRollAt != null) {
-      const remMs = Math.max(0, spineAi.spineRollAt - (spineAi.spineFightMs || 0));
+    const bossAiAny = this.bossAi as any;
+    if (this.rsm.phase === 'BOSS_COMBAT' && this.engine.bossUnit?.id === 'spine' && bossAiAny?.spineRollAt != null) {
+      const remMs = Math.max(0, bossAiAny.spineRollAt - (bossAiAny.spineFightMs || 0));
       extraAction = {
         spellId: 'spine_grip',
         name: '抓稳防翻',
@@ -1282,6 +1292,43 @@ export class RoomCombatSession {
         expiresAtMs: now + remMs,
         reason: '滚转窗口',
       };
+    } else if (
+      this.rsm.phase === 'BOSS_COMBAT' &&
+      this.engine.bossUnit?.id === 'ultraxion' &&
+      bossCast?.skill?.id === 'hour_of_twilight'
+    ) {
+      const remMs = Math.max(
+        0,
+        (bossCast.skill.castTimeMs || 5000) - (bossCast.elapsedMs || 0)
+      );
+      extraAction = {
+        spellId: 'heroic_will',
+        name: '英勇意志',
+        cooldownMs: 25000,
+        maxUses: 1,
+        expiresAtMs: now + remMs,
+        reason: '暮光时刻',
+      };
+    } else if (
+      this.rsm.phase === 'BOSS_COMBAT' &&
+      this.engine.bossUnit?.id === 'ultraxion' &&
+      bossAiAny?.ultraxFadingLeftMs instanceof Map &&
+      bossAiAny.ultraxFadingLeftMs.size > 0
+    ) {
+      let maxRem = 0;
+      for (const rem of bossAiAny.ultraxFadingLeftMs.values()) {
+        if (typeof rem === 'number' && rem > maxRem) maxRem = rem;
+      }
+      if (maxRem > 0) {
+        extraAction = {
+          spellId: 'heroic_will',
+          name: '英勇意志',
+          cooldownMs: 25000,
+          maxUses: 1,
+          expiresAtMs: now + maxRem,
+          reason: '凋零之光',
+        };
+      }
     }
 
     const worldSnap: NetworkCombatSnapshot = {
@@ -1304,6 +1351,12 @@ export class RoomCombatSession {
       bossTargetId: this.engine.bossUnit
         ? this.engine.threatManager.getCurrentTarget?.(this.engine.bossUnit.id) ?? null
         : null,
+      bossOverheadSkillName:
+        bossCast?.skill?.name ||
+        ((this.bossAi as any)?.lastSkillName &&
+        this.engine.nowMs - ((this.bossAi as any)?.lastSkillAtMs || 0) <= 3000
+          ? (this.bossAi as any).lastSkillName
+          : null),
       extraAction,
       units: serverAuthUnits,
       casts,

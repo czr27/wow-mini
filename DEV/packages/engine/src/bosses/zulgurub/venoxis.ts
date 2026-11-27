@@ -12,6 +12,8 @@ export type VenoxisAiState = {
   venoxisPhase?: 'human' | 'snake' | 'withdrawal';
   venoxisLinkAcc?: number;
   venoxisLinkGraceMs?: number;
+  venoxisLinkAppliedAtMs?: number;
+  venoxisLinkBreakDist?: number;
   venoxisPoolAcc?: number;
   venoxisWithdrawalMs?: number;
   venoxisWithdrawalDone?: boolean;
@@ -78,9 +80,27 @@ export const VenoxisEncounter: BossEncounterModule = {
         },
         execute: (boss, engine) => {
           if (ai.venoxisPhase === 'withdrawal') return;
-          const pool = living(engine).filter(u => u.role !== 'TANK');
-          const picks = pickWeightedBossTargets(pool, 2);
+          let pool = living(engine).filter(u => u.role !== 'TANK');
+          // 非坦克不足 2 人时放宽到全体存活者，保证连线一定出现
+          if (pool.length < 2) pool = living(engine);
+          if (pool.length < 2) return;
+          // 优先挑选当前距离最近的一对目标，避免一施加就因站位太远瞬间扯断看不到连线
+          let bestPair: [Unit, Unit] | null = null;
+          let bestD = Infinity;
+          for (let i = 0; i < pool.length; i++) {
+            for (let j = i + 1; j < pool.length; j++) {
+              const d = dist(pool[i].position || {}, pool[j].position || {});
+              if (d < bestD) {
+                bestD = d;
+                bestPair = [pool[i], pool[j]];
+              }
+            }
+          }
+          const picks = bestPair ? bestPair : pickWeightedBossTargets(pool, 2);
           if (picks.length < 2) return;
+          const initDist = dist(picks[0].position || {}, picks[1].position || {});
+          ai.venoxisLinkAppliedAtMs = ai.venoxisFightMs || 0;
+          ai.venoxisLinkBreakDist = Math.max(110, Math.round(initDist + 45));
           for (const u of picks) {
             engine.applyBuff(u, {
               id: `tlink_${Date.now()}_${u.id}`,
@@ -129,13 +149,17 @@ export const VenoxisEncounter: BossEncounterModule = {
     ai.venoxisFightMs = (ai.venoxisFightMs || 0) + deltaMs;
     if (!ai.venoxisPhase) ai.venoxisPhase = 'human';
 
-    // 毒性链接：过近掉血，拉开 ≥80 扯断（仅剩 1 人时也自动解除）
+    // 毒性链接：过近掉血，拉开扯断（前 800ms 联机宽限期内不因真人快照未回传误删单人链接）
     const linked = living(engine).filter(u => u.buffs?.some(b => b.spellId === TOXIC_LINK_ID));
+    const linkAgeMs = (ai.venoxisFightMs || 0) - (ai.venoxisLinkAppliedAtMs ?? -9999);
+    const breakDist = ai.venoxisLinkBreakDist ?? 110;
     if (linked.length === 1) {
-      engine.auraManager.removeBuff(linked[0], TOXIC_LINK_ID);
+      if (linkAgeMs >= 800) {
+        engine.auraManager.removeBuff(linked[0], TOXIC_LINK_ID);
+      }
     } else if (linked.length >= 2) {
       const d = dist(linked[0].position || {}, linked[1].position || {});
-      if (d >= 80) {
+      if (linkAgeMs >= 500 && d >= breakDist) {
         for (const u of linked) {
           engine.auraManager.removeBuff(u, TOXIC_LINK_ID);
           engine.effectsManager?.addFloatingText({

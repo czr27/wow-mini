@@ -14,13 +14,14 @@
 
 ## 2. 标准扩展流程（Step-by-Step Checklist）
 
-1. **类型注册** — `DEV/packages/engine/src/types.ts`
-   - 在 `ClassId` 联合类型与 `SpecId` 相关定义中加入新职业/专精枚举。
+1. **类型注册** — `DEV/packages/engine/src/types.ts` & `DEV/packages/engine/src/room/RoomTypes.ts`
+   - 在 `types.ts` 的 `ClassId` 联合类型中加入新职业枚举；在 `RoomTypes.ts` 的 `CLASS_SPECS_MAP` 中注册 3 套专精与职责。
 2. **职业与技能表定义** — `DEV/packages/engine/src/classes/<NewClass>.ts` + `DEV/packages/engine/src/index.ts`
    - 定义 3 专精核心技能（含 `castTimeMs`、`channelDurationMs`、`cooldownMs`、`gcdCategory`、资源消耗、AoE/单抬/减伤/打断/嘲讽标签）。
    - 在 `engine/src/index.ts` 导出该职业常量。
-3. **单一总注册表接入** — `DEV/packages/engine/src/classes/ClassRegistry.ts`
-   - 在 `ALL_CLASSES`、`getSpellsForClassSpec`、`getSpellByAnyId`、`CLASS_BASE_STATS` 等映射中注册，确保 AI 与玩家都能通过统一接口检索技能。
+3. **单一总注册表与 80 级属性接入** — `DEV/packages/engine/src/classes/ClassRegistry.ts` & `DEV/packages/engine/src/engine/TierProfile.ts`
+   - 在 `ClassRegistry.ts` 的 `ALL_CLASSES_NORMALIZED`、`ALL_CLASS_IDS`、`getSpellsForClassSpec`、`getSpellByAnyId` 等映射中注册，确保 AI 与玩家都能通过统一接口检索技能。
+   - 如新职业有特殊护甲/格挡/闪避差异，在 `TierProfile.ts` 的 `createLevel80BaseStats` 补充对应判断。
 4. **房间与账号名称/角色映射**
    - `DEV/packages/engine/src/room/RoomTypes.ts`：补充职业中文名、职业色、专精职责映射 `getRoleBySpec`。
    - `DEV/packages/engine/src/room/RoomManager.ts`：在 `CLASS_LORE_NAMES` 补充该职业专属魔兽风 NPC 名字池，保证换职同步改名。
@@ -33,7 +34,8 @@
 
 ## 3. 单一事实源（SSOT）声明
 
-- 职业基础属性、急速、GCD 分组与标准化技能元数据唯一来源：`DEV/packages/engine/src/classes/ClassRegistry.ts`。
+- 标准化技能元数据、职业目录与 GCD 分类唯一来源：`DEV/packages/engine/src/classes/ClassRegistry.ts`。
+- 80 级基础属性（`createLevel80BaseStats` / `LEVEL_80_STATS`）、急速（`LEVEL_80_MAX_HASTE`）与 GCD/施法时间缩放（`getEffectiveGcdMs` / `getHastedCastTimeMs`）：`DEV/packages/engine/src/engine/TierProfile.ts`。
 - 职业职责推导唯一来源：`DEV/packages/engine/src/room/RoomTypes.ts` (`getRoleBySpec`)。
 
 ---

@@ -518,6 +518,12 @@ export function makeGuestAuthorityPredicate(
   };
 }
 
+/**
+ * V2 服务端唯一世界权威下：战斗内 Host 与 Guest 100% 平权，
+ * 双方均仅对自己角色及自己召唤物/图腾拥有权威。
+ */
+export const makeServerAuthoritativePlayerPredicate = makeGuestAuthorityPredicate;
+
 export function listOwnedPetIds(engine: CombatEngine, ownerId: string): string[] {
   return engine
     .getAllUnits()

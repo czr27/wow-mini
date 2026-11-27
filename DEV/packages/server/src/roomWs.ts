@@ -1,8 +1,10 @@
 import type { WebSocket } from 'ws';
 import {
+  ReliableChannel,
   RoomManager,
   decodeNetMessage,
   encodeNetMessage,
+  getRoleBySpec,
   type AuthPayload,
   type CombatEffect,
   type LobbyRoom,
@@ -12,10 +14,14 @@ import {
   type OwnerSnapshot,
   type PlayerInfo,
   type PlayerInputPayload,
+  type PurgePayload,
+  type ResendExpiredPayload,
+  type ResendReqPayload,
   type RoomActionPayload,
   type RoomChatMessage,
   type RoomChatSendPayload,
   type RoomCreatePayload,
+  type SummarySettlePayload,
   type VoteCastPayload,
   type VoteStartPayload,
 } from '@cata-raid-sim/engine';
@@ -24,10 +30,17 @@ import { RoomVoteTracker } from './roomVotes.js';
 
 /** WebSocket 断开后短暂等待重连，再踢出/改 AI */
 const DISCONNECT_AI_MS = 5000;
-/** 客户端约每 15s 发 PING；超过该时长无 PING 视为心跳超时 */
+/** V2 阶梯心跳探测：15s+容忍度起每 3s 催促；30s+容忍度起每 1s 催促；45s 超时踢出 */
+const HEARTBEAT_PROBE_SLOW_MS = 15_500;
+const HEARTBEAT_PROBE_SLOW_INTERVAL_MS = 3_000;
+const HEARTBEAT_PROBE_FAST_MS = 30_500;
+const HEARTBEAT_PROBE_FAST_INTERVAL_MS = 1_000;
 const HEARTBEAT_TIMEOUT_MS = 45_000;
-/** 心跳扫描周期 */
-const HEARTBEAT_SWEEP_MS = 5_000;
+/** 心跳扫描周期（1s 以支撑 30s~45s 的每秒催促探测） */
+const HEARTBEAT_SWEEP_MS = 1_000;
+/** 结算未应答最长重传时间（5s） */
+const SUMMARY_SETTLE_RETRY_MS = 1_000;
+const SUMMARY_SETTLE_MAX_MS = 5_000;
 
 interface ClientSession {
   ws: WebSocket;
@@ -40,7 +53,19 @@ interface ClientSession {
   roomId: string | null;
   /** 最近一次收到客户端 PING（或 AUTH）的时间 */
   lastPongMs: number;
+  /** 最近一次发出 PING_PROBE 催促的时间 */
+  lastProbeMs?: number;
+  /** V2 双向可靠序列号与 50 包缓存 */
+  reliable: ReliableChannel;
   disconnectTimer?: ReturnType<typeof setTimeout>;
+}
+
+interface SummarySettleTracker {
+  roomId: string;
+  payload: SummarySettlePayload;
+  pendingPlayerIds: Set<string>;
+  startedAtMs: number;
+  timer: ReturnType<typeof setInterval>;
 }
 
 export class RoomWsHub {
@@ -48,7 +73,12 @@ export class RoomWsHub {
   readonly votes = new RoomVoteTracker();
   private sessionsByPlayer = new Map<string, ClientSession>();
   private sessionsByWs = new Map<WebSocket, ClientSession>();
+  private kickedSockets = new WeakSet<WebSocket>();
   private combatSessions = new Map<string, RoomCombatSession>();
+  /** V2 同意热加入后等待新玩家上报初始快照的映射：playerId -> { roomId, replacedAiId } */
+  private pendingHotJoins = new Map<string, { roomId: string; replacedAiId: string }>();
+  /** V2 结算全员 ACK 跟踪：收齐即刻销毁，未答最多重传 5s */
+  private summarySettleTrackers = new Map<string, SummarySettleTracker>();
   /** Per-room throttle for host combat → lobby list sync (rooms stay isolated). */
   private lastCombatMetaPush = new Map<string, { phase?: string; atMs: number }>();
   private summaryRetentionTimers = new Map<string, ReturnType<typeof setTimeout>>();
@@ -76,6 +106,11 @@ export class RoomWsHub {
       clearTimeout(t);
     }
     this.summaryRetentionTimers.clear();
+    for (const st of this.summarySettleTrackers.values()) {
+      clearInterval(st.timer);
+    }
+    this.summarySettleTrackers.clear();
+    this.pendingHotJoins.clear();
   }
 
   getCombatSession(roomId: string): RoomCombatSession | undefined {
@@ -109,19 +144,67 @@ export class RoomWsHub {
         }
       },
       onEnterSummary: (rid) => {
-        // 通关或团灭结算：保留房间 10 秒共享结算数据，供玩家查看并手动返回大厅；超时无人离开再自动销毁
-        if (this.summaryRetentionTimers.has(rid)) return;
-        const t = setTimeout(() => {
-          this.summaryRetentionTimers.delete(rid);
-          const r = this.roomManager.getRoom(rid);
-          if (!r) return;
+        // V2 结算流：下发 SUMMARY_SETTLE，全员 SUMMARY_ACK 后即刻销毁房间；未应答最多重传 5s 后销毁
+        if (this.summarySettleTrackers.has(rid)) return;
+        const r = this.roomManager.getRoom(rid);
+        const csRef = this.combatSessions.get(rid);
+        if (!r || !csRef) return;
+        const humans = this.humanIdsInRoom(rid);
+        const payload: SummarySettlePayload = {
+          roomId: rid,
+          cleared: !!csRef.rsm.isCleared,
+          totalDurationSec: Math.round(csRef.rsm.totalRunDurationSec),
+          encounterReports: csRef.rsm.encounterReports || [],
+        };
+        const pendingPlayerIds = new Set(humans);
+        const sendSettleToPending = () => {
+          for (const pid of pendingPlayerIds) {
+            const s = this.sessionsByPlayer.get(pid);
+            if (s) {
+              this.send(s.ws, {
+                type: 'SUMMARY_SETTLE',
+                roomId: rid,
+                timeMs: Date.now(),
+                payload,
+              });
+            }
+          }
+        };
+        sendSettleToPending();
+        if (pendingPlayerIds.size === 0) {
           const reason = r.status === 'CLEARED' ? 'cleared_summary' : 'wipe_finish';
           this.destroyRoomAndNotify(rid, reason, true);
-        }, 10_000);
-        if (typeof (t as any).unref === 'function') {
-          (t as any).unref();
+          return;
         }
-        this.summaryRetentionTimers.set(rid, t);
+        const startedAtMs = Date.now();
+        const timer = setInterval(() => {
+          const tracker = this.summarySettleTrackers.get(rid);
+          if (!tracker) return;
+          if (
+            tracker.pendingPlayerIds.size === 0 ||
+            Date.now() - tracker.startedAtMs >= SUMMARY_SETTLE_MAX_MS
+          ) {
+            clearInterval(tracker.timer);
+            this.summarySettleTrackers.delete(rid);
+            const cur = this.roomManager.getRoom(rid);
+            if (cur) {
+              const reason = cur.status === 'CLEARED' ? 'cleared_summary' : 'wipe_finish';
+              this.destroyRoomAndNotify(rid, reason, true);
+            }
+            return;
+          }
+          sendSettleToPending();
+        }, SUMMARY_SETTLE_RETRY_MS);
+        if (typeof (timer as any).unref === 'function') {
+          (timer as any).unref();
+        }
+        this.summarySettleTrackers.set(rid, {
+          roomId: rid,
+          payload,
+          pendingPlayerIds,
+          startedAtMs,
+          timer,
+        });
       },
       onRoomMetaUpdate: (rid, snap) => {
         this.applyCombatSnapMeta(rid, snap);
@@ -388,10 +471,26 @@ export class RoomWsHub {
     });
   }
 
-  private send(ws: WebSocket, msg: NetEnvelope) {
-    if (ws.readyState === ws.OPEN) {
-      ws.send(encodeNetMessage(msg));
+  private isHighFreqMsg(msg: NetEnvelope): boolean {
+    if (msg.type === 'PING' || msg.type === 'PONG' || msg.type === 'PING_PROBE') return true;
+    if (msg.type === 'PLAYER_INPUT') {
+      const p = msg.payload as PlayerInputPayload | undefined;
+      if (p?.kind === 'MOVE') return true;
     }
+    return false;
+  }
+
+  private send(ws: WebSocket, msg: NetEnvelope) {
+    if (ws.readyState !== ws.OPEN) return;
+    const session = this.sessionsByWs.get(ws);
+    if (session && msg.type !== 'RESEND_REQ' && msg.type !== 'RESEND_EXPIRED') {
+      const out = this.isHighFreqMsg(msg)
+        ? session.reliable.attachPiggybackAck(msg)
+        : session.reliable.stampOutgoing(msg);
+      ws.send(encodeNetMessage(out));
+      return;
+    }
+    ws.send(encodeNetMessage(msg));
   }
 
   private broadcastRoom(roomId: string, msg: NetEnvelope, exceptPlayerId?: string) {
@@ -460,6 +559,14 @@ export class RoomWsHub {
             room: replaced.room,
           },
         });
+        // V2 离场独立可靠 PURGE 包：向所有剩余在线成员发送，防丢包导致残留
+        const purgePayload: PurgePayload = { roomId, ownerId: playerId, reason };
+        this.broadcastRoom(roomId, {
+          type: 'PURGE',
+          roomId,
+          timeMs: Date.now(),
+          payload: purgePayload,
+        });
         if (replaced.newHostId) {
           this.broadcastRoom(roomId, {
             type: 'HOST_TRANSFER',
@@ -467,6 +574,24 @@ export class RoomWsHub {
             timeMs: Date.now(),
             payload: { newHostId: replaced.newHostId, room: replaced.room },
           });
+        }
+        // V2 投票鲁棒性：未投票且有资格者掉线时动态重算分母
+        for (const vu of this.votes.onPlayerDropped(roomId, playerId)) {
+          this.broadcastRoom(roomId, {
+            type: 'VOTE_STATE',
+            roomId,
+            timeMs: Date.now(),
+            payload: vu.state,
+          });
+          if (vu.earlyResult) {
+            this.broadcastRoom(roomId, {
+              type: 'VOTE_RESULT',
+              roomId,
+              timeMs: Date.now(),
+              payload: { kind: vu.kind, result: vu.earlyResult, vote: vu.state },
+            });
+            this.handleVoteResolved(roomId, vu.kind, vu.earlyResult);
+          }
         }
         this.pushRoomUpdate(replaced.room);
       }
@@ -558,15 +683,44 @@ export class RoomWsHub {
     this.removeOrReplacePlayerFromRoom(roomId, session.playerId, reason);
   }
 
-  /** 扫无 PING 的僵死连接，并清掉房主已不在线的幽灵房间 */
+  /** V2 阶梯心跳扫描：15s+每3s催促、30s+每1s催促、45s超时踢出，并清掉房主已不在线的幽灵房间 */
   private sweepHeartbeatsAndOrphanRooms() {
     const now = Date.now();
 
     for (const session of [...this.sessionsByPlayer.values()]) {
       if (session.disconnectTimer) continue; // 已在断线宽限期内
-      if (now - session.lastPongMs <= HEARTBEAT_TIMEOUT_MS) continue;
+      const elapsed = now - session.lastPongMs;
 
+      if (elapsed <= HEARTBEAT_PROBE_SLOW_MS) continue;
+
+      if (elapsed <= HEARTBEAT_TIMEOUT_MS) {
+        // 阶梯催促探测：15.5s~30.5s 每 3s 催一次；30.5s~45s 每 1s 催一次
+        const interval =
+          elapsed > HEARTBEAT_PROBE_FAST_MS
+            ? HEARTBEAT_PROBE_FAST_INTERVAL_MS
+            : HEARTBEAT_PROBE_SLOW_INTERVAL_MS;
+        if (!session.lastProbeMs || now - session.lastProbeMs >= interval) {
+          session.lastProbeMs = now;
+          this.send(session.ws, {
+            type: 'PING_PROBE',
+            roomId: session.roomId || undefined,
+            timeMs: now,
+            payload: { elapsedMs: elapsed },
+          });
+        }
+        continue;
+      }
+
+      this.kickedSockets.add(session.ws);
       try {
+        if (session.roomId) {
+          this.send(session.ws, {
+            type: 'ROOM_KICKED',
+            roomId: session.roomId,
+            timeMs: now,
+            payload: { reason: '心跳超时，已被移出房间', playerId: session.playerId },
+          });
+        }
         this.send(session.ws, {
           type: 'SESSION_KICKED',
           timeMs: now,
@@ -577,7 +731,7 @@ export class RoomWsHub {
           },
         });
       } catch {}
-      // 先收尾房间；短暂延迟再 close，确保 SESSION_KICKED 能弹出
+      // 先收尾房间；短暂延迟再 close，确保踢出提示能弹出
       this.finalizeGoneSession(session, 'heartbeat_timeout');
       const doomed = session.ws;
       setTimeout(() => {
@@ -619,10 +773,64 @@ export class RoomWsHub {
 
   private onMessage(ws: WebSocket, msg: NetEnvelope) {
     const activeSession = this.sessionsByWs.get(ws);
-    if (activeSession) activeSession.lastPongMs = Date.now();
     if (msg.type === 'PING') {
+      // V2 幽灵重连防护：已被踢出房间的连接若直接发 PING，拒绝并再次踢出，须重新握手
+      if (this.kickedSockets.has(ws) || !activeSession) {
+        this.send(ws, {
+          type: 'ROOM_KICKED',
+          timeMs: Date.now(),
+          payload: { reason: '连接已超时失效，请重新握手进入房间' },
+        });
+        try {
+          ws.close();
+        } catch {}
+        return;
+      }
+      activeSession.lastPongMs = Date.now();
+      activeSession.lastProbeMs = undefined;
       this.send(ws, { type: 'PONG', timeMs: Date.now() });
       return;
+    }
+
+    if (activeSession) {
+      activeSession.lastPongMs = Date.now();
+      activeSession.lastProbeMs = undefined;
+      // V2 双向可靠通道处理
+      if (msg.type === 'RESEND_REQ') {
+        const body = msg.payload as ResendReqPayload | undefined;
+        if (Array.isArray(body?.missingSeqs) && body.missingSeqs.length > 0) {
+          const { found, expired } = activeSession.reliable.handleResendRequest(body.missingSeqs);
+          for (const cached of found) {
+            if (ws.readyState === ws.OPEN) ws.send(encodeNetMessage(cached));
+          }
+          if (expired.length > 0) {
+            this.send(ws, {
+              type: 'RESEND_EXPIRED',
+              roomId: activeSession.roomId || undefined,
+              timeMs: Date.now(),
+              payload: { expiredSeqs: expired } satisfies ResendExpiredPayload,
+            });
+          }
+        }
+        return;
+      }
+      if (msg.type === 'RESEND_EXPIRED') {
+        const body = msg.payload as ResendExpiredPayload | undefined;
+        if (Array.isArray(body?.expiredSeqs)) {
+          activeSession.reliable.onResendExpired(body.expiredSeqs);
+        }
+        return;
+      }
+      const incoming = activeSession.reliable.onIncoming(msg);
+      if (incoming.missingSeqs.length > 0) {
+        this.send(ws, {
+          type: 'RESEND_REQ',
+          roomId: activeSession.roomId || undefined,
+          timeMs: Date.now(),
+          payload: { missingSeqs: incoming.missingSeqs } satisfies ResendReqPayload,
+        });
+      }
+      if (incoming.isDuplicate) return;
     }
 
     if (msg.type === 'AUTH') {
@@ -669,6 +877,8 @@ export class RoomWsHub {
         role: auth.role,
         roomId: preservedRoomId,
         lastPongMs: Date.now(),
+        // 同 socket 刷新 AUTH（如建房前 syncAuthSpec）必须复用原可靠通道，防止 reliableSeq 回退导致客户端误判重复丢包
+        reliable: prevOnThisWs?.reliable ?? new ReliableChannel(),
       };
       this.sessionsByPlayer.set(auth.playerId, session);
       this.sessionsByWs.set(ws, session);
@@ -1174,8 +1384,109 @@ export class RoomWsHub {
         break;
       }
 
+      case 'HOT_JOIN_REQ': {
+        // V2 热加入完整流：先校验有无同职责 AI 可替，无则直接拒绝不打扰战局
+        const roomId = msg.roomId || (msg.payload as any)?.roomId;
+        const room = roomId ? this.roomManager.getRoom(roomId) : undefined;
+        if (!room || (room.status !== 'IN_COMBAT' && room.status !== 'OUT_OF_COMBAT')) {
+          this.send(ws, {
+            type: 'HOT_JOIN_DENY',
+            roomId,
+            timeMs: Date.now(),
+            payload: { reason: '房间不存在或未在副本中' },
+          });
+          break;
+        }
+        const reqRole =
+          (msg.payload as any)?.role ||
+          session.role ||
+          getRoleBySpec(session.classId as any, session.spec);
+        const replaceableAi = room.members.find((m) => m.isAi && m.role === reqRole);
+        if (!replaceableAi) {
+          this.send(ws, {
+            type: 'HOT_JOIN_DENY',
+            roomId,
+            timeMs: Date.now(),
+            payload: { reason: `房间内没有可替代的 ${reqRole} AI 席位` },
+          });
+          break;
+        }
+        this.pendingHotJoins.set(session.playerId, { roomId, replacedAiId: replaceableAi.id });
+        this.send(ws, {
+          type: 'HOT_JOIN_ACCEPT',
+          roomId,
+          timeMs: Date.now(),
+          payload: { roomId, replacedAiId: replaceableAi.id },
+        });
+        break;
+      }
+
+      case 'SUMMARY_ACK': {
+        const roomId = msg.roomId || session.roomId;
+        if (!roomId) break;
+        const tracker = this.summarySettleTrackers.get(roomId);
+        if (!tracker) break;
+        tracker.pendingPlayerIds.delete(session.playerId);
+        if (tracker.pendingPlayerIds.size === 0) {
+          clearInterval(tracker.timer);
+          this.summarySettleTrackers.delete(roomId);
+          const cur = this.roomManager.getRoom(roomId);
+          if (cur) {
+            const reason = cur.status === 'CLEARED' ? 'cleared_summary' : 'wipe_finish';
+            this.destroyRoomAndNotify(roomId, reason, true);
+          }
+        }
+        break;
+      }
+
       case 'OWNER_SNAPSHOT': {
         if (!msg.roomId && session.roomId) msg.roomId = session.roomId;
+        const pendingHj = this.pendingHotJoins.get(session.playerId);
+        if (pendingHj && (!msg.roomId || msg.roomId === pendingHj.roomId)) {
+          // V2 热加入者上报初始快照 → Server 融合并广播给全员与热加入者
+          this.pendingHotJoins.delete(session.playerId);
+          const hjRoom = this.roomManager.getRoom(pendingHj.roomId);
+          const snap = msg.payload as OwnerSnapshot;
+          if (hjRoom) {
+            const pInfo: PlayerInfo = {
+              id: session.playerId,
+              name: session.playerName,
+              classId: session.classId as any,
+              spec: session.spec,
+              role: (session.role || getRoleBySpec(session.classId as any, session.spec)) as any,
+            };
+            const joinRes = this.roomManager.joinOrHotSwapPlayer(pendingHj.roomId, pInfo);
+            if (joinRes.ok && joinRes.room) {
+              session.roomId = pendingHj.roomId;
+              const member = joinRes.room.members.find((m) => m.id === session.playerId);
+              const cs = this.combatSessions.get(pendingHj.roomId);
+              let unitSnapshot = snap?.units?.find((u) => u.id === session.playerId);
+              if (cs && member) {
+                const inherited = cs.hotSwapHuman(pendingHj.replacedAiId, member);
+                if (snap?.units?.length) cs.handleOwnerSnapshot(snap);
+                unitSnapshot = unitSnapshot || inherited;
+              }
+              this.broadcastRoom(pendingHj.roomId, {
+                type: 'MEMBER_HOT_SWAP',
+                roomId: pendingHj.roomId,
+                timeMs: Date.now(),
+                payload: {
+                  roomId: pendingHj.roomId,
+                  room: joinRes.room,
+                  playerId: session.playerId,
+                  replacedAiId: pendingHj.replacedAiId,
+                  playerName: session.playerName,
+                  classId: session.classId,
+                  spec: session.spec,
+                  role: pInfo.role,
+                  unitSnapshot,
+                },
+              });
+              this.pushRoomUpdate(joinRes.room);
+            }
+          }
+          break;
+        }
         if (!msg.roomId) break;
         if (session.roomId !== msg.roomId) break;
         const snap = msg.payload as OwnerSnapshot;
@@ -1202,15 +1513,23 @@ export class RoomWsHub {
         if (!msg.roomId || session.roomId !== msg.roomId) break;
         const gmRoom = this.roomManager.getRoom(msg.roomId);
         if (!gmRoom) break;
+        const now = Date.now();
+        const rawGm = (msg.payload || {}) as any;
+        // V2: 补齐唯一 id（防重传）与 senderId（防发出方回收自己广播重复消费）
+        const gmPayload = {
+          ...rawGm,
+          id: rawGm.id || `gm_${session.playerId}_${now}_${Math.random().toString(36).slice(2, 6)}`,
+          senderId: rawGm.senderId || session.playerId,
+        };
         const combatSession = this.combatSessions.get(msg.roomId);
-        if (combatSession && msg.payload) {
-          combatSession.handleGmCommand(msg.payload as any);
+        if (combatSession) {
+          combatSession.handleGmCommand(gmPayload);
         }
         this.broadcastRoom(msg.roomId, {
           type: 'GM_COMMAND',
           roomId: msg.roomId,
-          timeMs: Date.now(),
-          payload: msg.payload,
+          timeMs: now,
+          payload: gmPayload,
         });
         break;
       }

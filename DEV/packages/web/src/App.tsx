@@ -294,7 +294,8 @@ export function App() {
     });
     if (filtered.length === 0) return;
     // React 18 defers setState updater callbacks, so resolve voicePhrase synchronously from incoming
-    const lastIncoming = filtered[filtered.length - 1];
+    const voiceable = filtered.filter((a) => !a.silent);
+    const lastIncoming = voiceable[voiceable.length - 1];
     const voicePhrase = (lastIncoming?.voiceText || lastIncoming?.advice || '').trim();
     if (dbmVoiceEnabledRef.current && voicePhrase) {
       speakDbmVoice(voicePhrase);
@@ -2580,11 +2581,22 @@ export function App() {
           />
         ) : runPhase === 'SUMMARY' ? (
           <SummaryPage
-            dungeonName={
-              dungeonTier === '20man'
-                ? `巨龙之魂（${dungeonDifficulty === 'HEROIC' ? '英雄模式' : dungeonDifficulty === 'CUSTOM' ? '自定义模式' : '普通模式'} 20人）`
-                : `影牙城堡（${dungeonDifficulty === 'HEROIC' ? '英雄模式' : dungeonDifficulty === 'CUSTOM' ? '自定义模式' : '普通模式'}）`
-            }
+            dungeonName={(() => {
+              const did = rsmRef.current?.dungeon?.id || selectedDungeonId || 'shadowfang_keep';
+              const baseName =
+                DUNGEON_ROLE_QUOTAS[did]?.dungeonName ||
+                rsmRef.current?.dungeon?.name?.replace(/（.*）$/, '') ||
+                '影牙城堡';
+              const diffLabel =
+                dungeonDifficulty === 'HEROIC'
+                  ? '英雄模式'
+                  : dungeonDifficulty === 'CUSTOM'
+                  ? '自定义模式'
+                  : '普通模式';
+              return dungeonTier === '20man'
+                ? `${baseName}（${diffLabel} 20人）`
+                : `${baseName}（${diffLabel}）`;
+            })()}
             totalDurationSec={totalDurationSec}
             encounters={rsmRef.current?.encounterReports || []}
             characterName={currentChar ? currentChar.name : '勇士'}

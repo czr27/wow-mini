@@ -36,12 +36,13 @@
 |---|---|---|
 | **施法生命周期纯规则** | `DEV/packages/engine/src/engine/CastLifecycle.ts` | 瞬发/读条/引导三类技能的起手消耗、起手冷却、打断行为、结束结算唯一事实源 |
 | **战斗核心引擎** | `DEV/packages/engine/src/engine/CombatEngine.ts` | 20Hz 主循环、单位管理、`castSpell` / `interruptCast`、`applyDamage` / `applyHeal` 真实联动钩子（升腾/大地之盾/生命释放/先祖指引/圣光道标等） |
-| **10 职业定义与总注册表** | `DEV/packages/engine/src/classes/*.ts`<br>`DEV/packages/engine/src/classes/ClassRegistry.ts` | 10 职业 30 专精技能表、`LEVEL_80_MAX_HASTE = 0.50`、`getEffectiveGcdMs`、`getHastedCastTimeMs`、`getSpellByAnyId`、标准化 `NormalizedSpell` |
+| **10 职业定义与总注册表** | `DEV/packages/engine/src/classes/*.ts`<br>`DEV/packages/engine/src/classes/ClassRegistry.ts` | 10 职业 30 专精技能表、`ALL_CLASSES_NORMALIZED`、`getSpellsForClassSpec`、`getSpellByAnyId`、标准化 `NormalizedSpell` |
+| **80 级基线与急速缩放** | `DEV/packages/engine/src/engine/TierProfile.ts` | `LEVEL_80_MAX_HASTE = 0.50`、`LEVEL_80_STATS`、`createLevel80BaseStats`、`getEffectiveGcdMs`、`getHastedCastTimeMs` |
 | **通用规则 AI** | `DEV/packages/engine/src/ai/SkillMetricEvaluator.ts`<br>`DEV/packages/engine/src/ai/{Tank,Healer,Dps}AI.ts` | 依据单位可用技能动态评分：治疗（危机保坦 → 多人低于健康线优先 AoE → 性价比单抬）、DPS（≥3 目标优先 AoE → 性价比循环）、坦克（嘲讽/仇恨/减伤） |
 | **前端玩家施法控制器** | `DEV/packages/web/src/hooks/usePlayerCastController.ts` | 封装玩家侧读条与引导推进、周期跳数、移动/ESC/超距打断，直接调用 `CastLifecycle` 纯规则 |
 | **战斗效果总线与落地** | `DEV/packages/web/src/combat/combatEffectBus.ts`<br>`DEV/packages/web/src/combat/applyCombatEffect.ts` | 统一分发伤害/治疗/护盾/驱散/击杀事件，解耦引擎计算与表现层消费 |
 | **网络战斗权威与客机施法** | `DEV/packages/web/src/combat/networkCombatAuthority.ts`<br>`DEV/packages/web/src/combat/castLifecycleNet.ts` | Host 权威校验与 Tick 守卫，Guest 客户端网络施法生命周期与本地乐观回显 |
-| **DK 独立符文状态机** | `DEV/packages/web/src/combat/dkResources.ts` | 死亡骑士 6 符文（血/霜/邪/死）与符文能量单独建模管理 |
+| **DK 独立符文状态机** | `DEV/packages/web/src/combat/dkResources.ts`<br>`DEV/packages/engine/src/ai/dkResources.ts` | 死亡骑士 6 符文（血/霜/邪/死）与符能消耗/刷新（玩家前端与引擎 AI 各自维护同步） |
 
 ---
 

@@ -20,6 +20,7 @@ export * from './engine/AoeRingVisual.js';
 export * from './auth/AccountManager.js';
 export * from './auth/accountMerge.js';
 export * from './net/NetProtocol.js';
+export * from './net/ReliableChannel.js';
 export * from './leaderboard/LeaderboardManager.js';
 export * from './ai/AIController.js';
 export * from './ai/BossAI.js';

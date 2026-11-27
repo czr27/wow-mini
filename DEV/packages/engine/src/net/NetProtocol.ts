@@ -66,6 +66,8 @@ export interface NetworkCastTimeline {
   /** Host wall-clock when cast/channel started */
   startedAtMs: number;
   totalMs: number;
+  /** V2 施法序号，供 CAST_INTERRUPT 精准匹配 */
+  castSeq?: number;
   isChannel?: boolean;
   targetId?: string;
   /** When true, guest must clear this cast immediately */
@@ -234,8 +236,12 @@ export interface NetworkVoteState {
 export interface PlayerInputPayload {
   playerId: string;
   spellId?: string;
+  /** @deprecated V2 全局统一用 spellId 查表，不再依赖 spellName */
   spellName?: string;
+  /** V2 施法方每次施法单调递增序号，供 CAST_INTERRUPT 精准匹配 */
+  castSeq?: number;
   targetId?: string | null;
+  /** @deprecated V2 不再传输快捷键槽位 */
   slotIndex?: number;
   kind:
     | 'CAST'
@@ -253,18 +259,20 @@ export interface PlayerInputPayload {
   /** Ground placement / move coordinates (canvas px) */
   x?: number;
   y?: number;
+  /** V2 移动速度（px/s），接收方按时间戳排序逐点平滑跑动 */
+  moveSpeed?: number;
+  /** V2 移动包时间戳（ms） */
+  atMs?: number;
   /** Optional spawn hint for SUMMON (pet / add template id) */
   spawnKind?: 'PET' | 'ADD' | 'NPC';
   wipeVote?: WipeVoteChoice;
   skipTravelVote?: SkipTravelVoteChoice;
   /**
-   * 客人可靠意图 id：房主按 id 幂等去重；INPUT_ACK 回传 id+attempt 供 RTT。
-   * MOVE 等高频意图不带 id（fire-and-forget）。
+   * @deprecated V2 由信封层 reliableSeq / lastRecvSeq 统一替代
    */
   clientInputId?: string;
   /**
-   * 本包是该 id 的第几次发送（1=首发，重传递增）。
-   * INPUT_ACK 原样回传，客人用对应发出时刻算回路延迟。
+   * @deprecated V2 由信封层 reliableSeq / lastRecvSeq 统一替代
    */
   clientInputAttempt?: number;
 }
@@ -301,6 +309,7 @@ export type CombatEffectKind =
   | 'CAST_LAND'
   | 'AOE_PULSE'
   | 'GROUND_PLACE'
+  | 'GROUND_DESPAWN'
   | 'DISPEL'
   | 'TAUNT';
 
@@ -336,7 +345,10 @@ export interface CombatEffect {
   sourceId: string;
   targetId: string;
   spellId: string;
+  /** @deprecated V2 全局统一用 spellId 查表 */
   spellName?: string;
+  /** V2 关联的施法序号（CAST_START / CAST_LAND） */
+  castSeq?: number;
   kind: CombatEffectKind;
   amount?: number;
   isCrit?: boolean;
@@ -400,6 +412,8 @@ export interface CombatBatch {
 export type NetMessageType =
   | 'PING'
   | 'PONG'
+  | 'PING_PROBE'
+  | 'ROOM_KICKED'
   | 'CONNECTED'
   | 'DISCONNECTED'
   | 'AUTH'
@@ -414,14 +428,23 @@ export type NetMessageType =
   | 'ROOM_LEAVE'
   | 'ROOM_UPDATE'
   | 'ROOM_CLOSED'
+  | 'PRE_START_SYNC'
   | 'ROOM_START'
   | 'ROOM_ACTION'
+  | 'HOT_JOIN_REQ'
+  | 'HOT_JOIN_ACCEPT'
+  | 'HOT_JOIN_DENY'
   | 'PLAYER_INPUT'
   | 'INPUT_ACK'
+  | 'RESEND_REQ'
+  | 'RESEND_EXPIRED'
   | 'COMBAT_STATE'
   | 'COMBAT_EFFECT'
   | 'OWNER_SNAPSHOT'
+  | 'PURGE'
   | 'COMBAT_BATCH'
+  | 'SUMMARY_SETTLE'
+  | 'SUMMARY_ACK'
   | 'MEMBER_LEFT'
   | 'MEMBER_REPLACE_AI'
   | 'MEMBER_HOT_SWAP'
@@ -473,6 +496,10 @@ export type GmCommandKind =
   | 'TOGGLE_ENEMY_INVINCIBLE';
 
 export interface GmCommandPayload {
+  /** V2 唯一指令 ID，防重传重复执行 */
+  id?: string;
+  /** V2 发出者 ID，防止发出方回收自己广播包重复消费 */
+  senderId?: string;
   playerId: string;
   kind: GmCommandKind;
   deltaPct?: number;
@@ -482,9 +509,33 @@ export interface GmCommandPayload {
   enabled?: boolean;
 }
 
+export interface CastInterruptPayload {
+  unitId: string;
+  spellId?: string;
+  /** V2 施法方每次施法单调递增序号，非权威方仅匹配当前绘制读条的 castSeq 才杀读条 */
+  castSeq?: number;
+}
+
+export interface PurgePayload {
+  roomId: string;
+  ownerId: string;
+  reason?: string;
+}
+
+export interface SummarySettlePayload {
+  roomId: string;
+  cleared: boolean;
+  totalDurationSec: number;
+  encounterReports: import('../types.js').EncounterReport[];
+}
+
 export interface NetEnvelope<T = unknown> {
   type: NetMessageType;
   seq?: number;
+  /** V2 发送方单调递增可靠序列号（非高频包必带，高频移动不带） */
+  reliableSeq?: number;
+  /** V2 捎带确认：发送方已连续收到对端的最大 reliableSeq */
+  lastRecvSeq?: number;
   roomId?: string;
   timeMs?: number;
   payload?: T;

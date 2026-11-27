@@ -15,10 +15,7 @@
   [房间开战] ──► TRAVEL_RECOVERY (5人 7s / 20人 14s 赶路 / 复活门禁)
                         │ 全员存活且到达首领房
                         ▼
-                 PULL_APPROACH (主坦领队平缓接怪，防瞬移)
-                        │ 靠近警戒 / 嘲讽 / 命中
-                        ▼
-                  BOSS_COMBAT (BossAI 时间轴 + 几何预警 + 仇恨)
+                  BOSS_COMBAT (接怪 + BossAI 时间轴 + 几何预警 + 仇恨)
                     ╱         ╲
             首领阵亡             全员阵亡
               ╱                   ╲
@@ -39,7 +36,8 @@
 | **副本规格与难度基线** | `DEV/packages/engine/src/engine/TierProfile.ts`<br>`DEV/packages/engine/src/types.ts` | 5 人本 / 20 人团本血量/伤害基准（`BOSS_KILL_TIME_SEC` 动态 AI 秒伤预算模型）、`NORMAL` / `HEROIC` / `CUSTOM`（10 项独立系数 `CustomDifficultySettings`） |
 | **首领数据与模块化 AI** | `DEV/packages/engine/src/bosses/<dungeon>/`<br>`DEV/packages/engine/src/bosses/core/{BaseBossAI,BossRegistry,BossTrashTalk}.ts` | 首领技能时间轴、读条打断窗口、扇形/毒圈地面预警、点名 Debuff、狂暴与高威胁大招个性狠话台词（洗牌袋不重复随机）；`ai/BossAI.ts` 仅保留兼容重导出，禁止向其堆砌业务代码 |
 | **地面法阵与几何判定** | `DEV/packages/engine/src/engine/EffectsManager.ts` | 圆形半径/60°扇形区域真实范围判定、治疗圈与敌方毒圈共存 |
-| **DBM 预警与权威播报** | `DEV/packages/engine/src/engine/DbmManager.ts` | 首领技能自动推导规则、显式 `skill.dbm` 语义覆盖、小怪/危险区运行时触发与房主权威同步队列 |
+| **DBM 预警与权威播报** | `DEV/packages/engine/src/engine/DbmManager.ts`<br>`DEV/packages/engine/src/engine/CombatEngine.ts` | `DbmAlertLog`、`deriveBossSkillDbmRule`、`toShortVoiceText` 与 `CombatEngine.emitDbmAlert` 运行时触发及房主权威同步队列 |
+| **迷宫拓扑与走廊生成** | `DEV/packages/engine/src/dungeon/{DungeonMazeProfiles,MazeGenerator,MazeCorridors}.ts` | 副本迷宫尺寸、连通走廊生成与各副本主题配置 |
 | **房间配置映射** | `DEV/packages/engine/src/room/RoomTypes.ts`<br>`DEV/packages/engine/src/room/RoomManager.ts` | `DUNGEON_ROLE_QUOTAS`（现支持 6 大副本：影牙城堡、死亡矿井、血色修道院、斯坦索姆、祖尔格拉布、巨龙之魂）、房间难度与自定义系数同步到引擎 |
 
 ---

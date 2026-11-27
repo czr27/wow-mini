@@ -1,4 +1,5 @@
 import {
+  ReliableChannel,
   decodeNetMessage,
   encodeNetMessage,
   type AuthPayload,
@@ -11,6 +12,8 @@ import {
   type NetworkCombatSnapshot,
   type OwnerSnapshot,
   type PlayerInputPayload,
+  type ResendExpiredPayload,
+  type ResendReqPayload,
   type RoomActionPayload,
   type RoomChatSendPayload,
   type RoomCreatePayload,
@@ -88,6 +91,12 @@ export class NetClient {
   private auth: AuthPayload | null = null;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private pingTimer: ReturnType<typeof setInterval> | null = null;
+  /** V2 结算页保活：收到 SUMMARY_SETTLE 后暂停心跳，避免结算期间误判超时 */
+  private heartbeatPaused = false;
+  /** V2 双向可靠序列号通道 + 50 包缓存 */
+  readonly reliableChannel = new ReliableChannel();
+  /** V2 每次施法单调递增序号 */
+  private castSeq = 0;
   private intentionalClose = false;
   private _connected = false;
   private _rooms: LobbyRoom[] = [];
@@ -209,15 +218,59 @@ export class NetClient {
       this.clearReconnectTimer();
       this.emit({ type: 'CONNECTED', timeMs: Date.now() });
       this.send({ type: 'AUTH', payload: this.auth! });
+      this.reliableChannel.reset();
       if (this.pingTimer) clearInterval(this.pingTimer);
-      // 服务端心跳超时约 40s；10s 一轮 PING 便于及时剔除掉线房主房间
-      this.pingTimer = setInterval(() => this.send({ type: 'PING' }), 10_000);
+      // V2 15s 常规心跳（结算页暂停心跳）
+      this.pingTimer = setInterval(() => {
+        if (!this.heartbeatPaused) this.send({ type: 'PING' });
+      }, 15_000);
     };
 
     ws.onmessage = (ev) => {
       if (this.ws !== ws || gen !== this.socketGen) return;
       const msg = decodeNetMessage(String(ev.data));
       if (!msg) return;
+      if (msg.type === 'PING_PROBE') {
+        if (!this.heartbeatPaused) this.sendPingNow();
+        this.emit(msg);
+        return;
+      }
+      if (msg.type === 'RESEND_REQ') {
+        const body = msg.payload as ResendReqPayload | undefined;
+        if (Array.isArray(body?.missingSeqs) && body.missingSeqs.length > 0) {
+          const { found, expired } = this.reliableChannel.handleResendRequest(body.missingSeqs);
+          for (const cached of found) {
+            if (ws.readyState === WebSocket.OPEN) ws.send(encodeNetMessage(cached));
+          }
+          if (expired.length > 0) {
+            this.send({
+              type: 'RESEND_EXPIRED',
+              roomId: msg.roomId,
+              timeMs: Date.now(),
+              payload: { expiredSeqs: expired } satisfies ResendExpiredPayload,
+            });
+          }
+        }
+        return;
+      }
+      if (msg.type === 'RESEND_EXPIRED') {
+        const body = msg.payload as ResendExpiredPayload | undefined;
+        if (Array.isArray(body?.expiredSeqs)) {
+          this.reliableChannel.onResendExpired(body.expiredSeqs);
+        }
+        this.emit(msg);
+        return;
+      }
+      const incoming = this.reliableChannel.onIncoming(msg);
+      if (incoming.missingSeqs.length > 0) {
+        this.send({
+          type: 'RESEND_REQ',
+          roomId: msg.roomId,
+          timeMs: Date.now(),
+          payload: { missingSeqs: incoming.missingSeqs } satisfies ResendReqPayload,
+        });
+      }
+      if (incoming.isDuplicate) return;
       if (msg.type === 'SESSION_KICKED') {
         // Stop auto-reconnect until user logs in again
         this.intentionalClose = true;
@@ -436,11 +489,47 @@ export class NetClient {
 
   sendGmCommand(roomId: string, payload: GmCommandPayload) {
     if (!roomId) return;
+    const now = Date.now();
+    const senderId = payload.senderId || this.auth?.playerId || payload.playerId;
+    const id = payload.id || `gm_${senderId}_${now}_${Math.random().toString(36).slice(2, 6)}`;
     this.send({
       type: 'GM_COMMAND',
       roomId,
+      timeMs: now,
+      payload: { ...payload, id, senderId },
+    });
+  }
+
+  /** V2 分配下一次施法序号（供 CAST_INTERRUPT 精准匹配） */
+  nextCastSeq(): number {
+    this.castSeq += 1;
+    return this.castSeq;
+  }
+
+  /** V2 立即上报一次 PING（响应服务端 PING_PROBE） */
+  sendPingNow() {
+    this.send({ type: 'PING', timeMs: Date.now() });
+  }
+
+  /** V2 结算页保活：进入结算页后停止心跳，手动关闭后恢复 */
+  setHeartbeatPaused(paused: boolean) {
+    this.heartbeatPaused = paused;
+  }
+
+  /** V2 结算应答：通知服务端已收到战报 */
+  sendSummaryAck(roomId: string) {
+    if (!roomId) return;
+    this.send({ type: 'SUMMARY_ACK', roomId, timeMs: Date.now() });
+  }
+
+  /** V2 热加入前置询问 */
+  sendHotJoinReq(roomId: string, role?: string) {
+    if (!roomId) return;
+    this.send({
+      type: 'HOT_JOIN_REQ',
+      roomId,
       timeMs: Date.now(),
-      payload,
+      payload: { roomId, role },
     });
   }
 
@@ -623,12 +712,12 @@ export class NetClient {
     });
   }
 
-  sendCastInterrupt(roomId: string, unitId: string, spellId?: string) {
+  sendCastInterrupt(roomId: string, unitId: string, spellId?: string, castSeq?: number) {
     this.send({
       type: 'CAST_INTERRUPT',
       roomId,
       timeMs: Date.now(),
-      payload: { unitId, spellId, atMs: Date.now() },
+      payload: { unitId, spellId, castSeq, atMs: Date.now() },
     });
   }
 

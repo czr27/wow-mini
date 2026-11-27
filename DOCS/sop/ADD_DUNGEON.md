@@ -40,7 +40,7 @@
 - 副本元数据、名额与名称：`DEV/packages/engine/src/room/RoomTypes.ts` (`DUNGEON_ROLE_QUOTAS`)。
 - 副本首领推进顺序与阶段切换：`DEV/packages/engine/src/engine/RunStateMachine.ts`。
 - 首领血量预算与时长标尺：`DEV/packages/engine/src/engine/TierProfile.ts` (`BOSS_KILL_TIME_SEC`, `buildDungeonBossHpList`)。
-- 首领注册与 AI 工厂：`DEV/packages/engine/src/bosses/core/BossRegistry.ts`。
+- 首领注册与检索中心：`DEV/packages/engine/src/bosses/core/BossRegistry.ts` (`BossRegistry.register` / `registerAll` / `get` / `getByDungeon`)。
 
 ---
 
@@ -54,13 +54,7 @@
 
 ## 5. 最小验收与测试命令
 
-```
-
-## 强制验收：全随机 AI 普通模式通关测试
-每新增一个副本，设计完成后**必须**补充普通模式全随机 AI 通关测试（参考 `DEV/packages/engine/src/__tests__/dungeon_normal_ai_clear.test.ts`）：
-- 使用随机职业组合填满 AI 队伍，**至少重复 3 轮**覆盖多职业；
-- 验证全随机 AI 队伍能够稳定通关该副本的**普通模式**；
-- 若出现灭团或超时，必须定位是 **AI 未理解副本机制** 还是 **Boss 数值/机制设计存在缺陷** 并修复。bash
+```bash
 npx --yes tsx --test DEV/packages/engine/src/__tests__/room_lifecycle_and_sync.test.ts \
   QA/tests/lobby_room_queue_substitution.test.ts
 ```

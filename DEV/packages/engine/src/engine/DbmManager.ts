@@ -12,6 +12,8 @@ export interface DbmAlert {
   advice: string;
   /** 4字短语音播报词（如 "注意分散"、"注意打断"、"先杀小怪"） */
   voiceText?: string;
+  /** true：仅显示文字横幅，不播放语音（语音留到技能即将生效时再喊） */
+  silent?: boolean;
   /** 同 replaceKey 的新警报会直接顶替旧警报（如 即将施放 -> 正在施放） */
   replaceKey?: string;
   severity: DbmSeverity;
@@ -111,6 +113,7 @@ export class DbmAlertLog {
       title: resolvedTitle,
       advice: partial.advice,
       voiceText: partial.voiceText || toShortVoiceText(partial.advice),
+      silent: partial.silent,
       replaceKey: partial.replaceKey,
       severity: partial.severity,
       ttlMs: partial.ttlMs ?? (partial.severity === 'CRITICAL' ? 4500 : 3500),
