@@ -100,13 +100,13 @@ export const CATA_5H_346_PROFILE: InstanceTierProfile = {
 
 export const CATA_DS_397_PROFILE: InstanceTierProfile = {
   tierId: 'cata_ds_397',
-  playerHpMult: 1.15,        // 80级20人团本合剂+耐力Buff约75k血坦 / 41k血DPS
+  playerHpMult: 1.15,        // 80级20人团本合剂+耐力Buff（110k×1.15=126.5k血坦 / 68k×1.15=78.2k血DPS治疗）
   playerOutputMult: 1.25,    // 80级团本团队增益后输出放大
   bossHpMult: 6.5,           // 相对 5 人本的粗略血量倍率（展示用；实际 HP 由击杀时间预算算出）
   bossDamageMult: 0.58,
   difficultyPressure: 1.2,
-  tankBaseHp: 75000,
-  dpsHealerBaseHp: 42000,
+  tankBaseHp: Math.round(LEVEL_80_STATS.tankBaseHp * 1.15),
+  dpsHealerBaseHp: Math.round(LEVEL_80_STATS.dpsHealerBaseHp * 1.15),
   baseDps: 18000,
   baseHps: 15000,
 };

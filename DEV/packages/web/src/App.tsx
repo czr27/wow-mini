@@ -1140,19 +1140,19 @@ export function App() {
       const spId = slot.spellId;
       const norm = getSpellByAnyId(spId, player.classId);
 
-      const manaCost = SPELL_MANA_COSTS[spId] ?? (norm?.resourceKind === 'MANA' ? norm.resourceCostAmount : 0);
+      const manaCost = norm?.resourceKind === 'MANA' ? norm.resourceCostAmount : (SPELL_MANA_COSTS[spId] ?? 0);
       if (manaCost > 0 && player.maxMp && player.maxMp > 0 && curMp < manaCost) {
         insufficient[spId] = true;
         errors[spId] = '法力值不足';
         continue;
       }
-      const energyCost = SPELL_ENERGY_COSTS[spId] ?? (norm?.resourceKind === 'ENERGY' ? norm.resourceCostAmount : 0);
+      const energyCost = norm?.resourceKind === 'ENERGY' ? norm.resourceCostAmount : (SPELL_ENERGY_COSTS[spId] ?? 0);
       if (energyCost > 0 && player.classId === 'ROGUE' && curEnergy < energyCost) {
         insufficient[spId] = true;
         errors[spId] = '能量不足';
         continue;
       }
-      const rageCost = SPELL_RAGE_COSTS[spId] ?? (norm?.resourceKind === 'RAGE' ? norm.resourceCostAmount : 0);
+      const rageCost = norm?.resourceKind === 'RAGE' ? norm.resourceCostAmount : (SPELL_RAGE_COSTS[spId] ?? 0);
       if (rageCost > 0 && (player.classId === 'WARRIOR' || (player.classId === 'DRUID' && player.role === 'TANK')) && curRage < rageCost) {
         insufficient[spId] = true;
         errors[spId] = '怒气不足';

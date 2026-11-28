@@ -28,8 +28,8 @@ export class ResourceManager {
   /**
    * Base mana regen rate per second (ratio of maxMp).
    * Unset or <= 0 defaults to raid/dungeon tier adaptivity (tuned for Lv.80 42k~45k base MP):
-   *  - 20-man raid: 0.020 /s (2.0%/s ~ 900 mana/s for 45k healer)
-   *  - 5-man dungeon: 0.015 /s (1.5%/s ~ 675 mana/s for 45k healer)
+   *  - 20-man raid: 0.014 /s (1.4%/s ~ 630 mana/s for 45k healer)
+   *  - 5-man dungeon: 0.011 /s (1.1%/s ~ 495 mana/s for 45k healer)
    */
   baseManaRegenRate?: number;
 
@@ -84,10 +84,10 @@ export class ResourceManager {
     let baseRate = this.baseManaRegenRate;
     if (typeof baseRate !== 'number' || baseRate <= 0) {
       const isRaid = this.engine.friendlyUnits.length > 5;
-      baseRate = isRaid ? 0.02 : 0.015;
+      baseRate = isRaid ? 0.014 : 0.011;
     }
     if (unit.role === 'DPS') {
-      baseRate += 0.005; // 法系 DPS 冥想/暴击回蓝支持
+      baseRate += 0.004; // 法系 DPS 冥想/暴击回蓝支持
     }
 
     const regenPerMs = (res.max * baseRate * mult) / 1_000;

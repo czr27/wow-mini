@@ -68,7 +68,11 @@ export function confirmGroundTarget(ctx: ConfirmGroundTargetCtx): void {
     // Fall through to local placeAndLog path below
   }
 
-  const manaCost = SPELL_MANA_COSTS[spellId] || 0;
+  const normGround = getSpellByAnyId(spellId, player.classId);
+  const manaCost =
+    normGround?.resourceKind === 'MANA'
+      ? normGround.resourceCostAmount
+      : (SPELL_MANA_COSTS[spellId] || 0);
   if (manaCost > 0 && player.maxMp && player.maxMp > 0) {
     player.mp = Math.max(0, (player.mp ?? 0) - manaCost);
   }

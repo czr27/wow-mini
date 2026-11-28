@@ -84,7 +84,7 @@ export function dispelUnit(ctx: DispelUnitCtx): void {
     return;
   }
 
-  const manaCost = SPELL_MANA_COSTS[dispelSpellId] || 2200;
+  const manaCost = SPELL_MANA_COSTS[dispelSpellId] ?? 1000;
   const manaRes = player.resources?.find((r) => r.kind === 'MANA');
   const currentMana = manaRes ? manaRes.current : (player.mp ?? 0);
   if (!ctx.skipResourceCost && currentMana < manaCost) {

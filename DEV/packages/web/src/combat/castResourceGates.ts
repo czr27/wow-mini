@@ -8,24 +8,28 @@ import {
 } from './spellCosts.js';
 import { getDkRunesRequired, hasReadyDkRunes } from './dkResources.js';
 
-/** Build a resource cost bundle from UI tables + ClassRegistry fallback. */
+/** Build a resource cost bundle: prefer ClassRegistry SSOT, fall back to UI cost tables. */
 export function buildSpellCostBundle(
   spellId: string,
   normSpell: NormalizedSpell | undefined | null
 ): SpellResourceCostBundle {
   const mana =
-    SPELL_MANA_COSTS[spellId] ??
-    (normSpell?.resourceKind === 'MANA' ? normSpell.resourceCostAmount : 0);
+    normSpell?.resourceKind === 'MANA'
+      ? normSpell.resourceCostAmount
+      : (SPELL_MANA_COSTS[spellId] ?? 0);
   const energy =
-    SPELL_ENERGY_COSTS[spellId] ??
-    (normSpell?.resourceKind === 'ENERGY' ? normSpell.resourceCostAmount : 0);
+    normSpell?.resourceKind === 'ENERGY'
+      ? normSpell.resourceCostAmount
+      : (SPELL_ENERGY_COSTS[spellId] ?? 0);
   const rage =
-    SPELL_RAGE_COSTS[spellId] ??
-    (normSpell?.resourceKind === 'RAGE' ? normSpell.resourceCostAmount : 0);
+    normSpell?.resourceKind === 'RAGE'
+      ? normSpell.resourceCostAmount
+      : (SPELL_RAGE_COSTS[spellId] ?? 0);
   const focus = normSpell?.resourceKind === 'FOCUS' ? normSpell.resourceCostAmount : 0;
   const runicPower =
-    SPELL_RUNIC_COSTS[spellId] ??
-    (normSpell?.resourceKind === 'RUNIC_POWER' ? normSpell.resourceCostAmount : 0);
+    normSpell?.resourceKind === 'RUNIC_POWER'
+      ? normSpell.resourceCostAmount
+      : (SPELL_RUNIC_COSTS[spellId] ?? 0);
   const holyPower = normSpell?.resourceKind === 'HOLY_POWER' ? normSpell.resourceCostAmount : 0;
 
   return {
