@@ -240,6 +240,24 @@ export function applyCombatEffectToEngine(
       });
       return;
     }
+    case 'KNOCKBACK': {
+      if (!target || !unitAlive(target)) return;
+      const destOverride =
+        typeof effect.x === 'number' &&
+        typeof effect.y === 'number' &&
+        Number.isFinite(effect.x) &&
+        Number.isFinite(effect.y)
+          ? { x: effect.x, y: effect.y }
+          : undefined;
+      engine.knockbackUnit(
+        source,
+        target,
+        effect.amount ?? 180,
+        effect.spellName || '击退',
+        destOverride
+      );
+      return;
+    }
     case 'RESOURCE': {
       if (!target) return;
       const delta = effect.resourceDelta ?? effect.amount ?? 0;

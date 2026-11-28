@@ -1,16 +1,16 @@
 import type { Unit } from '../../types.js';
 
-/** Combined probability that a random boss target pick selects a human player when both humans and AIs exist in the pool. */
-export const HUMAN_BOSS_TARGET_WEIGHT = 0.6;
+/** Human-first boss target priority: always pick randomly from humans while any remain, then fall back to AIs. */
+export const HUMAN_BOSS_TARGET_WEIGHT = 1;
 
 export function isHumanTargetUnit(u: Unit | null | undefined): boolean {
   return !!(u && (u.isPlayer || u.isHumanControlled));
 }
 
 /**
- * Pick 1 target from an eligible pool with 60% combined probability for human players
- * and 40% combined probability for AI units (when both exist in the pool).
- * Within each group (humans / AIs), selection is uniform random.
+ * Pick 1 target from an eligible pool:
+ * - Always picks uniformly at random from human players when any human exists in the pool.
+ * - Falls back to uniform random from AI units only when no human remains.
  * Pets are excluded unless the pool contains only pets.
  */
 export function pickWeightedBossTarget<T extends Unit>(
@@ -22,22 +22,18 @@ export function pickWeightedBossTarget<T extends Unit>(
   const effective = nonPets.length > 0 ? nonPets : pool;
 
   const humans = effective.filter((u) => isHumanTargetUnit(u));
-  const ais = effective.filter((u) => !isHumanTargetUnit(u));
-
-  if (humans.length === 0) {
-    return ais[Math.floor(rng() * ais.length)];
-  }
-  if (ais.length === 0) {
+  if (humans.length > 0) {
     return humans[Math.floor(rng() * humans.length)];
   }
 
-  const bucket = rng() < HUMAN_BOSS_TARGET_WEIGHT ? humans : ais;
-  return bucket[Math.floor(rng() * bucket.length)];
+  const ais = effective.filter((u) => !isHumanTargetUnit(u));
+  return ais[Math.floor(rng() * ais.length)];
 }
 
 /**
- * Pick up to `count` distinct targets from an eligible pool, applying the 60/40
- * human-vs-AI weighting on each pick from the remaining candidates.
+ * Pick up to `count` distinct targets from an eligible pool:
+ * - Exhausts eligible human players first (uniform random order).
+ * - Only fills remaining slots from AI units when humans are fewer than `count`.
  */
 export function pickWeightedBossTargets<T extends Unit>(
   pool: readonly T[],

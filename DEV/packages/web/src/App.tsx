@@ -380,8 +380,18 @@ export function App() {
     engine.onCombatAction = (ev) => {
       dispatchCombatFxActions([ev], { local: true });
     };
+    engine.onUnitKnockback = (unit, dest, sourceId, spellName) => {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(
+          new CustomEvent('cata_unit_knockback', {
+            detail: { unitId: unit.id, x: dest.x, y: dest.y, sourceId, spellName },
+          })
+        );
+      }
+    };
     return () => {
       engine.onCombatAction = null;
+      engine.onUnitKnockback = undefined;
     };
   }, []);
 
@@ -563,6 +573,7 @@ export function App() {
     setPlayerGcdRemainingMs,
     setPlayerGcdTotalMs,
     setTravelRemainingMs,
+    setTargetBossName,
     setWipeNetworkVote,
     setSkipTravelVote,
     setMyWipeVote,
@@ -2137,6 +2148,7 @@ export function App() {
       } catch {}
       rsm.startRun();
       setTravelRemainingMs(rsm.travelRemainingMs);
+      setTargetBossName(rsm.getCurrentBoss()?.name || '首领');
       setRunPhase(rsm.phase);
       setIsCertClaimed(false);
       setFocusTargetId(null);

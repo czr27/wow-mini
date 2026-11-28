@@ -311,7 +311,8 @@ export type CombatEffectKind =
   | 'GROUND_PLACE'
   | 'GROUND_DESPAWN'
   | 'DISPEL'
-  | 'TAUNT';
+  | 'TAUNT'
+  | 'KNOCKBACK';
 
 export interface CombatEffectBuffPayload {
   spellId: string;

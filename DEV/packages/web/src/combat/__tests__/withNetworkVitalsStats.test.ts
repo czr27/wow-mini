@@ -218,6 +218,45 @@ describe('withNetworkVitals healing stats', () => {
     });
     assert.equal(loggedActions.length, 1, '他人发起的特效仍应正常消费');
 
+    // 6. 自己发给自己的所有效果（即使广播包带着服务端新生成的 effectId）：当场已结算，广播一律忽略
+    const hpBeforeSelfEcho = me.hp;
+    const fctBeforeSelfEcho = engine.effectsManager?.floatingTexts.length ?? 0;
+    ingestCombatEffect(engine, {
+      effectId: 'srv_eff_dup_self_heal',
+      sourceId: 'me_1',
+      targetId: 'me_1',
+      spellId: 'rejuvenation',
+      spellName: '回春术',
+      kind: 'HEAL',
+      amount: 4000,
+    });
+    ingestCombatEffect(engine, {
+      effectId: 'srv_eff_dup_self_buff',
+      sourceId: 'me_1',
+      targetId: 'me_1',
+      spellId: 'barkskin',
+      spellName: '树皮术',
+      kind: 'APPLY_BUFF',
+      buff: { spellId: 'barkskin', name: '树皮术', durationMs: 12000, stacks: 1 },
+    });
+    ingestCombatEffect(engine, {
+      effectId: 'srv_eff_dup_self_pet_heal',
+      sourceId: 'me_1',
+      targetId: 'pet_1',
+      spellId: 'rejuvenation',
+      spellName: '回春术',
+      kind: 'HEAL',
+      amount: 3000,
+    });
+    assert.equal(me.hp, hpBeforeSelfEcho, '广播包中自己给自己的治疗不得重复结算');
+    assert.equal(myPet.hp, 13000, '广播包中自己给自己宝宝的治疗不得重复结算');
+    assert.equal(me.buffs.some((b) => b.spellId === 'barkskin'), false, '广播包中自己给自己的 Buff 不得重复施加');
+    assert.equal(
+      engine.effectsManager?.floatingTexts.length ?? 0,
+      fctBeforeSelfEcho,
+      '广播包中自己给自己的效果不得重复弹字'
+    );
+
     resetAuthority();
   });
 });

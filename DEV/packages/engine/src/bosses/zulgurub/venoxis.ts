@@ -84,19 +84,8 @@ export const VenoxisEncounter: BossEncounterModule = {
           // 非坦克不足 2 人时放宽到全体存活者，保证连线一定出现
           if (pool.length < 2) pool = living(engine);
           if (pool.length < 2) return;
-          // 优先挑选当前距离最近的一对目标，避免一施加就因站位太远瞬间扯断看不到连线
-          let bestPair: [Unit, Unit] | null = null;
-          let bestD = Infinity;
-          for (let i = 0; i < pool.length; i++) {
-            for (let j = i + 1; j < pool.length; j++) {
-              const d = dist(pool[i].position || {}, pool[j].position || {});
-              if (d < bestD) {
-                bestD = d;
-                bestPair = [pool[i], pool[j]];
-              }
-            }
-          }
-          const picks = bestPair ? bestPair : pickWeightedBossTargets(pool, 2);
+          // 优先从玩家开始随机点名，玩家不足 2 人时再用 AI 补齐；扯断距离按初始间距 + 45 动态标定
+          const picks = pickWeightedBossTargets(pool, 2);
           if (picks.length < 2) return;
           const initDist = dist(picks[0].position || {}, picks[1].position || {});
           ai.venoxisLinkAppliedAtMs = ai.venoxisFightMs || 0;

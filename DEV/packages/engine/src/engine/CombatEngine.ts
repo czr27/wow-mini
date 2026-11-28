@@ -2731,4 +2731,83 @@ export class CombatEngine {
       if (!seen.has(id)) this.units.delete(id);
     }
   }
+
+  /** Optional hook invoked whenever a unit is knocked back (e.g. canvas sync). */
+  public onUnitKnockback?: (
+    unit: Unit,
+    dest: { x: number; y: number },
+    sourceId: string,
+    spellName: string
+  ) => void;
+
+  /**
+   * Compute knockback destination away from `source` by `distancePx`, clamped inside arena bounds.
+   */
+  public computeKnockbackDest(
+    source: Unit | null | undefined,
+    target: Unit,
+    distancePx: number
+  ): { x: number; y: number } {
+    const tx = target.position?.x ?? 200;
+    const ty = target.position?.y ?? 200;
+    const sx = source?.position?.x;
+    const sy = source?.position?.y;
+    let dx = sx != null ? tx - sx : -1;
+    let dy = sy != null ? ty - sy : 0;
+    const len = Math.hypot(dx, dy);
+    if (len < 1) {
+      dx = -1;
+      dy = 0;
+    } else {
+      dx /= len;
+      dy /= len;
+    }
+    const dist = Math.max(0, distancePx);
+    const destX = Math.max(40, Math.min(740, Math.round(tx + dx * dist)));
+    const destY = Math.max(40, Math.min(320, Math.round(ty + dy * dist)));
+    return { x: destX, y: destY };
+  }
+
+  /**
+   * Knock back `target` away from `source` by `distancePx` (or to explicit `destOverride`).
+   * Respects knockback immunity buffs (e.g. Pillar of Frost).
+   */
+  public knockbackUnit(
+    source: Unit | null | undefined,
+    target: Unit,
+    distancePx: number,
+    spellName = '击退',
+    destOverride?: { x: number; y: number }
+  ): { x: number; y: number } | null {
+    if (!target || !(target.isAlive ?? target.alive) || target.hp <= 0) return null;
+    const immune = target.buffs?.some(
+      (b) => b.spellId === 'pillar_of_frost' || b.spellId === 'dk_pillar_of_frost'
+    );
+    if (immune) {
+      this.effectsManager?.addFloatingText({
+        targetId: target.id,
+        sourceId: source?.id,
+        text: '🛡️ 免疫击退',
+        category: 'STATUS',
+        isCrit: false,
+      });
+      return null;
+    }
+    const dest = destOverride
+      ? {
+          x: Math.max(40, Math.min(740, Math.round(destOverride.x))),
+          y: Math.max(40, Math.min(320, Math.round(destOverride.y))),
+        }
+      : this.computeKnockbackDest(source, target, distancePx);
+    target.position = { x: dest.x, y: dest.y };
+    this.effectsManager?.addFloatingText({
+      targetId: target.id,
+      sourceId: source?.id,
+      text: `💨 ${spellName}！`,
+      category: 'STATUS',
+      isCrit: true,
+    });
+    this.onUnitKnockback?.(target, dest, source?.id || 'boss', spellName);
+    return dest;
+  }
 }

@@ -281,4 +281,139 @@ describe('服务端房间独立战斗会话（Server-Authoritative Room Session�
 
     hub.dispose();
   });
+
+  it('4. 玩家给服务端权威 AI 挂 HoT、给 Boss 挂 DoT：服务端保留周期字段并正常跳血/跳伤', () => {
+    const hub = new RoomWsHub();
+    const host = authClient(hub, {
+      playerId: 'p_hot_h',
+      username: 'u_hot_h',
+      playerName: 'HostDruid',
+      classId: 'DRUID',
+      spec: 'RESTO_HEAL',
+      role: 'HEALER',
+    });
+
+    host.inject({
+      type: 'ROOM_CREATE',
+      timeMs: Date.now(),
+      payload: {
+        name: 'HoT/DoT服务端跳数测试房',
+        dungeonId: 'shadowfang_keep',
+        host: { id: 'p_hot_h', name: 'HostDruid', classId: 'DRUID', spec: 'RESTO_HEAL', role: 'HEALER' },
+      },
+    });
+    const roomId = (host.lastOfType('ROOM_UPDATE')!.payload as LobbyRoom).id;
+    host.inject({ type: 'ROOM_ACTION', roomId, payload: { action: 'AUTO_FILL_AI' } });
+    host.inject({ type: 'ROOM_START', roomId });
+
+    const cs = hub.getCombatSession(roomId)!;
+    assert.ok(cs);
+    cs.fastForwardTravel();
+    cs.tick(50);
+
+    const aiTank = cs.engine.friendlyUnits.find((u) => u.id !== 'p_hot_h' && u.role === 'TANK')!;
+    const boss = cs.engine.bossUnit!;
+    assert.ok(aiTank && boss);
+
+    aiTank.hp = 10_000;
+    const bossHpBefore = boss.hp;
+
+    cs.handleCombatEffect({
+      effectId: 'eff_hot_rejuv_1',
+      sourceId: 'p_hot_h',
+      targetId: aiTank.id,
+      spellId: 'rejuvenation',
+      spellName: '回春术',
+      kind: 'APPLY_BUFF',
+      buff: {
+        spellId: 'rejuvenation',
+        name: '回春术',
+        kind: 'BUFF',
+        tags: ['HOT'],
+        stacks: 1,
+        maxStacks: 1,
+        durationMs: 12000,
+        remainingMs: 12000,
+        school: 'NATURE',
+        tickIntervalMs: 1000,
+        tickValue: 3000,
+      },
+    });
+
+    cs.handleCombatEffect({
+      effectId: 'eff_dot_moonfire_1',
+      sourceId: 'p_hot_h',
+      targetId: boss.id,
+      spellId: 'moonfire',
+      spellName: '月火术',
+      kind: 'APPLY_BUFF',
+      buff: {
+        spellId: 'moonfire',
+        name: '月火术',
+        kind: 'DEBUFF',
+        tags: ['DOT'],
+        stacks: 1,
+        maxStacks: 1,
+        durationMs: 12000,
+        remainingMs: 12000,
+        school: 'ARCANE',
+        tickIntervalMs: 1000,
+        tickValue: 2500,
+      },
+    });
+
+    // 仅推进 AuraManager 1.2s 验证 HoT/DoT 真实跳数（排除其他 AI/Boss 干扰）
+    cs.engine.auraManager.tickAll((cs.engine as any).units, 1200);
+
+    assert.ok(aiTank.hp > 10_000, `AI 坦克身上的 HoT 应正常跳血 (hp=${aiTank.hp})`);
+    assert.ok(boss.hp < bossHpBefore, `Boss 身上的 DoT 应正常跳伤 (${boss.hp} < ${bossHpBefore})`);
+
+    // 5. 真人拥有的地面治疗圈在服务端 tick 时仅倒计时、不重复给 AI 加血；且 COMBAT_EFFECT 不重复累加真人 combatStats
+    const playerUnit = cs.engine.getUnit('p_hot_h')!;
+    playerUnit.combatStats = {
+      damageDealt: 10_000,
+      healingDone: 5_000,
+      overhealDone: 0,
+      damageTaken: 0,
+      interruptCount: 0,
+      skillDamage: { '愤怒': 10_000 },
+      skillHealing: { '回春术': 5_000 },
+    };
+    const aiHpBeforeGround = aiTank.hp;
+    cs.engine.effectsManager.addGroundEffect({
+      id: 'human_hrain_1',
+      kind: 'HEAL_ZONE',
+      spellId: 'healing_rain',
+      ownerId: 'p_hot_h',
+      x: aiTank.position.x,
+      y: aiTank.position.y,
+      radius: 120,
+      colorHex: '#10B981',
+      remainingMs: 5000,
+      tickIntervalMs: 500,
+      tickElapsedMs: 0,
+      tickValue: 4000,
+    });
+    // 直接调用 tickEnginePreservingHumans 1.2s，验证真人地面圈不在服务端重复跳疗
+    (cs as any).tickEnginePreservingHumans(1200);
+    assert.equal(aiTank.hp, aiHpBeforeGround, '真人地面圈在服务端不应重复结算 AI 治疗');
+    const hr = cs.engine.effectsManager.groundEffects.find((g) => g.id === 'human_hrain_1');
+    assert.ok(hr && hr.remainingMs < 5000, '真人地面圈应在服务端正常倒计时');
+
+    // 真人上报 DAMAGE/HEAL 落地扣血/加血，但不再叠加真人 combatStats（避免与 OWNER_SNAPSHOT 双倍统计）
+    const bossHpBeforeDirect = boss.hp;
+    cs.handleCombatEffect({
+      effectId: 'eff_direct_wrath_1',
+      sourceId: 'p_hot_h',
+      targetId: boss.id,
+      spellId: 'wrath',
+      spellName: '愤怒',
+      kind: 'DAMAGE',
+      amount: 6000,
+    });
+    assert.ok(boss.hp < bossHpBeforeDirect, 'Boss 应正常受到伤害');
+    assert.equal(playerUnit.combatStats.damageDealt, 10_000, '服务端不重复累加真人 combatStats.damageDealt');
+
+    hub.dispose();
+  });
 });

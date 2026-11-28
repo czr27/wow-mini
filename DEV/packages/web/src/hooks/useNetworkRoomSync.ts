@@ -153,6 +153,7 @@ export type NetworkRoomSyncDeps = {
   setPlayerGcdRemainingMs: Dispatch<SetStateAction<number>>;
   setPlayerGcdTotalMs: Dispatch<SetStateAction<number>>;
   setTravelRemainingMs: Dispatch<SetStateAction<number>>;
+  setTargetBossName?: Dispatch<SetStateAction<string>>;
   setRevivingUnitId?: Dispatch<SetStateAction<string | null>>;
   setReviveProgress?: Dispatch<SetStateAction<number>>;
   setIsCorpseRunning?: Dispatch<SetStateAction<boolean>>;
@@ -751,6 +752,7 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
           if (typeof snap.currentBossIndex === 'number') {
             rsm.currentBossIndex = snap.currentBossIndex;
           }
+          d().setTargetBossName?.(rsm.getCurrentBoss()?.name || '首领');
           if (typeof snap.isCleared === 'boolean') {
             rsm.isCleared = snap.isCleared;
           }
@@ -866,12 +868,13 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
         // COMBAT_STATE.casts fills gaps only — never replace EFFECT rows (avoids wiping a
         // CAST_START that arrived before the next snap). Preserve land/interrupt flashes.
         {
+          const { isUnitLocalAuthority } = getCombatAuthorityContext();
           const now = Date.now();
           const bossId = engine.bossUnit?.id;
           const tl = d().guestCastTimelinesRef.current;
           const have = new Set(tl.map((c) => c.unitId));
           for (const c of snap.casts || []) {
-            if (c.unitId === myId || c.interrupted) continue;
+            if (c.unitId === myId || isUnitLocalAuthority(c.unitId) || c.interrupted) continue;
             if (!have.has(c.unitId)) {
               tl.push(c);
               have.add(c.unitId);
@@ -1149,9 +1152,8 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
                 isNetworkHost: d().isNetworkHostRef.current,
                 isNetworkGuest: d().isNetworkGuestRef.current,
                 activeRoomId: body.room.id,
-                isUnitLocalAuthority: d().isNetworkHostRef.current
-                  ? makeHostAuthorityPredicate(eng, meId)
-                  : makeGuestAuthorityPredicate(eng, meId),
+                // Host & guest share identical in-game sharded authority (self + owned pets/totems)
+                isUnitLocalAuthority: makeGuestAuthorityPredicate(eng, meId),
               });
               installSummonReporters(eng);
             }

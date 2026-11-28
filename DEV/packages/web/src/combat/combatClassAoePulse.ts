@@ -66,7 +66,7 @@ export function resolveClassAoePulseColor(actor: Unit | undefined | null): strin
 export function resolveClassAoePulseRadius(actor: Unit | undefined | null): number {
   if (!actor) return CLASS_AOE_PULSE_HALF_WIDTH_PX;
   if (isEnemyActorUnit(actor) || actor.classId === 'BOSS' || actor.unitKind === 'BOSS') {
-    return Math.round(CLASS_AOE_PULSE_HALF_WIDTH_PX * 1.35);
+    return Math.round(CLASS_AOE_PULSE_HALF_WIDTH_PX * 3.0);
   }
   if (actor.isPet) return Math.round(CLASS_AOE_PULSE_HALF_WIDTH_PX * 0.7);
   if (actor.isPlayer) return Math.round(CLASS_AOE_PULSE_HALF_WIDTH_PX * 1.15);

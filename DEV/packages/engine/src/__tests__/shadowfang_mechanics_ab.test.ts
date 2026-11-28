@@ -75,22 +75,29 @@ describe('影牙：窒息术修复 + 迭代 B', () => {
     assert.ok(engine.isBossHealingGraceActive(), '应进入安全治疗窗');
   });
 
-  it('1b. 窒息结束后：1s 禁伤 + 共 6s 技能锁（其间仅普攻）', () => {
+  it('1b. 窒息结束后：2s 禁止任何行为 + 共 7s 技能锁（其间仅普攻）', () => {
     const { engine, boss, tank } = setup('ashbury', '亚什布里男爵');
     const ai = createBossAI('ashbury', 'shadowfang_keep');
     const skill = ai.skills.find(s => s.id === 'asphyxiate')!;
 
     skill.execute(boss, engine);
-    assert.equal(ai.asphyxiatePostDelay, 6000, '技能锁定 1s+5s=6s');
-    assert.equal(engine.bossHealingGraceRemainingMs, 1000, '前 1s 禁伤');
+    assert.equal(ai.asphyxiatePostDelay, 7000, '技能锁定 2s+5s=7s');
+    assert.equal(engine.bossHealingGraceRemainingMs, 2000, '前 2s 禁止任何行为');
     assert.equal(ai.isActionLocked(), true);
 
-    // 禁伤窗内普攻无效
+    // 2s 禁伤窗内普攻无效
     const hp0 = tank.hp;
     engine.dealDamage(boss, tank, 20_000, 'PHYSICAL', false, '首领普通攻击');
-    assert.equal(tank.hp, hp0, '1s 安全窗内普攻应被阻断');
+    assert.equal(tank.hp, hp0, '2s 安全窗内普攻应被阻断');
 
-    // 推进 1s：禁伤解除，技能仍锁
+    // 推进 1s：仍处于 2s 禁伤窗内
+    engine.tick(1000);
+    ai.tick(1000, boss, engine);
+    assert.equal(engine.bossHealingGraceRemainingMs, 1000, '1s 时仍剩 1s 禁伤窗');
+    engine.dealDamage(boss, tank, 20_000, 'PHYSICAL', false, '首领普通攻击');
+    assert.equal(tank.hp, hp0, '1s 时普攻仍应被阻断');
+
+    // 再推进 1s（共 2s）：禁伤解除，技能仍锁 5s
     engine.tick(1000);
     ai.tick(1000, boss, engine);
     assert.equal(engine.bossHealingGraceRemainingMs, 0);
@@ -98,14 +105,14 @@ describe('影牙：窒息术修复 + 迭代 B', () => {
     assert.equal(ai.isActionLocked(), true, '仅普攻阶段仍禁止放技能');
 
     engine.dealDamage(boss, tank, 5_000, 'PHYSICAL', false, '首领普通攻击');
-    assert.ok(tank.hp < hp0, '禁伤结束后可普攻仇恨目标');
+    assert.ok(tank.hp < hp0, '2s 禁止行为结束后可普攻仇恨目标');
 
     // 再推进剩余技能锁
     const remain = ai.asphyxiatePostDelay;
     engine.tick(remain);
     ai.tick(remain, boss, engine);
     assert.equal(ai.asphyxiatePostDelay, 0);
-    assert.equal(ai.isActionLocked(), false, '6s 后允许其他技能');
+    assert.equal(ai.isActionLocked(), false, '7s 后允许其他技能');
   });
 
   it('2. 席瓦莱恩召唤真实狼人增援单位', () => {

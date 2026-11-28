@@ -366,6 +366,7 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
     // Local ground rings (own totems + remote GROUND_PLACE apply) must reach React/canvas
     ctx.setGroundEffects([...(engine.effectsManager?.groundEffects || [])]);
     ctx.setFloatingTexts([...(engine.effectsManager?.floatingTexts || [])]);
+    ctx.setTargetBossName(rsm.getCurrentBoss()?.name || '首领');
     return;
   }
 
@@ -1212,10 +1213,10 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
         // 安全治疗窗 / 窒息引导：重置普攻前摇，结束后坦克仍有完整 1.2s（24 ticks）缓冲
         ctx.lastBossAttackTickRef.current = state.tickCount;
       } else {
-        // Boss auto attacks its top threat target (resolved from ThreatManager, constrained by melee range <= 80px)
+        // Boss auto attacks its top threat target (3× speed = 8 ticks / 0.4s, 1/3 per-hit damage, melee range <= 80px)
         // 含窒息后 5s「仅普攻」阶段：技能由 BossAI.asphyxiatePostDelay 锁定
         const targetUnit = engine.friendlyUnits.find(u => u.id === targetId && (u.isAlive || u.alive));
-        if (targetUnit && (state.tickCount - ctx.lastBossAttackTickRef.current) >= 24) {
+        if (targetUnit && (state.tickCount - ctx.lastBossAttackTickRef.current) >= 8) {
           ctx.lastBossAttackTickRef.current = state.tickCount;
           const bX = boss.position?.x ?? 540;
           const bY = boss.position?.y ?? 190;
@@ -1227,9 +1228,9 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
           if (distToTarget <= MELEE_RANGE) {
             let bossHitDmg: number;
             if (is20Man) {
-              bossHitDmg = targetUnit.role === 'TANK' ? 32000 : 65000;
+              bossHitDmg = targetUnit.role === 'TANK' ? Math.round(32000 / 3) : Math.round(65000 / 3);
             } else {
-              bossHitDmg = targetUnit.role === 'TANK' ? 18000 : 32000;
+              bossHitDmg = targetUnit.role === 'TANK' ? Math.round(18000 / 3) : Math.round(32000 / 3);
             }
             const isBossCrit = Math.random() < 0.1;
             const bossHitRes = engine.resolveAttackHit(boss, targetUnit, bossHitDmg, 'PHYSICAL', isBossCrit, '首领普通攻击');

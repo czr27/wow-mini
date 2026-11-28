@@ -135,7 +135,8 @@ export class RoomCombatSession {
   private installServerHumanEffectInterceptor() {
     const origDeal = this.engine.dealDamage.bind(this.engine);
     this.engine.dealDamage = (attacker, defender, amount, school, isCrit, spellName, isDot) => {
-      if (defender && !this.isServerAuthorityUnit(defender.id) && amount > 0) {
+      const srcIsHuman = !!(attacker?.id && !this.isServerAuthorityUnit(attacker.id));
+      if (defender && !this.isServerAuthorityUnit(defender.id) && !srcIsHuman && amount > 0) {
         this.pendingEffects.push({
           effectId: `srv_eff_${++this.srvEffectSeq}`,
           sourceId: attacker?.id || 'server',
@@ -175,7 +176,8 @@ export class RoomCombatSession {
 
     const origHeal = this.engine.healUnit.bind(this.engine);
     this.engine.healUnit = (healer, target, amount, isCrit, spellName, isHot) => {
-      if (target && !this.isServerAuthorityUnit(target.id) && amount > 0) {
+      const srcIsHuman = !!(healer?.id && !this.isServerAuthorityUnit(healer.id));
+      if (target && !this.isServerAuthorityUnit(target.id) && !srcIsHuman && amount > 0) {
         this.pendingEffects.push({
           effectId: `srv_eff_${++this.srvEffectSeq}`,
           sourceId: healer?.id || 'server',
@@ -209,7 +211,8 @@ export class RoomCombatSession {
 
     const origApplyBuff = this.engine.applyBuff.bind(this.engine);
     this.engine.applyBuff = (target, buff) => {
-      if (target && !this.isServerAuthorityUnit(target.id) && buff) {
+      const srcIsHuman = !!(buff?.sourceUnitId && !this.isServerAuthorityUnit(buff.sourceUnitId));
+      if (target && !this.isServerAuthorityUnit(target.id) && !srcIsHuman && buff) {
         this.pendingEffects.push({
           effectId: `srv_eff_${++this.srvEffectSeq}`,
           sourceId: buff.sourceUnitId || 'server',
@@ -240,7 +243,8 @@ export class RoomCombatSession {
     const origRemoveBuff = this.engine.auraManager.removeBuff.bind(this.engine.auraManager);
     this.engine.auraManager.removeBuff = (unit, buffIdOrSpellId, sourceId) => {
       const removed = origRemoveBuff(unit, buffIdOrSpellId, sourceId);
-      if (removed && unit && !this.isServerAuthorityUnit(unit.id) && buffIdOrSpellId) {
+      const srcIsHuman = !!(sourceId && !this.isServerAuthorityUnit(sourceId));
+      if (removed && unit && !this.isServerAuthorityUnit(unit.id) && !srcIsHuman && buffIdOrSpellId) {
         this.pendingEffects.push({
           effectId: `srv_eff_${++this.srvEffectSeq}`,
           sourceId: sourceId || '',
@@ -253,6 +257,35 @@ export class RoomCombatSession {
       }
       return removed;
     };
+
+    if (typeof this.engine.knockbackUnit === 'function') {
+      const origKnockback = this.engine.knockbackUnit.bind(this.engine);
+      this.engine.knockbackUnit = (source, target, distancePx, spellName = '击退', destOverride) => {
+        const srcIsHuman = !!(source?.id && !this.isServerAuthorityUnit(source.id));
+        if (target && !this.isServerAuthorityUnit(target.id) && !srcIsHuman) {
+          const dest = destOverride
+            ? {
+                x: Math.max(40, Math.min(740, Math.round(destOverride.x))),
+                y: Math.max(40, Math.min(320, Math.round(destOverride.y))),
+              }
+            : this.engine.computeKnockbackDest(source, target, distancePx);
+          this.pendingEffects.push({
+            effectId: `srv_eff_${++this.srvEffectSeq}`,
+            sourceId: source?.id || 'server',
+            targetId: target.id,
+            spellId: 'knockback',
+            spellName,
+            kind: 'KNOCKBACK',
+            x: dest.x,
+            y: dest.y,
+            amount: Math.round(distancePx),
+            atMs: Date.now(),
+          });
+          return dest;
+        }
+        return origKnockback(source, target, distancePx, spellName, destOverride);
+      };
+    }
   }
 
   dispose() {
@@ -496,18 +529,41 @@ export class RoomCombatSession {
     switch (effect.kind) {
       case 'DAMAGE':
         if (typeof effect.amount === 'number' && effect.amount > 0) {
+          // 真人玩家的直接伤害已在客户端 withNetworkVitals 记入 combatStats 并通过 OWNER_SNAPSHOT 同步，
+          // 服务端落地扣血时不重复累加 src.combatStats，避免战报双倍统计。
+          const preserveSrcStats =
+            src && !this.isServerAuthorityUnit(src.id) && src.combatStats
+              ? {
+                  ...src.combatStats,
+                  skillDamage: src.combatStats.skillDamage
+                    ? { ...src.combatStats.skillDamage }
+                    : undefined,
+                }
+              : null;
           this.engine.dealDamage(
             src || tgt,
             tgt,
             effect.amount,
-            'PHYSICAL',
+            (effect.buff?.school as any) || 'PHYSICAL',
             !!effect.isCrit,
             effect.spellName || effect.spellId
           );
+          if (src && preserveSrcStats) {
+            src.combatStats = preserveSrcStats;
+          }
         }
         break;
       case 'HEAL':
         if (typeof effect.amount === 'number' && effect.amount > 0) {
+          const preserveSrcStats =
+            src && !this.isServerAuthorityUnit(src.id) && src.combatStats
+              ? {
+                  ...src.combatStats,
+                  skillHealing: src.combatStats.skillHealing
+                    ? { ...src.combatStats.skillHealing }
+                    : undefined,
+                }
+              : null;
           this.engine.healUnit(
             src || tgt,
             tgt,
@@ -515,6 +571,9 @@ export class RoomCombatSession {
             !!effect.isCrit,
             effect.spellName || effect.spellId
           );
+          if (src && preserveSrcStats) {
+            src.combatStats = preserveSrcStats;
+          }
         }
         break;
       case 'RESURRECT':
@@ -528,11 +587,16 @@ export class RoomCombatSession {
             name: effect.buff.name,
             kind: effect.buff.kind || 'BUFF',
             sourceUnitId: effect.sourceId,
+            targetUnitId: tgt.id,
             durationMs: effect.buff.durationMs ?? 10000,
             remainingMs: effect.buff.remainingMs ?? effect.buff.durationMs ?? 10000,
             stacks: effect.buff.stacks ?? 1,
             maxStacks: effect.buff.maxStacks ?? 1,
-            tags: effect.buff.tags,
+            tags: effect.buff.tags || [],
+            school: (effect.buff.school as any) || 'NATURE',
+            tickIntervalMs: effect.buff.tickIntervalMs,
+            tickValue: effect.buff.tickValue,
+            moveSpeedMod: effect.buff.moveSpeedMod,
           } as any);
         }
         break;
@@ -922,10 +986,10 @@ export class RoomCombatSession {
           }
         }
 
-        // Boss auto-attack (~2s) on top threat target; reset swing timer during Asphyxiate / healing grace
+        // Boss auto-attack (~0.65s, 3× speed with 1/3 per-hit damage) on top threat target; reset swing timer during Asphyxiate / healing grace
         if (isBossGrace) {
           this.lastBossAttackTick = this.tickCount;
-        } else if (this.tickCount - this.lastBossAttackTick >= 40) {
+        } else if (this.tickCount - this.lastBossAttackTick >= 13) {
           this.lastBossAttackTick = this.tickCount;
           if (target && (target.isAlive || target.alive) && target.hp > 0) {
             const distToTarget =
@@ -936,12 +1000,20 @@ export class RoomCombatSession {
               const is20Man = this.engine.friendlyUnits.length > 5;
               const dmg = is20Man
                 ? target.role === 'TANK'
-                  ? 32_000
-                  : 65_000
+                  ? Math.round(32_000 / 3)
+                  : Math.round(65_000 / 3)
                 : target.role === 'TANK'
-                  ? 18_000
-                  : 32_000;
+                  ? Math.round(18_000 / 3)
+                  : Math.round(32_000 / 3);
               this.engine.dealDamage(boss, target, dmg, 'PHYSICAL', false, '近战攻击');
+              this.engine.logCombatAction({
+                actorId: boss.id,
+                spellId: 'auto_attack',
+                spellName: '近战攻击',
+                kind: 'INSTANT',
+                targetId: target.id,
+                visualTone: 'ENEMY',
+              });
               if (!this.isServerAuthorityUnit(target.id)) {
                 this.pendingEffects.push({
                   effectId: `srv_aa_${this.tickCount}_${target.id}`,
@@ -1089,11 +1161,16 @@ export class RoomCombatSession {
           isPrimaryTank: !!primaryTank && primaryTank.id === u.id,
           dungeonPriorityZone,
           friendlyUnitIds,
+          nowMs: this.engine.nowMs,
         });
 
         let targetX = formationResult.targetPos.x;
         let targetY = formationResult.targetPos.y;
+        const hasWaldenRedToxin = !!u.buffs?.some(
+          (b) => b.spellId === 'walden_red_toxin' || b.spellId === 'toxic_coagulant'
+        );
         if (
+          !hasWaldenRedToxin &&
           primaryTank &&
           primaryTank.id !== u.id &&
           primaryTankPos &&
@@ -1123,7 +1200,7 @@ export class RoomCombatSession {
 
       const haste = getUnitHaste(u, LEVEL_80_MAX_HASTE);
       if (u.maxMp && u.maxMp > 0) {
-        const regenAmt = (u.maxMp * 0.015 * deltaMs) / 1000;
+        const regenAmt = (u.maxMp * 0.012 * deltaMs) / 1000;
         u.mp = Math.min(u.maxMp, (u.mp ?? 0) + regenAmt);
       }
       if (u.classId === 'ROGUE') {
@@ -1202,7 +1279,7 @@ export class RoomCombatSession {
   private tickEnginePreservingHumans(deltaMs: number) {
     const humanSaved = new Map<
       string,
-      { hp: number; mp?: number; isAlive: boolean; position: { x: number; y: number } }
+      { hp: number; mp?: number; isAlive: boolean; position: { x: number; y: number }; buffs: any[] }
     >();
     for (const u of this.engine.friendlyUnits) {
       if (!this.isServerAuthorityUnit(u.id)) {
@@ -1211,20 +1288,46 @@ export class RoomCombatSession {
           mp: u.mp,
           isAlive: !!(u.isAlive ?? u.alive),
           position: { ...u.position },
+          buffs: u.buffs,
         });
+        // 暂停真人单位身上的 Buff tick（由其所属客户端权威结算），避免服务端重复跳 HoT/DoT 与弹字
+        u.buffs = [];
       }
     }
 
-    this.engine.tick(deltaMs);
+    // 暂停真人玩家拥有的地面效果（治疗之雨/百花齐放/图腾/暴风雪等）：
+    // 由玩家客户端权威每跳结算并上报 COMBAT_EFFECT，服务端仅保留倒计时用于镜像展示，避免双倍结算。
+    const em = this.engine.effectsManager;
+    const parkedHumanGround: any[] = [];
+    if (em?.groundEffects?.length) {
+      const serverGround: any[] = [];
+      for (const g of em.groundEffects) {
+        if (g.ownerId && !this.isServerAuthorityUnit(g.ownerId)) {
+          g.remainingMs -= deltaMs;
+          if (g.remainingMs > 0) parkedHumanGround.push(g);
+        } else {
+          serverGround.push(g);
+        }
+      }
+      em.groundEffects = serverGround;
+    }
 
-    for (const u of this.engine.friendlyUnits) {
-      const saved = humanSaved.get(u.id);
-      if (saved) {
-        u.hp = saved.hp;
-        if (saved.mp !== undefined) u.mp = saved.mp;
-        u.isAlive = saved.isAlive;
-        u.alive = saved.isAlive;
-        u.position = saved.position;
+    try {
+      this.engine.tick(deltaMs);
+    } finally {
+      for (const u of this.engine.friendlyUnits) {
+        const saved = humanSaved.get(u.id);
+        if (saved) {
+          u.hp = saved.hp;
+          if (saved.mp !== undefined) u.mp = saved.mp;
+          u.isAlive = saved.isAlive;
+          u.alive = saved.isAlive;
+          u.position = saved.position;
+          u.buffs = saved.buffs;
+        }
+      }
+      if (em && parkedHumanGround.length > 0) {
+        em.groundEffects = [...(em.groundEffects || []), ...parkedHumanGround];
       }
     }
   }

@@ -95,6 +95,29 @@ describe('祖尔格拉布：迭代 F2', () => {
     assert.equal((ai as VenoxisAiState).venoxisPhase, 'snake');
   });
 
+  it('1b. 温诺希斯毒性链接：优先点名玩家，玩家不够才补 AI（即使 AI 彼此站位更近）', () => {
+    const { engine, boss, dps, healer, ai } = setup('venoxis', '高阶祭司温诺希斯');
+    // 新增一个与 healer 紧挨着的 AI DPS，让两个 AI 距离极近，而玩家 dps 站远
+    const aiDps2 = makeUnit({
+      id: 'ai_dps_2',
+      role: 'DPS',
+      classId: 'HUNTER',
+      hp: 36_000,
+      maxHp: 36_000,
+      position: { x: 441, y: 221 },
+    });
+    engine.addUnit(aiDps2);
+    dps.position = { x: 200, y: 200 };
+
+    ai.skills.find(s => s.id === 'toxic_link')!.execute(boss, engine);
+    assert.ok(
+      dps.buffs?.some(b => b.spellId === TOXIC_LINK_ID),
+      '单玩家场景下毒性链接必须优先点中玩家，而不是只点站得更近的两个 AI'
+    );
+    const totalLinked = engine.friendlyUnits.filter(u => u.buffs?.some(b => b.spellId === TOXIC_LINK_ID));
+    assert.equal(totalLinked.length, 2, '玩家不足 2 人时应由 1 名 AI 补齐');
+  });
+
   it('2. 曼多基尔：奥根 + 斩首灵魂复活', () => {
     const { engine, boss, dps, ai } = setup('mandokir', '血领主曼多基尔');
     ai.tick(50, boss, engine);

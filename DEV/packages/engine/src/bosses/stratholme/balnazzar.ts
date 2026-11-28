@@ -1,5 +1,5 @@
 import type { BossEncounterModule, BossSkill } from '../core/BossTypes.js';
-import { pickWeightedBossTarget } from '../core/BossTargetPicker.js';
+import { pickWeightedBossTarget, pickWeightedBossTargets } from '../core/BossTargetPicker.js';
 
 export type BalnazzarAiState = {
   balFightMs?: number;
@@ -70,7 +70,7 @@ export const BalnazzarEncounter: BossEncounterModule = {
         targetKind: 'AOE',
         description: '范围恐惧',
         execute: (boss, engine) => {
-          for (const u of living(engine).slice(0, 2)) {
+          for (const u of pickWeightedBossTargets(living(engine), 2)) {
             engine.applyBuff(u, {
               id: `fear_${Date.now()}_${u.id}`,
               spellId: 'balnazzar_fear',

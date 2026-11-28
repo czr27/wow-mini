@@ -459,6 +459,16 @@ const BATTLE_REZ_SPELL_IDS = new Set([
   'warlock_soulstone',
 ]);
 
+/** 全局法力消耗缩放系数（当前统一打八折，涵盖全 10 职业 30 专精） */
+export const GLOBAL_MANA_COST_SCALE = 0.8;
+
+function scaleSpellResourceCost(kind: ResourceKind | 'NONE', amount: number): number {
+  if (kind === 'MANA' && amount > 0) {
+    return Math.round(amount * GLOBAL_MANA_COST_SCALE);
+  }
+  return amount;
+}
+
 function normalizeLegacySpell(classId: ClassId, sp: LegacySpell): NormalizedSpell {
   const shortId = toShortSpellId(sp.id, classId);
   const targetType = normalizeTargetType(sp.targetType);
@@ -628,7 +638,7 @@ function normalizeLegacySpell(classId: ClassId, sp: LegacySpell): NormalizedSpel
     gcdCategory,
     cooldownMs: sp.cooldownMs,
     resourceKind: mapLegacyResourceKind(sp.resourceCost),
-    resourceCostAmount: sp.resourceCostAmount,
+    resourceCostAmount: scaleSpellResourceCost(mapLegacyResourceKind(sp.resourceCost), sp.resourceCostAmount),
     runesRequired: sp.runesRequired,
     isAOE,
     maxAoeTargets,
@@ -863,7 +873,7 @@ function normalizeModernSpell(classId: ClassId, specId: string, sp: ModernSpell)
     gcdCategory: sp.gcdCategory,
     cooldownMs: sp.cooldownMs,
     resourceKind,
-    resourceCostAmount,
+    resourceCostAmount: scaleSpellResourceCost(resourceKind, resourceCostAmount),
     runesRequired: sp.runesRequired,
     isAOE,
     maxAoeTargets,

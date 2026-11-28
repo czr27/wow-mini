@@ -58,10 +58,7 @@ export const WilleyEncounter: BossEncounterModule = {
           const tank = living(engine).find((u: any) => u.role === 'TANK');
           if (!tank) return;
           engine.dealDamage(boss, tank, 20_000, 'PHYSICAL', false, '击退');
-          tank.position = {
-            x: (tank.position?.x || 0) - 40,
-            y: tank.position?.y || 200,
-          };
+          engine.knockbackUnit(boss, tank, 180, '击退');
         },
       },
       {

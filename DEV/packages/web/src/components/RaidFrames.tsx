@@ -615,7 +615,7 @@ export const RaidFrames: React.FC<Props> = ({
       >
         <div className="flex items-center space-x-2 min-w-0">
           <span className="text-[#f3d178] font-bold tracking-wider font-serif drop-shadow-[0_1px_1px_rgba(0,0,0,0.9)] truncate">
-            {isMultiSquad ? `团队框架 (${frameUnitCount}人)` : '小队 1'}
+            {isMultiSquad ? `团队框架 (${frameUnitCount}人)` : '队伍'}
           </span>
           <span className="text-gray-400 text-[10px] font-mono shrink-0">
             {liveTanks}T · {liveHealers}H · {liveDps}DPS
@@ -662,9 +662,9 @@ export const RaidFrames: React.FC<Props> = ({
               isMultiSquad ? 'min-w-0' : 'w-full'
             }`}
           >
-            {/* Squad Header: 20-man clickable; selected squad bold (default 小队1) */}
-            <div className="flex items-center justify-center pb-0.5 border-b border-[#2d2d48]/40 flex-shrink-0">
-              {isMultiSquad ? (
+            {/* Squad Header: only shown in multi-squad (20-man) mode */}
+            {isMultiSquad && (
+              <div className="flex items-center justify-center pb-0.5 border-b border-[#2d2d48]/40 flex-shrink-0">
                 <button
                   type="button"
                   onClick={(e) => {
@@ -679,12 +679,8 @@ export const RaidFrames: React.FC<Props> = ({
                 >
                   小队 {squadIdx + 1}
                 </button>
-              ) : (
-                <span className="text-[#f3d178] font-bold text-[10px] tracking-wider font-serif drop-shadow-[0_1px_2px_rgba(0,0,0,1)]">
-                  小队 {squadIdx + 1}
-                </span>
-              )}
-            </div>
+              </div>
+            )}
 
             {/* Squad Members Container: Exactly fills the squad column height */}
             <div className="flex-1 min-h-0 flex flex-col space-y-1 overflow-hidden w-full">

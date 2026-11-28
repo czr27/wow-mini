@@ -409,6 +409,8 @@ export interface GroundFormationTradeOffInput {
   dungeonPriorityZone?: DungeonPriorityZone | null;
   /** 友方单位 ID 集合：用于区分玩家/友方 AoE（不躲避）与敌方红圈（需躲避） */
   friendlyUnitIds?: Set<string>;
+  /** 当前时间戳（ms），用于持续移动机制（如沃登绿药）的平滑绕圈相位 */
+  nowMs?: number;
 }
 
 export type GroundFormationDecision =
@@ -825,12 +827,105 @@ export function findBestHealAuraStandPosition(opts: {
  * 地面走位：高优先级约束逐级与候选点求交，取最后一个非空可行域中的最优点。
  * 1 躲红圈 → 2 非坦持仇时坦/OT 纠偏 → 3 危血最大绿圈 → 4 健康输出位+叠层 → 5 主坦 25 码
  */
+function unitPhaseSeed(id: string): number {
+  let h = 0;
+  for (let i = 0; i < id.length; i++) {
+    h = (h * 31 + id.charCodeAt(i)) | 0;
+  }
+  return (Math.abs(h) % 360) * (Math.PI / 180);
+}
+
+/**
+ * 沃登勋爵魔药走位修正（与 Boss 机制联动）：
+ * - 红药（walden_red_toxin / toxic_coagulant）：不在红圈时强制原地静止，防止移动引爆。
+ * - 绿药（walden_green_toxin / toxic_catalyst）：不在红圈时围绕基准位持续绕圈移动消层。
+ */
+function applyWaldenPotionMovement(
+  result: GroundFormationTradeOffResult,
+  input: GroundFormationTradeOffInput
+): GroundFormationTradeOffResult {
+  if (result.inHazard) return result;
+  const buffs = input.unit.buffs || [];
+  const hasRedToxin = buffs.some(
+    (b) => b.spellId === 'walden_red_toxin' || b.spellId === 'toxic_coagulant'
+  );
+  if (hasRedToxin) {
+    return {
+      ...result,
+      targetPos: { x: input.currentPos.x, y: input.currentPos.y },
+      allowFidget: false,
+      fidgetMaxRadiusPx: 0,
+      reason: '沃登红药：站立不动防引爆',
+    };
+  }
+
+  const hasGreenToxin = buffs.some(
+    (b) => b.spellId === 'walden_green_toxin' || b.spellId === 'toxic_catalyst'
+  );
+  if (!hasGreenToxin) return result;
+
+  // 若当前已距离目标较远（正在跑位），无需覆盖；接近目标点时叠加绕圈偏移确保不中断移动
+  const distToTarget = Math.hypot(
+    result.targetPos.x - input.currentPos.x,
+    result.targetPos.y - input.currentPos.y
+  );
+  if (distToTarget >= 18) {
+    return {
+      ...result,
+      allowFidget: false,
+      reason: '沃登绿药：保持移动消层',
+    };
+  }
+
+  const activeHazards = input.groundEffects.filter(
+    (e) =>
+      (e.kind === 'DAMAGE_ZONE' || e.kind === 'CONE_WARNING') &&
+      e.remainingMs > 0 &&
+      !isFriendlyGroundEffect(e, input.friendlyUnitIds)
+  );
+  const nowMs = typeof input.nowMs === 'number' ? input.nowMs : Date.now();
+  const baseAngle = unitPhaseSeed(input.unit.id) + nowMs / 260;
+  const orbitR = 36;
+  const anchor = result.targetPos;
+
+  for (const offset of [0, Math.PI / 2, Math.PI, -Math.PI / 2]) {
+    const a = baseAngle + offset;
+    const cx = Math.max(40, Math.min(740, anchor.x + Math.cos(a) * orbitR));
+    const cy = Math.max(40, Math.min(320, anchor.y + Math.sin(a) * orbitR));
+    const cand = { x: cx, y: cy };
+    if (
+      Math.hypot(cand.x - input.currentPos.x, cand.y - input.currentPos.y) >= 12 &&
+      !activeHazards.some((h) => isPosInHazard(cand, h))
+    ) {
+      return {
+        ...result,
+        targetPos: cand,
+        allowFidget: false,
+        fidgetMaxRadiusPx: 0,
+        reason: '沃登绿药：保持移动消层',
+      };
+    }
+  }
+
+  return {
+    ...result,
+    allowFidget: false,
+    reason: '沃登绿药：保持移动消层',
+  };
+}
+
 export function evaluateGroundFormationPosition(
   input: GroundFormationTradeOffInput
 ): GroundFormationTradeOffResult {
   // 坦克 25 码已在求交层处理；保留 apply 作为决策标签回退保险
   const raw = evaluateGroundFormationPositionCore(input);
-  return applyTankStackConstraint(raw, input.unit, input.tankPos, input.tankStackRangePx);
+  const constrained = applyTankStackConstraint(
+    raw,
+    input.unit,
+    input.tankPos,
+    input.tankStackRangePx
+  );
+  return applyWaldenPotionMovement(constrained, input);
 }
 
 function dodgeAwayFromHazard(

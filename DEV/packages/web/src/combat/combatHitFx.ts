@@ -36,9 +36,13 @@ const MAX_AOE_BURSTS = 48;
 const FLAKES_PER_BURST = 5;
 
 const PROJ_MS = 280;
+const BOSS_PROJ_MS = 380;
 const SLASH_MS = 200;
+const BOSS_SLASH_MS = 340;
 const SWEEP_MS = 260;
+const BOSS_SWEEP_MS = 420;
 const AOE_BURST_MS = 360;
+const BOSS_AOE_BURST_MS = 560;
 const SNOW_FLAKE_MS = 420;
 const SNOW_STAGGER_MS = 70;
 
@@ -759,7 +763,7 @@ export function ingestCombatActionsAsHitFx(state: HitFxState, opts: IngestHitFxO
               mode: 'sweep',
               sweepArcRad,
               bornAt: now + i * 45,
-              durationMs: SWEEP_MS,
+              durationMs: isEnemy ? BOSS_SWEEP_MS : SWEEP_MS,
             },
             MAX_SLASHES,
             opts.localPlayerId
@@ -782,6 +786,9 @@ export function ingestCombatActionsAsHitFx(state: HitFxState, opts: IngestHitFxO
         : isHeal
           ? classFallbackColor || HEAL_SNOW_COLOR
           : visual.projColor || classFallbackColor || '#69CCF0';
+      const burstRadius = isEnemy
+        ? Math.min(140, Math.max(68, (a.radius || 80) * 0.55))
+        : Math.max(18, 26 * hitScale);
       pushCap(
         state.aoeBursts,
         {
@@ -789,12 +796,12 @@ export function ingestCombatActionsAsHitFx(state: HitFxState, opts: IngestHitFxO
           actorId: a.actorId,
           x: targetCenter.x,
           y: targetCenter.y,
-          radius: Math.max(18, 26 * hitScale),
+          radius: burstRadius,
           color: burstColor,
           scale: hitScale,
           side,
           bornAt: now,
-          durationMs: AOE_BURST_MS,
+          durationMs: isEnemy ? BOSS_AOE_BURST_MS : AOE_BURST_MS,
         },
         MAX_AOE_BURSTS,
         opts.localPlayerId
@@ -869,9 +876,9 @@ export function ingestCombatActionsAsHitFx(state: HitFxState, opts: IngestHitFxO
     const isPhysicalAuto =
       a.spellId === 'auto_attack' || a.spellId === 'claw' || a.spellId === 'spirit_bite';
     const melee = isEnemy
-      ? Math.hypot(aPos.x - tPos.x, aPos.y - tPos.y) <= 80
+      ? isPhysicalAuto || Math.hypot(aPos.x - tPos.x, aPos.y - tPos.y) <= 85
       : isMeleeClassSpec((actor?.classId as any) || 'MAGE', (actor as any)?.spec) ||
-        (isPhysicalAuto && Math.hypot(aPos.x - tPos.x, aPos.y - tPos.y) <= 80);
+        (isPhysicalAuto && Math.hypot(aPos.x - tPos.x, aPos.y - tPos.y) <= 85);
 
     // Boss FX size = bossHeight/charHeight (HIT_FX_BOSS_SIZE_MULT)
     const hitScale = isEnemy ? HIT_FX_BOSS_SIZE_MULT : actorScale;
@@ -902,7 +909,7 @@ export function ingestCombatActionsAsHitFx(state: HitFxState, opts: IngestHitFxO
           style: visual.slashStyle,
           mode: 'thrust',
           bornAt,
-          durationMs: SLASH_MS,
+          durationMs: isEnemy ? BOSS_SLASH_MS : SLASH_MS,
         }),
         MAX_SLASHES,
         now,
@@ -929,7 +936,7 @@ export function ingestCombatActionsAsHitFx(state: HitFxState, opts: IngestHitFxO
           side,
           flight,
           bornAt,
-          durationMs: PROJ_MS,
+          durationMs: isEnemy ? BOSS_PROJ_MS : PROJ_MS,
         }),
         MAX_PROJECTILES,
         now,

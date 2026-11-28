@@ -87,7 +87,13 @@ export function withHostAuthorityOnlySim<T>(engine: CombatEngine, fn: () => T): 
     getCombatAuthorityContext();
   if ((!isNetworkHost && !isNetworkGuest) || !activeRoomId) return fn();
 
-  const frozen = engine.getAllUnits().filter(shouldFreeze).map(capture);
+  const frozenUnits = engine.getAllUnits().filter(shouldFreeze);
+  const frozen = frozenUnits.map(capture);
+  // Clear non-authority buffs during local tick so AuraManager never ticks foreign
+  // HoTs/DoTs on AI/Boss (which would double-credit local combatStats & spawn ghost SCT).
+  for (const u of frozenUnits) {
+    u.buffs = [];
+  }
   const em = engine.effectsManager;
   const parkedGround: any[] = [];
   if (em?.groundEffects?.length) {

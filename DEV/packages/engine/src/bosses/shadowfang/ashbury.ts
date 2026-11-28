@@ -86,7 +86,7 @@ function applyAsphyxiateDrainTick(engine: any, _bossAi: AshburyAiState, tickInde
  * 影牙城堡 1号：亚什布里男爵 (Baron Ashbury)
  * 特性机制：
  * - 窒息术 (Asphyxiate)：6s 引导；全员空中昏迷无法行动；持续暗影压血至 1 点（不击杀）
- *   结束后：1s 停手（安全治疗）→ 5s 仅普攻仇恨目标 → 之后才允许其他技能
+ *   结束后：2s 停手（禁止任何行为）→ 5s 仅普攻仇恨目标 → 之后才允许其他技能
  * - 暂缓处决 (Stay of Execution)：引导跳字治疗（约每秒 10%），可打断截断后续跳
  * - 修补烂肉 (Mend Rotten Flesh)：首领大量自愈 25%，可打断
  * - 苦痛灾厄脉冲：全团暗影脉冲，30%血量以下狂暴形态伤害剧增
@@ -121,11 +121,11 @@ export const AshburyEncounter: BossEncounterModule = {
           // 六跳已按 (maxHp-1)/6 结算完；此处不再「末跳拍成 1」，只解除昏迷并进入后摇
           clearAsphyxiateStun(engine);
 
-          // 窒息后：1s 停手（安全治疗窗）→ 5s 仅普攻仇恨目标 → 之后才允许其他技能
-          // asphyxiatePostDelay 锁技能共 6s；healingGrace 仅前 1s 禁伤
-          bossAi.asphyxiatePostDelay = 6000;
+          // 窒息后：2s 停手（禁止任何行为：不移动/不普攻/不放技能/禁伤）→ 5s 仅普攻仇恨目标 → 之后才允许其他技能
+          // asphyxiatePostDelay 锁技能共 7s；healingGrace 前 2s 禁任何行为
+          bossAi.asphyxiatePostDelay = 7000;
           if (engine) {
-            engine.bossHealingGraceRemainingMs = 1000;
+            engine.bossHealingGraceRemainingMs = 2000;
             engine.emitDbmAlert?.({
               title: '窒息结束：安全治疗窗',
               advice: '安全抬血',
@@ -156,7 +156,7 @@ export const AshburyEncounter: BossEncounterModule = {
 
           engine.effectsManager?.addFloatingText({
             targetId: boss.id,
-            text: '🛡️ 窒息解除！1 秒后普攻仇恨目标，5 秒内不放技能！',
+            text: '🛡️ 窒息解除！2 秒内首领禁止任何行为，之后 5 秒仅普攻！',
             category: 'STATUS',
             isCrit: true,
           });

@@ -282,6 +282,16 @@ export class BaseBossAI {
         this.lastSkillName = chosen.name;
         this.lastSkillAtMs = engine.nowMs;
         this.dbmLastAnnouncedCastSkillId = chosen.id;
+        engine.logCombatAction({
+          actorId: boss.id,
+          spellId: chosen.id || chosen.name,
+          spellName: chosen.name,
+          kind: 'CAST_START',
+          targetId: primaryTarget?.id ?? null,
+          x: boss.position?.x,
+          y: boss.position?.y,
+          visualTone: 'ENEMY',
+        });
         this.emitSkillDbmAlert(engine, chosen, 'CAST_START');
         this.maybeEmitTrashTalk(boss, engine, chosen);
       } else {

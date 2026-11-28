@@ -2813,6 +2813,43 @@ export const CombatCanvas: React.FC<Props> = ({
     return () => window.removeEventListener('cata_combat_actions', onActions as EventListener);
   }, []);
 
+  // Knockback slide state for local player (triggered by engine.onUnitKnockback / server KNOCKBACK effect)
+  const playerKnockbackSlideRef = useRef<{
+    fromX: number;
+    fromY: number;
+    toX: number;
+    toY: number;
+    startedAtMs: number;
+    durationMs: number;
+  } | null>(null);
+
+  useEffect(() => {
+    const onKnockback = (ev: Event) => {
+      const detail = (ev as CustomEvent).detail as
+        | { unitId?: string; x?: number; y?: number }
+        | undefined;
+      if (!detail || typeof detail.x !== 'number' || typeof detail.y !== 'number') return;
+      const localUnit = livePropsRef.current.units.find((u) => u.isPlayer);
+      if (!localUnit || (detail.unitId && detail.unitId !== localUnit.id)) return;
+      clickTargetRef.current = null;
+      setAutoNav(false);
+      playerKnockbackSlideRef.current = {
+        fromX: playerPosRef.current.x,
+        fromY: playerPosRef.current.y,
+        toX: detail.x,
+        toY: detail.y,
+        startedAtMs: performance.now(),
+        durationMs: 220,
+      };
+      if (livePropsRef.current.onPlayerMove) {
+        livePropsRef.current.onPlayerMove();
+      }
+      livePropsRef.current.onNetworkMoveReport?.(detail.x, detail.y, true);
+    };
+    window.addEventListener('cata_unit_knockback', onKnockback as EventListener);
+    return () => window.removeEventListener('cata_unit_knockback', onKnockback as EventListener);
+  }, []);
+
   // Play heal chime when local player receives healing (direct heals, HoTs, AoE heals)
   const seenSelfHealFctIdsRef = useRef<Set<string>>(new Set());
   useEffect(() => {
@@ -3883,7 +3920,25 @@ export const CombatCanvas: React.FC<Props> = ({
         });
       }
 
-      if ((moveX !== 0 || moveY !== 0) && canMove) {
+      // Active knockback slide overrides normal movement until landed
+      const kbSlide = playerKnockbackSlideRef.current;
+      if (kbSlide) {
+        const elapsed = performance.now() - kbSlide.startedAtMs;
+        const t = Math.min(1, Math.max(0, elapsed / kbSlide.durationMs));
+        const ease = 1 - Math.pow(1 - t, 3);
+        playerPosRef.current.x = Math.max(30, Math.min(width - 30, kbSlide.fromX + (kbSlide.toX - kbSlide.fromX) * ease));
+        playerPosRef.current.y = Math.max(30, Math.min(height - 30, kbSlide.fromY + (kbSlide.toY - kbSlide.fromY) * ease));
+        const playerUnit = units.find(u => u.isPlayer);
+        if (playerUnit) {
+          playerUnit.position.x = playerPosRef.current.x;
+          playerUnit.position.y = playerPosRef.current.y;
+          (playerUnit as { isMoving?: boolean }).isMoving = t < 1;
+        }
+        if (t >= 1) {
+          playerKnockbackSlideRef.current = null;
+          onNetworkMoveReport?.(playerPosRef.current.x, playerPosRef.current.y, true);
+        }
+      } else if ((moveX !== 0 || moveY !== 0) && canMove) {
         // Continuous smooth WASD: screen-intent → world (ISO), then normalize
         clickTargetRef.current = null;
         setAutoNav(false);
@@ -5512,6 +5567,7 @@ export const CombatCanvas: React.FC<Props> = ({
           isPrimaryTank: !!primaryTank && primaryTank.id === u.id,
           dungeonPriorityZone,
           friendlyUnitIds,
+          nowMs: performance.now(),
         });
 
         targetX = formationResult.targetPos.x;

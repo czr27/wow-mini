@@ -35,8 +35,8 @@ function mkUnit(id: string, opts: Partial<Unit> = {}): Unit {
   };
 }
 
-describe('BossTargetPicker 60/40 玩家/AI 加权点名', () => {
-  it('1. 1 玩家 + 19 AI 池子：玩家总命中率约 60%，AI 总命中率约 40%', () => {
+describe('BossTargetPicker 玩家优先随机点名（玩家不够再补 AI）', () => {
+  it('1. 1 玩家 + 19 AI 池子：单点 100% 选中玩家', () => {
     const human = mkUnit('p1', { isPlayer: true, isHumanControlled: true });
     const ais = Array.from({ length: 19 }, (_, i) => mkUnit(`ai_${i}`));
     const pool = [human, ...ais];
@@ -47,20 +47,17 @@ describe('BossTargetPicker 60/40 玩家/AI 加权点名', () => {
       return (seed - 1) / 2147483646;
     };
 
-    const trials = 10_000;
+    const trials = 1_000;
     let humanHits = 0;
     for (let i = 0; i < trials; i++) {
       const picked = pickWeightedBossTarget(pool, rng);
       if (picked?.id === 'p1') humanHits++;
     }
-    const rate = humanHits / trials;
-    assert.ok(
-      Math.abs(rate - HUMAN_BOSS_TARGET_WEIGHT) < 0.03,
-      `expected ~0.60, got ${rate.toFixed(4)}`
-    );
+    assert.equal(HUMAN_BOSS_TARGET_WEIGHT, 1);
+    assert.equal(humanHits, trials, '有玩家时应 100% 优先点玩家');
   });
 
-  it('2. 多玩家混合池（2 玩家 + 3 AI）：所有玩家合计 60%，所有 AI 合计 40%', () => {
+  it('2. 多玩家混合池（2 玩家 + 3 AI）：单点仅从玩家池均匀随机选，不点 AI', () => {
     const p1 = mkUnit('p1', { isPlayer: true });
     const p2 = mkUnit('p2', { isHumanControlled: true });
     const ais = [mkUnit('ai1'), mkUnit('ai2'), mkUnit('ai3')];
@@ -72,20 +69,20 @@ describe('BossTargetPicker 60/40 玩家/AI 加权点名', () => {
       return (seed - 1) / 2147483646;
     };
 
-    const trials = 10_000;
-    let humanHits = 0;
+    const trials = 4_000;
+    let p1Hits = 0;
+    let p2Hits = 0;
     for (let i = 0; i < trials; i++) {
       const picked = pickWeightedBossTarget(pool, rng);
-      if (picked?.id === 'p1' || picked?.id === 'p2') humanHits++;
+      assert.ok(picked?.id === 'p1' || picked?.id === 'p2', `不应点中 AI: ${picked?.id}`);
+      if (picked.id === 'p1') p1Hits++;
+      else p2Hits++;
     }
-    const rate = humanHits / trials;
-    assert.ok(
-      Math.abs(rate - 0.6) < 0.03,
-      `expected ~0.60 combined human weight, got ${rate.toFixed(4)}`
-    );
+    assert.ok(Math.abs(p1Hits / trials - 0.5) < 0.04, `玩家间应均匀随机，p1 占比 ${(p1Hits / trials).toFixed(3)}`);
+    assert.ok(Math.abs(p2Hits / trials - 0.5) < 0.04, `玩家间应均匀随机，p2 占比 ${(p2Hits / trials).toFixed(3)}`);
   });
 
-  it('3. 条件池（如仅 Tank 池）全 AI 时 100% 从 AI 池选；有玩家 Tank 时玩家 Tank 占 60%', () => {
+  it('3. 条件池全 AI 时 100% 从 AI 池随机选；有玩家时 100% 优先点玩家', () => {
     const aiTank1 = mkUnit('t_ai1', { role: 'TANK' });
     const aiTank2 = mkUnit('t_ai2', { role: 'TANK' });
     const pickedAiOnly = pickWeightedBossTarget([aiTank1, aiTank2]);
@@ -93,27 +90,33 @@ describe('BossTargetPicker 60/40 玩家/AI 加权点名', () => {
 
     const humanTank = mkUnit('t_human', { role: 'TANK', isPlayer: true });
     const mixedTankPool = [humanTank, aiTank1];
-    let seed = 424242;
-    const rng = () => {
-      seed = (seed * 16807) % 2147483647;
-      return (seed - 1) / 2147483646;
-    };
-    let humanCount = 0;
-    for (let i = 0; i < 4000; i++) {
-      if (pickWeightedBossTarget(mixedTankPool, rng)?.id === 't_human') humanCount++;
+    for (let i = 0; i < 100; i++) {
+      assert.equal(pickWeightedBossTarget(mixedTankPool)?.id, 't_human');
     }
-    const rate = humanCount / 4000;
-    assert.ok(Math.abs(rate - 0.6) < 0.04, `expected ~0.60, got ${rate.toFixed(4)}`);
   });
 
-  it('4. pickWeightedBossTargets 不重复且排除宠物', () => {
+  it('4. pickWeightedBossTargets 优先点完所有玩家，玩家不够再从 AI 补齐，且不重复、排除宠物', () => {
     const pet = mkUnit('pet1', { isPet: true, unitKind: 'PET', isPlayer: false });
     const p1 = mkUnit('p1', { isPlayer: true });
+    const p2 = mkUnit('p2', { isHumanControlled: true });
     const ai1 = mkUnit('ai1');
     const ai2 = mkUnit('ai2');
-    const picks = pickWeightedBossTargets([pet, p1, ai1, ai2], 2);
-    assert.equal(picks.length, 2);
-    assert.notEqual(picks[0].id, picks[1].id);
-    assert.ok(picks.every((u) => !u.isPet));
+
+    // 1 玩家 + 2 AI，点 2 人：必含 p1，另 1 人从 AI 补齐
+    for (let i = 0; i < 50; i++) {
+      const picks1 = pickWeightedBossTargets([pet, p1, ai1, ai2], 2);
+      assert.equal(picks1.length, 2);
+      assert.notEqual(picks1[0].id, picks1[1].id);
+      assert.ok(picks1.every((u) => !u.isPet));
+      assert.ok(picks1.some((u) => u.id === 'p1'), '1 玩家点 2 人时玩家必被点中');
+    }
+
+    // 2 玩家 + 2 AI，点 2 人：全为玩家，不点 AI
+    for (let i = 0; i < 50; i++) {
+      const picks2 = pickWeightedBossTargets([pet, p1, p2, ai1, ai2], 2);
+      assert.equal(picks2.length, 2);
+      const ids = new Set(picks2.map((u) => u.id));
+      assert.deepEqual(ids, new Set(['p1', 'p2']), '玩家足够时应全部点中玩家');
+    }
   });
 });

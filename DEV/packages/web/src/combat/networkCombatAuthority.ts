@@ -165,6 +165,7 @@ const VITAL_DELTA_KINDS = new Set([
   'APPLY_BUFF',
   'REMOVE_BUFF',
   'RESOURCE',
+  'KNOCKBACK',
 ]);
 
 const CAST_HUD_KINDS = new Set([
@@ -198,6 +199,14 @@ export function ingestCombatEffect(
   if (opts?.enqueueGather) gather.enqueueEffect(effect);
 
   const isLocalSource = !!(effect.sourceId && ctx.isUnitLocalAuthority(effect.sourceId));
+  const isLocalTarget = ctx.isUnitLocalAuthority(effect.targetId);
+
+  // 0) 自己（及自己宝宝）发出给自己的效果当场已结算，广播包中一律忽略（含服务端新生成的 effectId）
+  if (isLocalSource && isLocalTarget) {
+    applied.mark(effect.effectId);
+    return;
+  }
+
   const isCastHud =
     effect.kind === 'CAST_START' ||
     effect.kind === 'CAST_LAND' ||
@@ -208,7 +217,6 @@ export function ingestCombatEffect(
 
   const isVital = VITAL_DELTA_KINDS.has(effect.kind);
   const isHudVisual = CAST_HUD_KINDS.has(effect.kind);
-  const isLocalTarget = ctx.isUnitLocalAuthority(effect.targetId);
 
   // 1) 自己和自己宝宝（本地权威）发生的特效已在本地直接消费，忽略 server 回包
   if (isHudVisual && isLocalSource) {
@@ -217,8 +225,8 @@ export function ingestCombatEffect(
   }
 
   // 2) 非本地权威目标（Boss/小怪/AI/其他玩家）的 DAMAGE/HEAL 跳字以 server COMBAT_STATE 为准，
-  //    不在客户端重复结算或重复弹字；本地权威目标（自己与宝宝）则由下方本地消费结算与跳字。
-  if (!isLocalTarget && (effect.kind === 'DAMAGE' || effect.kind === 'HEAL')) {
+  //    不在客户端重复结算或重复弹字；KNOCKBACK 也仅由目标所属权威端消费并上报新坐标。
+  if (!isLocalTarget && (effect.kind === 'DAMAGE' || effect.kind === 'HEAL' || effect.kind === 'KNOCKBACK')) {
     applied.mark(effect.effectId);
     return;
   }
@@ -228,8 +236,8 @@ export function ingestCombatEffect(
   if (isLocalTarget || isVital || isHudVisual) {
     const appliedNow = consumeRemoteEffect(effect, applied, (e) => {
       applyCombatEffectToEngine(engine, e);
-      // Authority seat: after rez, push owner vitals for host to splice+broadcast
-      if (e.kind === 'RESURRECT' && ctx.isUnitLocalAuthority(e.targetId)) {
+      // Authority seat: after rez or knockback, push owner vitals/position immediately
+      if ((e.kind === 'RESURRECT' || e.kind === 'KNOCKBACK') && ctx.isUnitLocalAuthority(e.targetId)) {
         publishOwnerSnapshotForUnit(engine, e.targetId);
       }
     });
