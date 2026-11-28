@@ -666,10 +666,13 @@ export function handlePlayerCastSlot(slotIdx: number, ctx: HandlePlayerCastSlotC
     }
   };
 
+  let startedCastBar = false;
   const startPlayerCast = (newCast: PlayerCastState) => {
+    startedCastBar = true;
     const effectiveIsChannel = Boolean(newCast.isChannel || isSlotChanneled);
     const castStateWithLifecycle: PlayerCastState = {
       ...newCast,
+      startedAtMs: newCast.startedAtMs ?? Date.now(),
       isChannel: effectiveIsChannel,
       deferredCosts: effectiveIsChannel ? undefined : spellCostBundle,
     };
@@ -708,16 +711,16 @@ export function handlePlayerCastSlot(slotIdx: number, ctx: HandlePlayerCastSlotC
           [castStateWithLifecycle.targetId!]: (prev[castStateWithLifecycle.targetId!] || 0) + pAmt,
         }));
       }
-      // ST heal cast start → snowflake form FX
-      engine.logCombatAction({
-        actorId: player.id,
-        spellId: castStateWithLifecycle.spellId,
-        spellName: castStateWithLifecycle.spellName,
-        kind: 'CAST_START',
-        targetId: castStateWithLifecycle.targetId,
-        visualTone: 'HEAL',
-      });
     }
+    // Local CAST_START action for all casts/channels (publishCastStart pre-marks applied so self never echoes)
+    engine.logCombatAction({
+      actorId: player.id,
+      spellId: castStateWithLifecycle.spellId,
+      spellName: castStateWithLifecycle.spellName,
+      kind: 'CAST_START',
+      targetId: castStateWithLifecycle.targetId || player.id,
+      visualTone: castStateWithLifecycle.isHarmful ? 'ENEMY' : 'HEAL',
+    });
     publishCastStart({
       unitId: player.id,
       spellId: castStateWithLifecycle.spellId,
@@ -729,7 +732,26 @@ export function handlePlayerCastSlot(slotIdx: number, ctx: HandlePlayerCastSlotC
     });
   };
 
-  if (
+  const runWithLocalActionProbe = <T>(fn: () => T): { result: T; logged: boolean } => {
+    let logged = false;
+    const origLog = engine.logCombatAction.bind(engine);
+    engine.logCombatAction = ((partial: any) => {
+      if (partial?.actorId === player.id) logged = true;
+      return origLog(partial);
+    }) as CombatEngine['logCombatAction'];
+    try {
+      return { result: fn(), logged };
+    } finally {
+      engine.logCombatAction = origLog;
+    }
+  };
+
+  const resolveInstantTargetId = () =>
+    isFriendlySpell
+      ? effectiveFriendly?.id || player.id
+      : effectiveTarget?.id || boss?.id || player.id;
+
+  const branchRun = runWithLocalActionProbe(() =>
     withNetworkVitals(engine, () =>
       startPlayerCastBranches({
         engine,
@@ -744,50 +766,82 @@ export function handlePlayerCastSlot(slotIdx: number, ctx: HandlePlayerCastSlotC
         onFriendlyUnitsChanged: ctx.onFriendlyUnitsChanged,
       })
     )
-  ) {
+  );
+  if (branchRun.result) {
+    // 自然迅捷瞬发等未走读条的分支：本地直接补消费 INSTANT 动作，并广播给远端
+    if (!startedCastBar && !branchRun.logged) {
+      const targetId = resolveInstantTargetId();
+      engine.logCombatAction({
+        actorId: player.id,
+        spellId: slot.spellId,
+        spellName: slot.name,
+        kind: 'INSTANT',
+        targetId,
+        visualTone: isFriendlySpell ? 'HEAL' : 'ENEMY',
+      });
+      publishCastLand({
+        unitId: player.id,
+        spellId: slot.spellId,
+        spellName: slot.name,
+        targetId,
+        isHarmful: !isFriendlySpell,
+      });
+    }
     return;
   }
 
-  const handledInstant = withNetworkVitals(engine, () =>
-    executePlayerInstantEffects({
-      engine,
-      player,
-      boss,
-      slot,
-      normSlotSpell,
-      effectiveFriendly,
-      effectiveTarget,
-      isFriendlySpell,
-      selectedTargetId: ctx.selectedTargetId,
-      bossAi: ctx.bossAi,
-      triggerSlotCooldown,
-      startPlayerCast,
-      handleDispelUnit: ctx.handleDispelUnit,
-      onScreenShake: ctx.onScreenShake,
-      onFriendlyUnitsChanged: ctx.onFriendlyUnitsChanged,
-    })
+  const instantRun = runWithLocalActionProbe(() =>
+    withNetworkVitals(engine, () =>
+      executePlayerInstantEffects({
+        engine,
+        player,
+        boss,
+        slot,
+        normSlotSpell,
+        effectiveFriendly,
+        effectiveTarget,
+        isFriendlySpell,
+        selectedTargetId: ctx.selectedTargetId,
+        bossAi: ctx.bossAi,
+        triggerSlotCooldown,
+        startPlayerCast,
+        handleDispelUnit: ctx.handleDispelUnit,
+        onScreenShake: ctx.onScreenShake,
+        onFriendlyUnitsChanged: ctx.onFriendlyUnitsChanged,
+      })
+    )
   );
-  if (handledInstant) {
+  if (instantRun.result) {
+    if (startedCastBar) return;
     playCombatSfx({
       kind: isFriendlySpell ? 'heal' : 'spell_hit',
       school: inferSpellSchool(slot.spellId, slot.name),
       role: 'self',
       actorId: player.id,
     });
-    // Instants: no cast bar; ST still publish CAST_LAND so remotes play hit FX / snowflakes.
+    // Instants: no cast bar; log locally so self consumes FX immediately, and publish CAST_LAND for remotes.
     // AoE already publishes AOE_PULSE via emitLocalAoePulse — skip to avoid false ST projectiles.
     const isAoeInstant =
       !!normSlotSpell?.isAOE ||
       slot.spellId === 'wild_growth' ||
       slot.spellId === 'tranquility';
     if (!isAoeInstant) {
+      const targetId = resolveInstantTargetId();
+      if (!instantRun.logged) {
+        engine.logCombatAction({
+          actorId: player.id,
+          spellId: slot.spellId,
+          spellName: slot.name,
+          kind: 'INSTANT',
+          targetId,
+          visualTone: isFriendlySpell ? 'HEAL' : 'ENEMY',
+        });
+      }
       publishCastLand({
         unitId: player.id,
         spellId: slot.spellId,
         spellName: slot.name,
-        targetId: isFriendlySpell
-          ? effectiveFriendly?.id || player.id
-          : effectiveTarget?.id || boss?.id || player.id,
+        targetId,
         isHarmful: !isFriendlySpell,
       });
     }

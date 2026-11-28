@@ -2,7 +2,9 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { CombatEngine } from '@cata-raid-sim/engine';
 import {
+  beginCombatEffectEpoch,
   configureCombatAuthority,
+  ingestCombatEffect,
   mergeOwnerSnapshotUnits,
 } from '../networkCombatAuthority.js';
 import { withNetworkVitals } from '../withNetworkVitals.js';
@@ -120,6 +122,102 @@ describe('withNetworkVitals healing stats', () => {
     const after = engine.getUnit('guest_1');
     assert.equal(after?.combatStats?.healingDone, 12000, '已累计的治疗统计不应被 0 覆盖');
     assert.equal(after?.combatStats?.skillHealing?.['快速治疗'], 12000);
+    resetAuthority();
+  });
+
+  it('统一权威：非本地权威目标跳字以 server 为准（本地不预弹、不重复消费回包）；自己与宝宝受治疗本地消费跳字；自己与宝宝特效忽略 server 回包', () => {
+    resetAuthority();
+    beginCombatEffectEpoch();
+    const engine = new CombatEngine();
+    const me = makeUnit('me_1', { isPlayer: true, isHumanControlled: true, hp: 20000, maxHp: 40000 });
+    const myPet = makeUnit('pet_1', { isPet: true, ownerId: 'me_1', hp: 10000, maxHp: 20000 });
+    const otherPlayer = makeUnit('other_1', { role: 'TANK', hp: 20000, maxHp: 40000 });
+    engine.addUnit(me);
+    engine.addUnit(myPet);
+    engine.addUnit(otherPlayer);
+
+    const loggedActions: any[] = [];
+    engine.onCombatAction = (ev) => loggedActions.push(ev);
+
+    configureCombatAuthority({
+      activeRoomId: 'room_test',
+      isNetworkHost: false,
+      isNetworkGuest: true,
+      localPlayerId: 'me_1',
+      isUnitLocalAuthority: (id) => id === 'me_1' || id === 'pet_1',
+    });
+
+    // 1. 自己治疗非本地权威目标：不预弹跳字，仅统计自身治疗量
+    withNetworkVitals(engine, () => {
+      engine.healUnit(me, otherPlayer, 6000, false, '治疗之触');
+    });
+    assert.equal(engine.effectsManager?.floatingTexts.length ?? 0, 0, '非本地权威目标本地不应预弹跳字');
+
+    // 2. 收到非本地权威目标的 HEAL/DAMAGE 回包：也不本地弹字（以 server COMBAT_STATE 为准）
+    ingestCombatEffect(engine, {
+      effectId: 'eff_foreign_heal',
+      sourceId: 'me_1',
+      targetId: 'other_1',
+      spellId: 'healing_touch',
+      spellName: '治疗之触',
+      kind: 'HEAL',
+      amount: 6000,
+    });
+    assert.equal(engine.effectsManager?.floatingTexts.length ?? 0, 0, '非本地权威目标不消费回包跳字');
+
+    // 3. 他人治疗自己与自己宝宝：本地权威消费血量与跳字
+    ingestCombatEffect(engine, {
+      effectId: 'eff_heal_me',
+      sourceId: 'other_1',
+      targetId: 'me_1',
+      spellId: 'rejuvenation',
+      spellName: '回春术',
+      kind: 'HEAL',
+      amount: 5000,
+    });
+    ingestCombatEffect(engine, {
+      effectId: 'eff_heal_pet',
+      sourceId: 'other_1',
+      targetId: 'pet_1',
+      spellId: 'rejuvenation',
+      spellName: '回春术',
+      kind: 'HEAL',
+      amount: 3000,
+    });
+    assert.equal(me.hp, 25000, '自己受到他人治疗应本地生效');
+    assert.equal(myPet.hp, 13000, '自己宝宝受到他人治疗应本地生效');
+    assert.equal(engine.effectsManager?.floatingTexts.length, 2, '自己和宝宝受到他人治疗应本地产生跳字');
+
+    // 4. 自己与自己宝宝发起的特效回包：忽略 server，不重复触发 onCombatAction
+    ingestCombatEffect(engine, {
+      effectId: 'eff_self_fx',
+      sourceId: 'me_1',
+      targetId: 'other_1',
+      spellId: 'tranquility',
+      kind: 'AOE_PULSE',
+      x: 200,
+      y: 200,
+      radius: 360,
+    });
+    ingestCombatEffect(engine, {
+      effectId: 'eff_pet_fx',
+      sourceId: 'pet_1',
+      targetId: 'other_1',
+      spellId: 'claw',
+      kind: 'CAST_LAND',
+    });
+    assert.equal(loggedActions.length, 0, '自己与宝宝发起的特效回包应被忽略');
+
+    // 5. 他人发起的特效：正常消费
+    ingestCombatEffect(engine, {
+      effectId: 'eff_other_fx',
+      sourceId: 'other_1',
+      targetId: 'me_1',
+      spellId: 'healing_wave',
+      kind: 'CAST_LAND',
+    });
+    assert.equal(loggedActions.length, 1, '他人发起的特效仍应正常消费');
+
     resetAuthority();
   });
 });

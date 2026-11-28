@@ -527,4 +527,44 @@ describe('combatHitFx', () => {
     assert.equal(addAuto[0].mode, 'thrust');
     assert.equal(addAuto[0].side, 'ENEMY');
   });
+
+  it('治疗专精对敌方施放伤害法术（如星火术）不触发治疗雪花，落地生成法术投射', () => {
+    const state = createHitFxState();
+    const restoDruid = unit({ id: 'd_resto', name: '恢复德', classId: 'DRUID', spec: 'RESTO_HEAL', role: 'HEALER', position: { x: 60, y: 100 } });
+    const boss = unit({ id: 'boss_1', name: '首领', classId: 'BOSS', role: 'ENEMY', position: { x: 260, y: 100 } });
+    const map = new Map([
+      [restoDruid.id, restoDruid],
+      [boss.id, boss],
+    ]);
+    const seen = new Set<string>();
+    const now = 6000;
+    ingestCombatActionsAsHitFx(state, {
+      actions: [
+        {
+          id: 'sf_start',
+          atMs: now,
+          actorId: restoDruid.id,
+          spellId: 'starfire',
+          spellName: '星火术',
+          kind: 'CAST_START',
+          targetId: boss.id,
+          visualTone: 'ENEMY',
+        },
+        {
+          id: 'sf_land',
+          atMs: now + 1500,
+          actorId: restoDruid.id,
+          spellId: 'starfire',
+          spellName: '星火术',
+          kind: 'CAST_LAND',
+          targetId: boss.id,
+        },
+      ],
+      unitsById: map,
+      seenIds: seen,
+      now,
+    });
+    assert.equal(state.snowBursts.length, 0, '治疗放星火术不应出现治疗雪花特效');
+    assert.equal(state.projectiles.length, HIT_FX_IMPACT_COUNT, '星火术落地应产生投射特效');
+  });
 });

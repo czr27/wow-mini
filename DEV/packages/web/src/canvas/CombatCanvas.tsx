@@ -4988,6 +4988,7 @@ export const CombatCanvas: React.FC<Props> = ({
           seenIds: hitFxSeenIdsRef.current,
           now: nowFx,
           bossName: bossUnit?.name,
+          localPlayerId,
           resolvePos,
           resolveScale: (unitId) => {
             const u = unitsById.get(unitId);

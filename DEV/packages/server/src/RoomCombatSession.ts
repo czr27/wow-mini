@@ -444,14 +444,37 @@ export class RoomCombatSession {
     if (!effect?.effectId) return {};
     this.pendingEffects.push(effect);
 
-    if (this.isServerAuthorityUnit(effect.targetId) && !this.appliedEffectIds.has(effect.effectId)) {
-      this.appliedEffectIds.add(effect.effectId);
-      this.appliedEffectOrder.push(effect.effectId);
-      while (this.appliedEffectOrder.length > EFFECT_RING_MAX) {
-        const old = this.appliedEffectOrder.shift();
-        if (old) this.appliedEffectIds.delete(old);
+    if (!this.appliedEffectIds.has(effect.effectId)) {
+      if (this.isServerAuthorityUnit(effect.targetId)) {
+        this.appliedEffectIds.add(effect.effectId);
+        this.appliedEffectOrder.push(effect.effectId);
+        while (this.appliedEffectOrder.length > EFFECT_RING_MAX) {
+          const old = this.appliedEffectOrder.shift();
+          if (old) this.appliedEffectIds.delete(old);
+        }
+        this.applyEffectToServerEngine(effect);
+      } else if (
+        (effect.kind === 'HEAL' || effect.kind === 'DAMAGE') &&
+        typeof effect.amount === 'number' &&
+        effect.amount > 0
+      ) {
+        // 真人玩家/宝宝目标由其所属客户端权威结算血量与自身跳字；
+        // 服务端仅记入全局 floatingTexts 供施法者与其他旁观者以 server 为准显示跳字。
+        this.appliedEffectIds.add(effect.effectId);
+        this.appliedEffectOrder.push(effect.effectId);
+        while (this.appliedEffectOrder.length > EFFECT_RING_MAX) {
+          const old = this.appliedEffectOrder.shift();
+          if (old) this.appliedEffectIds.delete(old);
+        }
+        const amt = Math.round(effect.amount);
+        this.engine.effectsManager?.addFloatingText({
+          targetId: effect.targetId,
+          sourceId: effect.sourceId,
+          text: effect.kind === 'HEAL' ? `+${amt}` : String(amt),
+          category: effect.kind === 'HEAL' ? 'HEAL' : 'DAMAGE_SKILL',
+          isCrit: !!effect.isCrit,
+        });
       }
-      this.applyEffectToServerEngine(effect);
     }
 
     if (effect.clientInputId) {

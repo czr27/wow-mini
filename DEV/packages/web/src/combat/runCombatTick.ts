@@ -211,13 +211,14 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
         const player = engine.friendlyUnits.find((u) => u.isPlayer || u.id === myId);
         // Channel ticks under network vitals
         if (localCast.isChannel && player) {
+          const started = localCast.startedAtMs ?? now - (localCast.elapsedMs || 0);
           const elapsed = Math.min(
             localCast.totalMs,
-            now - (localCast.startedAtMs || now - localCast.elapsedMs)
+            Math.max(localCast.elapsedMs || 0, now - started)
           );
           withNetworkVitals(engine, () => {
             processPlayerChannelTick(
-              { ...localCast, elapsedMs: elapsed },
+              localCast,
               elapsed,
               engine,
               player,
@@ -232,9 +233,29 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
         } else {
           // Cast complete → local resolve + EFFECT publish
           if (player) {
+            let loggedLocalLand = false;
             if (!localCast.isChannel) {
-              withNetworkVitals(engine, () => {
-                ctx.resolvePlayerCast(localCast.spellId, localCast.totalCdMs);
+              const origLog = engine.logCombatAction.bind(engine);
+              engine.logCombatAction = ((partial: any) => {
+                if (partial?.actorId === player.id) loggedLocalLand = true;
+                return origLog(partial);
+              }) as CombatEngine['logCombatAction'];
+              try {
+                withNetworkVitals(engine, () => {
+                  ctx.resolvePlayerCast(localCast.spellId, localCast.totalCdMs);
+                });
+              } finally {
+                engine.logCombatAction = origLog;
+              }
+            }
+            if (!loggedLocalLand) {
+              engine.logCombatAction({
+                actorId: myId,
+                spellId: localCast.spellId,
+                spellName: localCast.spellName,
+                kind: 'CAST_LAND',
+                targetId: localCast.targetId || myId,
+                visualTone: localCast.isHarmful ? 'ENEMY' : 'HEAL',
               });
             }
             publishCastLand({
@@ -847,6 +868,14 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
       }
       if (progress >= 1) {
         if (ctx.currentChar?.id) {
+          engine.logCombatAction({
+            actorId: ctx.currentChar.id,
+            spellId: prev.spellId,
+            spellName: prev.spellName,
+            kind: 'CAST_LAND',
+            targetId: prev.targetId || ctx.currentChar.id,
+            visualTone: prev.isHarmful ? 'ENEMY' : 'HEAL',
+          });
           publishCastLand({
             unitId: ctx.currentChar.id,
             spellId: prev.spellId,
@@ -877,9 +906,19 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
           ? hasSufficientPlayerResources(player, prev.deferredCosts)
           : { ok: true };
         if (resCheck.ok) {
-          castSuccess = withNetworkVitals(engine, () =>
-            ctx.resolvePlayerCast(prev.spellId, prev.totalCdMs)
-          );
+          let loggedLocalLand = false;
+          const origLog = engine.logCombatAction.bind(engine);
+          engine.logCombatAction = ((partial: any) => {
+            if (partial?.actorId === player.id) loggedLocalLand = true;
+            return origLog(partial);
+          }) as CombatEngine['logCombatAction'];
+          try {
+            castSuccess = withNetworkVitals(engine, () =>
+              ctx.resolvePlayerCast(prev.spellId, prev.totalCdMs)
+            );
+          } finally {
+            engine.logCombatAction = origLog;
+          }
           if (castSuccess) {
             if (prev.deferredCosts) {
               deductPlayerResources(player, prev.deferredCosts, syncUnitResources);
@@ -888,6 +927,16 @@ export function runCombatTickFrame(ctx: CombatTickCtx, state: CombatTickMutableS
               ctx.triggerCooldown(prev.spellId, prev.totalCdMs);
             }
             if (ctx.currentChar?.id) {
+              if (!loggedLocalLand) {
+                engine.logCombatAction({
+                  actorId: ctx.currentChar.id,
+                  spellId: prev.spellId,
+                  spellName: prev.spellName,
+                  kind: 'CAST_LAND',
+                  targetId: prev.targetId || ctx.currentChar.id,
+                  visualTone: prev.isHarmful ? 'ENEMY' : 'HEAL',
+                });
+              }
               publishCastLand({
                 unitId: ctx.currentChar.id,
                 spellId: prev.spellId,

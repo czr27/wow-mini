@@ -6,7 +6,12 @@
  * Buff stacks: publish ABSOLUTE resulting stacks after local mutate so remotes
  * SET layers (not +1 per stale echo). stackDelta used for multi-peel removes.
  */
-import { resolveCombatSkillDisplayName, type CombatEngine, type Unit } from '@cata-raid-sim/engine';
+import {
+  resolveCombatSkillDisplayName,
+  SPELL_ID_TO_NAME,
+  type CombatEngine,
+  type Unit,
+} from '@cata-raid-sim/engine';
 import {
   getCombatAuthorityContext,
   publishCombatEffectAlreadyApplied,
@@ -59,13 +64,7 @@ export function withNetworkVitals<T>(engine: CombatEngine, fn: () => T): T {
         const disp = resolveCombatSkillDisplayName(spellName, '治疗术');
         source.combatStats.skillHealing[disp] = (source.combatStats.skillHealing[disp] || 0) + effectiveHeal;
       }
-      engine.effectsManager?.addFloatingText({
-        targetId: target.id,
-        sourceId: source.id,
-        text: `+${Math.round(amount)}`,
-        category: 'HEAL',
-        isCrit: !!isCrit,
-      });
+      // 非本地权威目标的跳字统一以 server 为准，本地不预弹跳字
     }
     const payload = {
       sourceId: source.id,
@@ -106,13 +105,7 @@ export function withNetworkVitals<T>(engine: CombatEngine, fn: () => T): T {
         const disp = resolveCombatSkillDisplayName(spellName, '普通攻击');
         source.combatStats.skillDamage[disp] = (source.combatStats.skillDamage[disp] || 0) + effective;
       }
-      engine.effectsManager?.addFloatingText({
-        targetId: target.id,
-        sourceId: source.id,
-        text: String(Math.round(amount)),
-        category: 'DAMAGE',
-        isCrit: !!isCrit,
-      });
+      // 非本地权威目标的跳字统一以 server 为准，本地不预弹跳字
     }
     const payload = {
       sourceId: source.id,
@@ -418,10 +411,21 @@ export function publishBuffStackDelta(opts: {
   }
 }
 
+const SPELL_NAME_TO_ID: Record<string, string> = (() => {
+  const map: Record<string, string> = {};
+  for (const [id, name] of Object.entries(SPELL_ID_TO_NAME)) {
+    if (name && !map[name]) map[name] = id;
+  }
+  return map;
+})();
+
 function guessSpellId(spellName?: string): string {
   if (!spellName) return 'unknown';
+  const trimmed = spellName.trim();
+  const byName = SPELL_NAME_TO_ID[trimmed];
+  if (byName) return byName;
   return (
-    spellName
+    trimmed
       .toLowerCase()
       .replace(/\s+/g, '_')
       .replace(/[^a-z0-9_]/g, '')

@@ -7,6 +7,7 @@ import {
   type SpellResourceCostBundle,
 } from '@cata-raid-sim/engine';
 import type { PlayerCastState } from '../components/ActionBar.js';
+import { emitLocalAoePulse } from '../combat/emitLocalAoePulse.js';
 
 /**
  * usePlayerCastController — 玩家施法/引导资源校验、扣除与引导跳数结算模块
@@ -80,6 +81,24 @@ export function deductPlayerResources(
   syncUnitResources(player);
 }
 
+/** 计算区间 (prevElapsed, newElapsed] 内应当触发的引导跳数（结束时自动补齐因取整缺失的尾跳） */
+function countTriggeredChannelTicks(
+  prevElapsed: number,
+  newElapsed: number,
+  totalMs: number,
+  totalTicks: number
+): number {
+  const safeTotal = Math.max(1, totalMs);
+  const safeTicks = Math.max(1, totalTicks);
+  const tickInterval = safeTotal / safeTicks;
+  const prevCount = Math.min(safeTicks, Math.floor(Math.max(0, prevElapsed) / tickInterval));
+  const nextCount =
+    newElapsed >= safeTotal
+      ? safeTicks
+      : Math.min(safeTicks, Math.floor(Math.max(0, newElapsed) / tickInterval));
+  return Math.max(0, nextCount - prevCount);
+}
+
 /**
  * 结算引导技能在 `[prevElapsed, newElapsed]` 区间内触发的周期跳数（覆盖全 10 职业所有引导技能）
  */
@@ -99,20 +118,31 @@ export function processPlayerChannelTick(
     (prev.isHarmful ? boss : player);
 
   if (prev.spellId === 'tranquility' || prev.spellId === 'druid_tranquility') {
-    const tickMs = Math.max(1000, Math.round(prev.totalMs / 4));
-    if (Math.floor(newElapsed / tickMs) > Math.floor(prev.elapsedMs / tickMs)) {
+    const ticks = countTriggeredChannelTicks(prev.elapsedMs, newElapsed, prev.totalMs, 4);
+    for (let i = 0; i < ticks; i++) {
       for (const u of engine.friendlyUnits) {
         if ((u.alive || u.isAlive) && u.hp > 0) {
           engine.healUnit(player, u, 12000, Math.random() < 0.25, '宁静');
         }
       }
+      emitLocalAoePulse(engine, {
+        actor: player,
+        spellId: 'druid_tranquility',
+        spellName: '宁静',
+        targetId: player.id,
+        x: player.position?.x ?? 200,
+        y: player.position?.y ?? 200,
+        radius: 360,
+        isHeal: true,
+        tone: 'HEAL',
+      });
     }
     return;
   }
 
   if (prev.spellId === 'divine_hymn' || prev.spellId === 'priest_divine_hymn') {
-    const tickMs = Math.max(1000, Math.round(prev.totalMs / 4));
-    if (Math.floor(newElapsed / tickMs) > Math.floor(prev.elapsedMs / tickMs)) {
+    const ticks = countTriggeredChannelTicks(prev.elapsedMs, newElapsed, prev.totalMs, 4);
+    for (let i = 0; i < ticks; i++) {
       const injured = engine.friendlyUnits
         .filter(u => (u.alive || u.isAlive) && u.hp > 0)
         .sort((a, b) => a.hp / Math.max(1, a.maxHp) - b.hp / Math.max(1, b.maxHp))
@@ -120,13 +150,24 @@ export function processPlayerChannelTick(
       for (const u of injured) {
         engine.healUnit(player, u, 11500, Math.random() < 0.25, '神圣赞美诗');
       }
+      emitLocalAoePulse(engine, {
+        actor: player,
+        spellId: 'priest_divine_hymn',
+        spellName: '神圣赞美诗',
+        targetId: player.id,
+        x: player.position?.x ?? 200,
+        y: player.position?.y ?? 200,
+        radius: 360,
+        isHeal: true,
+        tone: 'HEAL',
+      });
     }
     return;
   }
 
   if (prev.spellId === 'arcane_missiles' || prev.spellId === 'mage_arcane_missiles') {
-    const tickMs = Math.max(300, Math.round(prev.totalMs / 5));
-    if (Math.floor(newElapsed / tickMs) > Math.floor(prev.elapsedMs / tickMs)) {
+    const ticks = countTriggeredChannelTicks(prev.elapsedMs, newElapsed, prev.totalMs, 5);
+    for (let i = 0; i < ticks; i++) {
       const enemy = targetUnit && targetUnit.role === 'ENEMY' ? targetUnit : boss;
       if (enemy && (enemy.isAlive || enemy.alive) && enemy.hp > 0) {
         engine.dealDamage(player, enemy, 5500, 'ARCANE', Math.random() < 0.3, '奥术飞弹');
@@ -137,8 +178,8 @@ export function processPlayerChannelTick(
   }
 
   if (prev.spellId === 'evocation' || prev.spellId === 'mage_evocation') {
-    const tickMs = Math.max(500, Math.round(prev.totalMs / 3));
-    if (Math.floor(newElapsed / tickMs) > Math.floor(prev.elapsedMs / tickMs)) {
+    const ticks = countTriggeredChannelTicks(prev.elapsedMs, newElapsed, prev.totalMs, 3);
+    for (let i = 0; i < ticks; i++) {
       const maxMp = player.maxMp ?? 35000;
       const gain = Math.round(maxMp * 0.2);
       player.mp = Math.min(maxMp, (player.mp ?? 0) + gain);
@@ -156,8 +197,8 @@ export function processPlayerChannelTick(
   // Generic ClassRegistry channeled spells (Penance, Mind Flay, Mind Sear, Drain Soul, Army of the Dead, etc.)
   const norm = getSpellByAnyId(prev.spellId, player.classId);
   const pulseCount = norm?.id.includes('penance') ? 3 : 4;
-  const tickMs = Math.max(350, Math.round(prev.totalMs / pulseCount));
-  if (Math.floor(newElapsed / tickMs) > Math.floor(prev.elapsedMs / tickMs)) {
+  const ticks = countTriggeredChannelTicks(prev.elapsedMs, newElapsed, prev.totalMs, pulseCount);
+  for (let i = 0; i < ticks; i++) {
     if (norm?.isHeal) {
       const healTarget = targetUnit && targetUnit.role !== 'ENEMY' ? targetUnit : player;
       const perTick = Math.max(2500, Math.round((norm.directHeal || 12000) / pulseCount));
@@ -167,6 +208,17 @@ export function processPlayerChannelTick(
             engine.healUnit(player, u, perTick, Math.random() < 0.25, norm.name);
           }
         }
+        emitLocalAoePulse(engine, {
+          actor: player,
+          spellId: norm.id,
+          spellName: norm.name,
+          targetId: player.id,
+          x: player.position?.x ?? 200,
+          y: player.position?.y ?? 200,
+          radius: 300,
+          isHeal: true,
+          tone: 'HEAL',
+        });
       } else if (healTarget && (healTarget.alive || healTarget.isAlive) && healTarget.hp > 0) {
         engine.healUnit(player, healTarget, perTick, Math.random() < 0.25, norm.name);
       }

@@ -9,7 +9,7 @@ import { Priority } from '../ai/AIController.js';
 import { makeUnit } from './helpers/combatFixtures.js';
 
 describe('20人团本全AI蓝量续航与接续治疗输出验证', () => {
-  it('1. 20人团本友方 > 5 人时自动享受团本精神与回蓝光环 (0.65%/s 基准)', () => {
+  it('1. 20人团本友方 > 5 人时自动享受团本精神与回蓝光环 (2.0%/s 基准)', () => {
     const engine = new CombatEngine();
     // 模拟 20 人团队
     for (let i = 0; i < 20; i++) {
@@ -27,14 +27,14 @@ describe('20人团本全AI蓝量续航与接续治疗输出验证', () => {
     const healer = engine.getUnit('player_2')!;
     engine.resourceManager.tickAll(engine.units, 1000); // 1秒
 
-    // 100,000 * 0.0065 = 650 蓝/秒
+    // 100,000 * 0.020 = 2000 蓝/秒
     const gained = (healer.mp ?? 0) - 50_000;
-    assert.ok(gained >= 600 && gained <= 700, `20人本治疗回蓝应在 600~700 左右，实际 ${gained}`);
+    assert.ok(gained >= 1900 && gained <= 2100, `20人本治疗回蓝应在 1900~2100 左右，实际 ${gained}`);
 
-    // 法系 DPS 应有额外专注暴击回蓝 (+0.25%/s -> 0.90%/s = 900 蓝/秒)
+    // 法系 DPS 应有额外专注暴击回蓝 (+0.5%/s -> 2.5%/s = 2500 蓝/秒)
     const dps = engine.getUnit('player_10')!;
     const dpsGained = (dps.mp ?? 0) - 50_000;
-    assert.ok(dpsGained >= 850 && dpsGained <= 950, `法系DPS回蓝应在 850~950 左右，实际 ${dpsGained}`);
+    assert.ok(dpsGained >= 2400 && dpsGained <= 2600, `法系DPS回蓝应在 2400~2600 左右，实际 ${dpsGained}`);
   });
 
   it('2. 行军恢复 (TRAVEL_RECOVERY) 正确设置 20 倍回蓝，开怪时重置为 1', () => {

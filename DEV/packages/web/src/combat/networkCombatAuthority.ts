@@ -197,11 +197,12 @@ export function ingestCombatEffect(
   if (!effect?.effectId) return;
   if (opts?.enqueueGather) gather.enqueueEffect(effect);
 
+  const isLocalSource = !!(effect.sourceId && ctx.isUnitLocalAuthority(effect.sourceId));
   const isCastHud =
     effect.kind === 'CAST_START' ||
     effect.kind === 'CAST_LAND' ||
     effect.kind === 'INTERRUPT';
-  if (isCastHud && effect.sourceId !== ctx.localPlayerId) {
+  if (isCastHud && !isLocalSource) {
     opts?.onHudEffect?.(effect);
   }
 
@@ -209,7 +210,20 @@ export function ingestCombatEffect(
   const isHudVisual = CAST_HUD_KINDS.has(effect.kind);
   const isLocalTarget = ctx.isUnitLocalAuthority(effect.targetId);
 
-  // Server owns Boss/AI; all players (host & guest) apply local-authority vitals & stack remote FX/deltas
+  // 1) 自己和自己宝宝（本地权威）发生的特效已在本地直接消费，忽略 server 回包
+  if (isHudVisual && isLocalSource) {
+    applied.mark(effect.effectId);
+    return;
+  }
+
+  // 2) 非本地权威目标（Boss/小怪/AI/其他玩家）的 DAMAGE/HEAL 跳字以 server COMBAT_STATE 为准，
+  //    不在客户端重复结算或重复弹字；本地权威目标（自己与宝宝）则由下方本地消费结算与跳字。
+  if (!isLocalTarget && (effect.kind === 'DAMAGE' || effect.kind === 'HEAL')) {
+    applied.mark(effect.effectId);
+    return;
+  }
+
+  // Server owns Boss/AI; all players (host & guest) apply local-authority vitals & remote FX/buffs
 
   if (isLocalTarget || isVital || isHudVisual) {
     const appliedNow = consumeRemoteEffect(effect, applied, (e) => {

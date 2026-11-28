@@ -19,7 +19,7 @@ export const SPELL_MANA_COSTS: Record<string, number> = {
   rebirth: 6800,
   revive: 6800,
   healing_rain: 6500,
-  tranquility: 6500,
+  tranquility: 3000,
   wrath: 1600,
   lightning_bolt: 1600,
   frostbolt: 1800,

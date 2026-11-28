@@ -29,10 +29,10 @@ export const HIT_FX_BOSS_SIZE_MULT = HIT_FX_BOSS_HEIGHT_PX / HIT_FX_CHAR_HEIGHT_
 export const HIT_FX_IMPACT_COUNT = 3;
 export const HIT_FX_IMPACT_STAGGER_MS = 20;
 
-const MAX_PROJECTILES = 36;
-const MAX_SLASHES = 30;
-const MAX_SNOW_BURSTS = 6;
-const MAX_AOE_BURSTS = 24;
+const MAX_PROJECTILES = 72;
+const MAX_SLASHES = 60;
+const MAX_SNOW_BURSTS = 48;
+const MAX_AOE_BURSTS = 48;
 const FLAKES_PER_BURST = 5;
 
 const PROJ_MS = 280;
@@ -51,6 +51,7 @@ export type ProjectileFlightStyle = 'arc' | 'straight';
 
 export interface HitProjectile {
   id: string;
+  actorId?: string;
   fromX: number;
   fromY: number;
   toX: number;
@@ -132,6 +133,7 @@ export type HitSlashMode = 'thrust' | 'sweep';
 
 export interface HitSlash {
   id: string;
+  actorId?: string;
   x: number;
   y: number;
   angle: number;
@@ -173,6 +175,7 @@ export interface HealSnowflakeBurst {
 
 export interface HitAoeBurst {
   id: string;
+  actorId?: string;
   x: number;
   y: number;
   radius: number;
@@ -590,21 +593,36 @@ function unitPos(
   return fallback || null;
 }
 
-function pushCap<T>(arr: T[], item: T, max: number): void {
+function pushCap<T extends { actorId?: string }>(
+  arr: T[],
+  item: T,
+  max: number,
+  protectedActorId?: string | null
+): void {
   arr.push(item);
-  if (arr.length > max) arr.splice(0, arr.length - max);
+  while (arr.length > max) {
+    if (protectedActorId) {
+      const idx = arr.findIndex((x) => x.actorId !== protectedActorId);
+      if (idx >= 0) {
+        arr.splice(idx, 1);
+        continue;
+      }
+    }
+    arr.shift();
+  }
 }
 
 /** Push the same impact N times with staggered bornAt (strike feel). */
-function pushImpactCopies<T extends { id: string; bornAt: number }>(
+function pushImpactCopies<T extends { id: string; bornAt: number; actorId?: string }>(
   arr: T[],
   make: (index: number, bornAt: number) => T,
   max: number,
-  now: number
+  now: number,
+  protectedActorId?: string | null
 ): void {
   for (let i = 0; i < HIT_FX_IMPACT_COUNT; i++) {
     const bornAt = now + i * HIT_FX_IMPACT_STAGGER_MS;
-    pushCap(arr, make(i, bornAt), max);
+    pushCap(arr, make(i, bornAt), max, protectedActorId);
   }
 }
 
@@ -647,6 +665,8 @@ export type IngestHitFxOpts = {
   /** Per-unit draw scale (maze 0.7, combat 1, boss larger). */
   resolveScale?: (unitId: string) => number;
   skipActorIds?: Set<string>;
+  /** Local player unit id: protected from FIFO eviction when raid FX burst exceeds cap. */
+  localPlayerId?: string | null;
 };
 
 /**
@@ -680,10 +700,16 @@ export function ingestCombatActionsAsHitFx(state: HitFxState, opts: IngestHitFxO
       continue;
     }
 
+    const targetUnit = a.targetId ? opts.unitsById.get(a.targetId) : undefined;
+    const isTargetEnemy =
+      !!targetUnit &&
+      (isEnemyActorUnit(targetUnit) || targetUnit.role === 'ENEMY' || targetUnit.classId === 'BOSS');
+    const isHarmfulAction = a.visualTone === 'ENEMY' || isTargetEnemy;
     const isHeal =
-      actor?.role === 'HEALER' ||
-      lookHealSpell(a.spellId, a.spellName) ||
-      a.visualTone === 'HEAL';
+      !isHarmfulAction &&
+      (lookHealSpell(a.spellId, a.spellName) ||
+        a.visualTone === 'HEAL' ||
+        actor?.role === 'HEALER');
     const isEnemy = isEnemyActorUnit(actor) || actor?.role === 'ENEMY' || actor?.classId === 'BOSS';
 
     if (isAoe) {
@@ -722,6 +748,7 @@ export function ingestCombatActionsAsHitFx(state: HitFxState, opts: IngestHitFxO
             state.slashes,
             {
               id: `${a.id}_sw${i}`,
+              actorId: a.actorId,
               x: pivotX,
               y: pivotY,
               angle: ang + (i === 1 ? 0.35 : 0),
@@ -734,7 +761,8 @@ export function ingestCombatActionsAsHitFx(state: HitFxState, opts: IngestHitFxO
               bornAt: now + i * 45,
               durationMs: SWEEP_MS,
             },
-            MAX_SLASHES
+            MAX_SLASHES,
+            opts.localPlayerId
           );
         }
         changed = true;
@@ -758,6 +786,7 @@ export function ingestCombatActionsAsHitFx(state: HitFxState, opts: IngestHitFxO
         state.aoeBursts,
         {
           id: `${a.id}_ab`,
+          actorId: a.actorId,
           x: targetCenter.x,
           y: targetCenter.y,
           radius: Math.max(18, 26 * hitScale),
@@ -767,7 +796,8 @@ export function ingestCombatActionsAsHitFx(state: HitFxState, opts: IngestHitFxO
           bornAt: now,
           durationMs: AOE_BURST_MS,
         },
-        MAX_AOE_BURSTS
+        MAX_AOE_BURSTS,
+        opts.localPlayerId
       );
       changed = true;
       continue;
@@ -792,7 +822,8 @@ export function ingestCombatActionsAsHitFx(state: HitFxState, opts: IngestHitFxO
             bornAt: now,
             expireAt: now + 6_000,
           },
-          MAX_SNOW_BURSTS
+          MAX_SNOW_BURSTS,
+          opts.localPlayerId
         );
         changed = true;
       } else if (a.kind === 'CAST_LAND' || a.kind === 'INSTANT') {
@@ -822,7 +853,8 @@ export function ingestCombatActionsAsHitFx(state: HitFxState, opts: IngestHitFxO
               bornAt: now,
               expireAt: now + burstLife,
             },
-            MAX_SNOW_BURSTS
+            MAX_SNOW_BURSTS,
+            opts.localPlayerId
           );
         }
         changed = true;
@@ -860,6 +892,7 @@ export function ingestCombatActionsAsHitFx(state: HitFxState, opts: IngestHitFxO
         state.slashes,
         (i, bornAt) => ({
           id: `${a.id}_s${i}`,
+          actorId: a.actorId,
           x: hand.x,
           y: hand.y,
           angle: hand.angle + (i - 1) * 0.06,
@@ -872,7 +905,8 @@ export function ingestCombatActionsAsHitFx(state: HitFxState, opts: IngestHitFxO
           durationMs: SLASH_MS,
         }),
         MAX_SLASHES,
-        now
+        now,
+        opts.localPlayerId
       );
       changed = true;
     } else {
@@ -884,6 +918,7 @@ export function ingestCombatActionsAsHitFx(state: HitFxState, opts: IngestHitFxO
         state.projectiles,
         (i, bornAt) => ({
           id: `${a.id}_p${i}`,
+          actorId: a.actorId,
           fromX: aPos.x,
           fromY: aPos.y,
           toX: tPos.x,
@@ -897,7 +932,8 @@ export function ingestCombatActionsAsHitFx(state: HitFxState, opts: IngestHitFxO
           durationMs: PROJ_MS,
         }),
         MAX_PROJECTILES,
-        now
+        now,
+        opts.localPlayerId
       );
       changed = true;
     }

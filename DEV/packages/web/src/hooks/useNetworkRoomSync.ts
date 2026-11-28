@@ -51,6 +51,7 @@ import {
   beginCombatEffectEpoch,
   buildLocalOwnerSnapshot,
   configureCombatAuthority,
+  getCombatAuthorityContext,
   hostReceiveCombatEffect,
   hostReceiveOwnerSnapshot,
   ingestCombatEffect,
@@ -785,10 +786,29 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
           );
         }
 
-        // Floating combat text from host (guest never sims damage — mirror atmosphere numbers)
-        if (Array.isArray(snap.floatingTexts)) {
-          d().setFloatingTexts(
-            snap.floatingTexts.map((f) => ({
+        // Floating combat text from server:
+        // - 自己和自己宝宝（本地权威 target）的跳字（含受到他人治疗/伤害）由本地权威直接消费，忽略 server。
+        // - 其他目标（Boss/小怪/AI/其他玩家）的跳字以 server 为准，按 id 增量合入避免与 20Hz Tick 互相覆盖。
+        if (Array.isArray(snap.floatingTexts) && engine.effectsManager) {
+          const { isUnitLocalAuthority } = getCombatAuthorityContext();
+          const nowFct = Date.now();
+          const list = engine.effectsManager.floatingTexts;
+          // Prune expired entries (>2000ms) first
+          for (let i = list.length - 1; i >= 0; i--) {
+            if (nowFct - list[i].createdAtMs > 2000) {
+              list.splice(i, 1);
+            }
+          }
+          const seenIds = new Set(list.map((f) => f.id));
+          for (const f of snap.floatingTexts) {
+            if (!f?.id || seenIds.has(f.id)) continue;
+            // 自己和自己宝宝身上的跳字全部由本地权威消费，忽略 server
+            if (f.targetId && isUnitLocalAuthority(f.targetId)) {
+              continue;
+            }
+            if (nowFct - f.createdAtMs > 1600) continue;
+            seenIds.add(f.id);
+            list.push({
               id: f.id,
               targetId: f.targetId,
               sourceId: f.sourceId,
@@ -799,13 +819,23 @@ export function useNetworkRoomSync(deps: NetworkRoomSyncDeps) {
               isToPlayer: f.isToPlayer,
               xOffset: f.xOffset,
               createdAtMs: f.createdAtMs,
-            }))
-          );
+            });
+          }
+          if (list.length > 80) {
+            list.splice(0, list.length - 80);
+          }
         }
 
-        // Host-relayed actor→target actions for cast/ground/summon VFX hooks
+        // Server-relayed actor→target actions for cast/ground/summon VFX hooks.
+        // 自己和自己宝宝（本地权威）发生的特效已在本地直接消费，忽略 server。
         if (Array.isArray(snap.recentActions) && snap.recentActions.length > 0) {
-          dispatchCombatFxActions(snap.recentActions, { roomId: snap.roomId });
+          const { isUnitLocalAuthority } = getCombatAuthorityContext();
+          const remoteActions = snap.recentActions.filter(
+            (a) => !a?.actorId || !isUnitLocalAuthority(a.actorId)
+          );
+          if (remoteActions.length > 0) {
+            dispatchCombatFxActions(remoteActions, { roomId: snap.roomId });
+          }
         }
 
         // Host-authoritative DBM tactical alerts
